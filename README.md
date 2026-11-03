@@ -1,27 +1,20 @@
-# Xosvi
+# weishixiao/xosvi
 
-个人移动端效率工具：把常用的手机操作整理成一组可调用的命令，配合内置助手做自动化与信息整理。
+An APT source for jailbroken iOS, published with Apelin.
 
-## 特性
+Add `https://weishixiao.github.io/xosvi/` in Irisin.
 
-- 内置命令面板：常用操作一键/一句话触发
-- 助手：自然语言调用上述命令，串成多步任务
-- 本地优先：数据留在设备内，可导出备份
-- 轻量：单包安装，无云依赖
+## How it works
 
-## 安装
+- Packages are the `.deb` files in `debs/`, named
+  `<Package>_<Version>_<Architecture>.deb`. Apelin's Distribute… page
+  publishes a release build here; a `.deb` pushed by hand works the same.
+- On every push to `main`, `.github/workflows/update-repository.yml` runs
+  `scripts/update-repository.sh`, which indexes `debs/` into `Packages`,
+  `Packages.xz` and `Release`, and publishes the site to GitHub Pages.
+  Never commit those indexes or `_site/`.
+- `depictions/<package id>/` holds a package's depiction, icon and
+  banner; `sileo-featured.json` the banners Irisin shows at the top of the
+  source; `CydiaIcon.png`, when present, the source's icon.
 
-从本仓库 Release 下载最新安装包，按系统提示安装后打开即可。
-
-## 项目结构
-
-```
-Sources/  主程序
-scripts/  构建与维护脚本
-docs/     使用文档
-tests/    自测用例
-```
-
-## 协议
-
-本人项目，仅供自用学习交流。
+Pages may serve the previous index for up to ten minutes after a push.
