@@ -301,7 +301,7 @@ struct ModelRow: View {
     private func checkBalance() {
         checkingBalance = true
         balanceText = ""
-        BalanceChecker.shared.check(config, force: true) { result in
+        BalanceChecker.shared.check(config: config, force: true) { result in
             checkingBalance = false
             switch result {
             case .success(let r):

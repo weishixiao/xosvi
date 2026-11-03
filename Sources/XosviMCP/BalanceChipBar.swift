@@ -215,7 +215,7 @@ struct BalanceChipBar: View {
             return
         }
         querying = true
-        BalanceChecker.shared.check(cfg, force: force) { result in
+        BalanceChecker.shared.check(config: cfg, force: force) { result in
             querying = false
             switch result {
             case .success(let info):
@@ -322,7 +322,7 @@ struct BalanceCornerOverlay: View {
     private func refresh(_ cfg: ModelConfig, force: Bool = false) {
         if !force, let c = BalanceChecker.shared.cached(cfg.id) { balance = c; return }
         querying = true
-        BalanceChecker.shared.check(cfg, force: force) { result in
+        BalanceChecker.shared.check(config: cfg, force: force) { result in
             querying = false
             switch result {
             case .success(let info): balance = info; errorText = nil

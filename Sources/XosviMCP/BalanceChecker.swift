@@ -101,7 +101,9 @@ final class BalanceChecker {
     }
 
     /// 查询余额；force=false 时 5 分钟内的缓存直接返回
-    func check(_ config: ModelConfig, force: Bool = false,
+    /// 参数标签用 `config:`——调用点写 `check(config: cfg, ...)`，与仓库其它
+    /// 单参方法（如 BalanceChecker 老版 `check(config:completion:)`）保持一致。
+    func check(config: ModelConfig, force: Bool = false,
                completion: @escaping (Result<BalanceInfo, BalanceError>) -> Void) {
         lock.lock()
         if !force, let c = cache[config.id],
