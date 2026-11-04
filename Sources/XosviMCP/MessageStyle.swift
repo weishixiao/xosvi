@@ -56,10 +56,11 @@ enum MonoChat {
     static let strokeStrong  = Color.black.opacity(0.30)
     static let text          = Color.black
     static let subtext       = Color.black.opacity(0.55)
-    /// 用户气泡：纯黑底 + 白字（黑白设计里唯一的实心反色块）
-    static let userBubble    = Color.black
-    static let userStroke    = Color.clear
-    static let userText      = Color.white
+    /// v9.3：用户气泡也改白底（抬升面灰 + 黑细描边）+ 黑字，与 AI 气泡同向，
+    /// 用户指定"我发的信息和输入框都不要黑底"。
+    static let userBubble    = Color(white: 0.95)
+    static let userStroke    = Color.black.opacity(0.12)
+    static let userText      = Color.black
     /// 反色令牌（发送键 / toast / 开关开启态 / 引用角标）
     static let invertBg      = Color.black
     static let invertText    = Color.white

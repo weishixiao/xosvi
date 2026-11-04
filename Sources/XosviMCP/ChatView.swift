@@ -726,12 +726,12 @@ struct ChatView: View {
 
                     if store.selectedIsRequesting {
                         Button(action: { store.cancelCurrent() }) {
-                            // v9.1：黑白主题——停止键用白底黑方块（红色留给错误语义）
+                            // v9.3：停止键改灰底黑方块（去黑底）
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(MonoChat.invertText)
+                                .foregroundColor(MonoChat.text)
                                 .frame(width: 32, height: 32)
-                                .background(MonoChat.invertBg)
+                                .background(MonoChat.surfaceRaised)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -739,10 +739,10 @@ struct ChatView: View {
                         Button(action: send) {
                             Image(systemName: "paperplane.fill")
                                 .font(.system(size: 14, weight: .semibold))
-                                // v9.1：黑白——可发送=白底黑箭头，空输入=深灰底灰箭头
-                                .foregroundColor(inputText.isEmpty ? MonoChat.subtext : MonoChat.invertText)
+                                // v9.3：可发送=黑箭头灰底，空输入=灰箭头灰底（去黑底圆）
+                                .foregroundColor(inputText.isEmpty ? MonoChat.subtext : MonoChat.text)
                                 .frame(width: 32, height: 32)
-                                .background(inputText.isEmpty ? MonoChat.surfaceRaised : MonoChat.invertBg)
+                                .background(MonoChat.surfaceRaised)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -1265,13 +1265,13 @@ struct DeepSeekPillButton: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 28)
-            // v9.1：黑白——开启=白底黑字，关闭=深灰底灰字
-            .foregroundColor(isOn ? MonoChat.invertText : MonoChat.subtext)
+            // v9.3：胶囊开启=灰底黑字（用户要求去掉黑底），关闭=浅灰底灰字
+            .foregroundColor(isOn ? MonoChat.text : MonoChat.subtext)
             .background(
-                Capsule().fill(isOn ? MonoChat.invertBg : MonoChat.surfaceRaised)
+                Capsule().fill(isOn ? MonoChat.surfaceRaised : MonoChat.surfaceRaised)
             )
             .overlay(
-                Capsule().stroke(isOn ? Color.clear : MonoChat.stroke, lineWidth: 0.8)
+                Capsule().stroke(isOn ? MonoChat.stroke : MonoChat.stroke, lineWidth: 0.8)
             )
             .contentShape(Capsule())
         }
@@ -1301,12 +1301,12 @@ struct ChatChip: View {
             }
             .frame(height: 36)
             .padding(.horizontal, 10)
-            .background(accent ? MonoChat.invertBg : MonoChat.surfaceRaised)
-            // v9.1：白底必须配黑字（深色环境下 .primary 是白色，会看不见）
-            .foregroundColor(accent ? MonoChat.invertText : MonoChat.subtext)
+            .background(accent ? MonoChat.surfaceRaised : MonoChat.surfaceRaised)
+            // v9.3：去黑底——强调态也用灰底黑字
+            .foregroundColor(accent ? MonoChat.text : MonoChat.subtext)
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(accent ? Color.clear : MonoChat.stroke, lineWidth: 1)
+                    .stroke(MonoChat.stroke, lineWidth: 1)
             )
             .cornerRadius(16)
         }

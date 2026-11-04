@@ -162,7 +162,7 @@ struct ConversationDrawerView: View {
             conversationList
             bottomWorkbench
         }
-        .background(Color(.systemBackground))
+        .background(MonoChat.bg)   // v9.3：抽屉配色与聊天页统一（白底黑字）
         .onAppear(perform: refreshReadiness)
     }
 
@@ -218,7 +218,7 @@ struct ConversationDrawerView: View {
         .frame(height: 44)
         // v7.6.0（DeepSeek）：改为胶囊形（对齐参考截图）
         .background(Capsule(style: .continuous)
-            .fill(Color(.secondarySystemBackground)))
+            .fill(MonoChat.surfaceRaised))   // v9.3：搜索框配色与聊天输入框一致
     }
 
     private var countLabel: some View {
@@ -337,14 +337,18 @@ struct ConversationDrawerView: View {
                     .background(
                         Group {
                             if store.selectedId == conv.id {
-                                // v7.6.0（DeepSeek）：选中行改浅蓝底（对齐参考截图）
-                                Color(UIColor { $0.userInterfaceStyle == .dark
-                                    ? UIColor(red: 0.13, green: 0.20, blue: 0.38, alpha: 1)
-                                    : UIColor(red: 0.88, green: 0.92, blue: 1.0, alpha: 1) })
+                                // v9.3：选中行与聊天页配色统一——灰底黑字（去蓝底蓝字）
+                                MonoChat.surfaceRaised
                             } else {
-                                Color(.systemBackground)
+                                MonoChat.bg
                             }
                         }
+                    )
+                    // v9.3：每个会话行加圆形（圆角矩形）外框，描边与聊天页一致
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .stroke(store.selectedId == conv.id ? MonoChat.strokeStrong : MonoChat.stroke,
+                                    lineWidth: 0.8)
                     )
                     .cornerRadius(16)
             }
@@ -394,12 +398,12 @@ struct ConversationDrawerView: View {
         let isSel = store.selectedId == conv.id
         return HStack(alignment: .center, spacing: 8) {
             // v7.6.1：只显示标题（用户要求去掉消息内容预览）
-            Text(conv.title)
-                .font(.system(size: 16, weight: isSel ? .semibold : .regular))
-                // v7.6.0（DeepSeek）：选中标题变蓝
-                .foregroundColor(isSel ? Color(red: 0.13, green: 0.40, blue: 0.93) : .primary)
-                .lineLimit(1)
-                .truncationMode(.tail)
+                Text(conv.title)
+                    .font(.system(size: 16, weight: isSel ? .semibold : .regular))
+                    // v9.3：标题统一黑字（不再选中变蓝，与聊天页配色一致）
+                    .foregroundColor(MonoChat.text)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
             Spacer(minLength: 6)
             // v7.6.2：标题右侧不再显示时间（分组标题已表明日期）；选中行保留 ••• 菜单
             if isSel {
@@ -419,6 +423,9 @@ struct ConversationDrawerView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 13)
+        // v9.3：固定行高——选中行多出 ••• 菜单会改变行高，LazyVStack 滚动复用时
+        // 行高突变导致标题重叠；固定高度后复用稳定。
+        .frame(minHeight: 50)
     }
 
     private func delete(at offsets: IndexSet) {
