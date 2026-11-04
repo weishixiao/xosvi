@@ -202,7 +202,13 @@ enum XosviXPC {
         guard let task = createTask(nil) else { return false }
         defer { Unmanaged<AnyObject>.fromOpaque(task).release() }
 
-        let key = Unmanaged.passUnretained(clientEntitlement as CFString).toOpaque()
+        // 先把 CFString 桥接出来**绑在局部变量上**：`clientEntitlement as CFString` 是临时对象，
+        // 直接 passUnretained 会拿到已释放的指针（栈上是野指针），SecTaskCopyValueForEntitlement
+        // 内部 objc_msgSend 取 objectForKey 时就炸了 —— 这是实测的 hasClientEntitlement 崩溃点。
+        // 这里改成 passRetained，并在 defer 里配对释放，指针在整个调用期间有效。
+        let cfKey = clientEntitlement as CFString
+        let key = UnsafeMutableRawPointer(Unmanaged.passRetained(cfKey).toOpaque())
+        defer { Unmanaged<CFString>.fromOpaque(key).release() }
         guard let raw = copyValue(task, key, nil) else { return false }
         // +1 由 takeRetainedValue 收下，交给 ARC 释放；CFBoolean 与 Bool 免费桥接
         let value = Unmanaged<AnyObject>.fromOpaque(raw).takeRetainedValue()
