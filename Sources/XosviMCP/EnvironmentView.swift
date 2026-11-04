@@ -24,6 +24,7 @@ struct EnvironmentPane: View {
     @State private var bootError: String = ""
     @State private var speedBusy = false
     @State private var toast: String?
+    @State private var confirmReset = false
 
     var body: some View {
         List {
@@ -167,18 +168,88 @@ struct EnvironmentPane: View {
                 Text("镜像")
             }
 
-            // ── 环境预设（入口）──────────────────
+            // ── 环境预设 ─────────────────────────
+            // v9.5：按用户给的版式，预设/环境变量/操作直接铺在本页，
+            // 不再套一层「环境预设」二级入口（原来要多点一次才能看到这些项）。
+            Section {
+                ForEach(EnvDependency.allCases) { dep in
+                    NavigationLink {
+                        DependencyDetailView(dependency: dep)
+                    } label: {
+                        presetRow(dep)
+                    }
+                }
+                Button {
+                    installer.refresh()
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "arrow.clockwise").frame(width: 24)
+                        Text(installer.busy ? "检测中…" : "刷新工具状态").font(.system(size: 15))
+                        Spacer()
+                        if installer.busy { ProgressView().scaleEffect(0.7) }
+                    }
+                }
+                .disabled(installer.busy)
+            } header: {
+                Text("环境预设")
+            } footer: {
+                Text("安装到共享沙盒，所有工作区均可使用。")
+                    .font(.caption2)
+            }
+
+            // ── 环境变量 ─────────────────────────
             Section {
                 NavigationLink {
-                    EnvironmentPresetsView()
+                    EnvVarsView()
                 } label: {
-                    row("环境预设", "Python · Node.js · Git · SSH · 网络 / 压缩工具", "square.stack.3d.up")
+                    row("环境变量", "管理命令使用的变量与输出隐私", "key")
                 }
+            } header: {
+                Text("环境变量")
+            }
+
+            // ── 操作 ─────────────────────────────
+            Section {
+                Button {
+                    repair()
+                } label: {
+                    row("修复", "重新校验并修补文件", "wrench.and.screwdriver")
+                }
+                Button {
+                    installer.refresh()
+                    toast = "已重新检测环境"
+                } label: {
+                    row("检查更新", "", "arrow.triangle.2.circlepath")
+                }
+                Button(role: .destructive) {
+                    confirmReset = true
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: "trash").frame(width: 24)
+                        Text("重置").font(.system(size: 15))
+                        Spacer()
+                    }
+                }
+            } header: {
+                Text("操作")
+            } footer: {
+                Text("环境是沙盒使用的 Linux 根文件系统。工作区单独存放，重置环境不会删除工作区文件。数据保存在本机已解压的 rootfs 中。")
+                    .font(.caption2)
             }
         }
         .navigationTitle("环境")
         .navigationBarTitleDisplayMode(.inline)
-        .onAppear(perform: refresh)
+        .onAppear {
+            refresh()
+            installer.refresh()
+            AlpineVersion.warmArch()
+        }
+        .alert("重置环境？", isPresented: $confirmReset) {
+            Button("取消", role: .cancel) {}
+            Button("重置", role: .destructive) { reset() }
+        } message: {
+            Text("会重新解压 Alpine rootfs，已安装的软件包会丢失。需要完全退出 App 后重开才能重新启动内核。")
+        }
         .sheet(isPresented: $mountPicker) {
             DocumentFolderPicker { url in
                 let name = url.lastPathComponent
@@ -214,7 +285,70 @@ struct EnvironmentPane: View {
                 .font(.system(size: 16)).foregroundColor(.primary).frame(width: 24)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.system(size: 15)).foregroundColor(.primary)
-                Text(subtitle).font(.system(size: 11.5)).foregroundColor(.secondary).lineLimit(2)
+                if !subtitle.isEmpty {
+                    Text(subtitle).font(.system(size: 11.5)).foregroundColor(.secondary).lineLimit(2)
+                }
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
+    }
+
+    /// v9.5：预设行（图标 + 标题/副标题 + 右侧状态），与原 EnvironmentPresetsView 的样式一致
+    private func presetRow(_ dep: EnvDependency) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: dep.icon)
+                .font(.system(size: 16)).foregroundColor(.primary).frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(dep.title).font(.system(size: 15))
+                Text(dep.subtitle).font(.system(size: 11.5)).foregroundColor(.secondary)
+            }
+            Spacer()
+            if installer.installing == dep {
+                HStack(spacing: 5) {
+                    ProgressView().scaleEffect(0.7)
+                    Text("安装中").font(.system(size: 12)).foregroundColor(.secondary)
+                }
+            } else {
+                switch installer.status(dep) {
+                case .installed:
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundColor(.green)
+                case .missing:
+                    Text("未安装").font(.system(size: 12)).foregroundColor(.secondary)
+                case .unknown:
+                    Text("—").font(.system(size: 12)).foregroundColor(.secondary)
+                }
+            }
+        }
+    }
+
+    // MARK: 操作
+
+    private func repair() {
+        toast = "正在修复…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try ISH.repair()
+                DispatchQueue.main.async { toast = "已重装 rootfs，请完全退出 App 后重开" }
+            } catch {
+                DispatchQueue.main.async { toast = error.localizedDescription }
+            }
+        }
+    }
+
+    private func reset() {
+        toast = "正在重置…"
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                try ISH.repair()
+                DispatchQueue.main.async {
+                    toast = "已重置，请完全退出 App 后重开"
+                    installer.refresh()
+                }
+            } catch {
+                DispatchQueue.main.async { toast = error.localizedDescription }
             }
         }
     }
@@ -288,18 +422,30 @@ struct EnvironmentPane: View {
         let apk = MirrorCatalog.current("apk")
         let pip = MirrorCatalog.current("pip")
         let npm = MirrorCatalog.current("npm")
+        let arch = AlpineVersion.arch()
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = ISH.run("""
+            // v9.6：写源后立刻在 guest 里验证索引可拉。iSH 的 TLS 会挂死，
+            // https 源一旦不可用就整条安装卡住；这里验不过就地降级 http 再验一次。
+            let script = """
             set -e
-            mkdir -p /etc/apk /etc/pip /root
-            printf '%s\n%s\n' '\(apk.guestBase)\(AlpineVersion.branch())/main' '\(apk.guestBase)\(AlpineVersion.branch())/community' > /etc/apk/repositories
-            # v9.3：兜底降级 https→http + 清残锁（iSH 里 TLS 挂死、残锁会让 apk 死等）
-            sed -i 's|^https://|http://|' /etc/apk/repositories
+            mkdir -p /etc/apk /etc/pip /root /var/cache/apk
+            printf '%s\\n%s\\n' '\(apk.guestBase)\(AlpineVersion.branch())/main' '\(apk.guestBase)\(AlpineVersion.branch())/community' > /etc/apk/repositories
+            rm -f /var/cache/apk/APKINDEX.*.tar.gz
             rm -f /lib/apk/db/lock 2>/dev/null || true
+            idx='\(apk.guestBase)\(AlpineVersion.branch())/main/\(arch)/APKINDEX.tar.gz'
+            if ! wget -q -O /dev/null --timeout=8 --tries=1 "$idx"; then
+              sed -i 's|^https://|http://|' /etc/apk/repositories
+              echo '[env] https 拉不到索引，已降级 http'
+            fi
             printf '[global]\\nindex-url = \(pip.pipIndexURL())\\ntrusted-host = mirrors.aliyun.com pypi.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn pypi.org\\n' > /etc/pip.conf
             printf 'registry=\(npm.npmRegistry)\\n' > /root/.npmrc
-            """, timeout: 30)
-            DispatchQueue.main.async { toast = "已切换源：\(apk.displayName)" }
+            """
+            let r = ISH.run(script, timeout: 60)
+            DispatchQueue.main.async {
+                toast = r.exitCode == 0
+                    ? "已切换源：\(apk.displayName)"
+                    : "切换源失败（exit=\(r.exitCode)）：\(r.output.suffix(120))"
+            }
         }
     }
 
@@ -341,182 +487,6 @@ struct EnvironmentPane: View {
     }
 }
 
-// MARK: - ② 环境预设
-
-struct EnvironmentPresetsView: View {
-    @ObservedObject private var installer = EnvironmentInstaller.shared
-    @State private var confirmReset = false
-    @State private var toast: String?
-
-    var body: some View {
-        List {
-            Section {
-                ForEach(EnvDependency.allCases) { dep in
-                    NavigationLink {
-                        DependencyDetailView(dependency: dep)
-                    } label: {
-                        HStack(spacing: 10) {
-                            Image(systemName: dep.icon)
-                                .font(.system(size: 16))
-                                .foregroundColor(.primary)
-                                .frame(width: 24)
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(dep.title).font(.system(size: 15))
-                                Text(dep.subtitle)
-                                    .font(.system(size: 11.5))
-                                    .foregroundColor(.secondary)
-                            }
-                            Spacer()
-                            statusText(dep)
-                        }
-                    }
-                }
-                Button {
-                    installer.refresh()
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "arrow.clockwise").frame(width: 24)
-                        Text(installer.busy ? "检测中…" : "刷新工具状态")
-                        Spacer()
-                        if installer.busy { ProgressView().scaleEffect(0.7) }
-                    }
-                }
-                .disabled(installer.busy)
-            } header: {
-                Text("环境预设")
-            } footer: {
-                Text("安装到共享沙盒，所有工作区均可使用。")
-                    .font(.caption2)
-            }
-
-            Section {
-                NavigationLink {
-                    EnvVarsView()
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "key").frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("环境变量").font(.system(size: 15))
-                            Text("管理命令使用的变量与输出隐私")
-                                .font(.system(size: 11.5)).foregroundColor(.secondary)
-                        }
-                    }
-                }
-            } header: {
-                Text("环境变量")
-            }
-
-            Section {
-                Button {
-                    repair()
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "wrench.and.screwdriver").frame(width: 24)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("修复").font(.system(size: 15)).foregroundColor(.primary)
-                            Text("重新校验并修补文件")
-                                .font(.system(size: 11.5)).foregroundColor(.secondary)
-                        }
-                    }
-                }
-                Button {
-                    installer.refresh()
-                    toast = "已重新检测环境"
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "arrow.triangle.2.circlepath").frame(width: 24)
-                        Text("检查更新").font(.system(size: 15)).foregroundColor(.primary)
-                    }
-                }
-                Button(role: .destructive) {
-                    confirmReset = true
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "trash").frame(width: 24)
-                        Text("重置").font(.system(size: 15))
-                    }
-                }
-            } header: {
-                Text("操作")
-            } footer: {
-                Text("环境是沙盒使用的 Linux 根文件系统。工作区单独存放，重置环境不会删除工作区文件。数据保存在本机已解压的 rootfs 中。")
-                    .font(.caption2)
-            }
-        }
-        .navigationTitle("环境预设")
-        .navigationBarTitleDisplayMode(.inline)
-        .onAppear { installer.refresh() }
-        .alert("重置环境？", isPresented: $confirmReset) {
-            Button("取消", role: .cancel) {}
-            Button("重置", role: .destructive) { reset() }
-        } message: {
-            Text("会重新解压 Alpine rootfs，已安装的软件包会丢失。需要完全退出 App 后重开才能重新启动内核。")
-        }
-        .overlay(alignment: .bottom) {
-            if let t = toast {
-                Text(t)
-                    .font(.footnote)
-                    .padding(.horizontal, 14).padding(.vertical, 8)
-                    .background(Capsule().fill(Color.black.opacity(0.78)))
-                    .foregroundColor(.white)
-                    .padding(.bottom, 24)
-                    .onAppear {
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.8) {
-                            withAnimation { toast = nil }
-                        }
-                    }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func statusText(_ dep: EnvDependency) -> some View {
-        if installer.installing == dep {
-            HStack(spacing: 5) {
-                ProgressView().scaleEffect(0.7)
-                Text("安装中").font(.system(size: 12)).foregroundColor(.secondary)
-            }
-        } else {
-            switch installer.status(dep) {
-            case .installed:
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(.green)
-            case .missing:
-                Text("未安装").font(.system(size: 12)).foregroundColor(.secondary)
-            case .unknown:
-                Text("—").font(.system(size: 12)).foregroundColor(.secondary)
-            }
-        }
-    }
-
-    private func repair() {
-        toast = "正在修复…"
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try ISH.repair()
-                DispatchQueue.main.async { toast = "已重装 rootfs，请完全退出 App 后重开" }
-            } catch {
-                DispatchQueue.main.async { toast = error.localizedDescription }
-            }
-        }
-    }
-
-    private func reset() {
-        toast = "正在重置…"
-        DispatchQueue.global(qos: .userInitiated).async {
-            do {
-                try ISH.repair()
-                DispatchQueue.main.async {
-                    toast = "已重置，请完全退出 App 后重开"
-                    installer.refresh()
-                }
-            } catch {
-                DispatchQueue.main.async { toast = error.localizedDescription }
-            }
-        }
-    }
-}
 
 // MARK: - ③ 单个预设详情（Kelivo 的 Python 页）
 

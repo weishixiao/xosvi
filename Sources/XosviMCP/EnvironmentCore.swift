@@ -90,14 +90,17 @@ struct AlpineMirror: Identifiable, Equatable {
 
     var displayName: String { region.isEmpty ? name : "\(name) · \(region)" }
 
-    /// v7.9.1：iSH guest 的 TLS 握手会挂死（实测：HTTP 正常、HTTPS 一直卡到超时），
-    /// 所以写进 guest 的源一律降级成 http；宿主侧测速仍用 https。
+    // v7.9.1：iSH guest 的 TLS 握手会挂死（实测：HTTP 正常、HTTPS 一直卡到超时），
+    // 所以写进 guest 的源一律降级成 http；宿主侧测速仍用 https。
+    // v9.6：写进 /etc/apk/repositories 的**每一行**都必须是 http。
+    // 之前只把这些行拼成字符串，sed 只处理行首的 https://，
+    // 于是留下 "https://.../main" 与 "http://.../community" 混杂的畸形文件。
     var guestBase: String {
         base.replacingOccurrences(of: "https://", with: "http://")
     }
 
     func apkIndexURL(alpineVersion: String? = nil) -> URL? {
-        URL(string: base + "\(alpineVersion ?? AlpineVersion.branch())/main/aarch64/APKINDEX.tar.gz")
+        URL(string: base + "\(alpineVersion ?? AlpineVersion.branch())/main/\(AlpineVersion.arch())/APKINDEX.tar.gz")
     }
     func pipIndexURL() -> String {
         // v7.9.1：同上，guest 内只能走 http（宿主侧 TLS 正常，这里只影响写进 pip.conf 的值）
@@ -122,6 +125,29 @@ struct AlpineMirror: Identifiable, Equatable {
 enum AlpineVersion {
     /// 缓存：同一个 App 进程内只读一次，避免每次安装都起一个 shell
     private static var cached: String?
+    private static var cachedArch: String?
+
+    /// v9.6：iSH 内核跑的是 x86 解释器，包目录是 x86（不是 arm64/aarch64）。
+    /// 原来探测与 community 检测都写死 aarch64 → 镜像上 404 → 镜像被误判不可用，
+    /// 表现为"测速全部超时 / 安装不动"。这里从 rootfs 真实读取，读不到才回退。
+    /// 注意：ISH.run 会阻塞到命令结束，主线程上不能起沙盒（会卡界面），
+    /// 所以主线程只返回缓存或回退值，真正的探测在后台线程做。
+    static func arch() -> String {
+        if let c = cachedArch { return c }
+        guard !Thread.isMainThread else { return "x86" }
+        let out = ISH.run("apk --print-arch 2>/dev/null || uname -m 2>/dev/null", timeout: 10).output
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let first = out.split(separator: "\n").first.map(String.init) ?? ""
+        let result = (first.isEmpty || first.contains("沙盒")) ? "x86" : first
+        cachedArch = result
+        return result
+    }
+
+    /// v9.6：预热架构缓存（在后台线程调一次，之后主线程也拿得到真实值）
+    static func warmArch() {
+        guard cachedArch == nil else { return }
+        DispatchQueue.global(qos: .utility).async { _ = arch() }
+    }
 
     static func branch() -> String {
         if let c = cached { return c }
@@ -285,8 +311,10 @@ final class EnvironmentInstaller: ObservableObject {
             let preferred = MirrorCatalog.current("apk")
             let candidates = [preferred] + MirrorCatalog.apk.filter { $0.id != preferred.id }
             var mirror = preferred
+            // v9.6：架构从 rootfs 实际读（iSH 是 x86），原来写死 aarch64 → 索引 404
+            let arch = AlpineVersion.arch()
             for candidate in candidates.prefix(5) {
-                let probeURL = candidate.guestBase + "\(branch)/main/aarch64/APKINDEX.tar.gz"
+                let probeURL = candidate.guestBase + "\(branch)/main/\(arch)/APKINDEX.tar.gz"
                 let probe = ISH.run(
                     "wget -q -O /dev/null --timeout=6 --tries=1 '\(probeURL)' && echo __MIRROR_OK || echo __MIRROR_FAIL",
                     timeout: 20, cwd: "/")
@@ -344,7 +372,7 @@ final class EnvironmentInstaller: ObservableObject {
                 "echo '[diag] dns:'; nslookup mirrors.aliyun.com 2>&1 | grep -i addr | head -3",
                 "echo '[diag] route:'; cat /proc/net/route 2>&1 | head -2",
                 "echo '[diag] branch:'; cat /etc/alpine-release 2>&1",
-                "echo '[diag] wget:'; wget -q -O /dev/null --timeout=8 --tries=1 '\(repoMain)/aarch64/APKINDEX.tar.gz' && echo OK || echo FAIL",
+                "echo '[diag] wget:'; wget -q -O /dev/null --timeout=8 --tries=1 '\(repoMain)/\(AlpineVersion.arch())/APKINDEX.tar.gz' && echo OK || echo FAIL",
             ].joined(separator: "; ")
             let diag = ISH.run(diagCmd, timeout: 45, cwd: "/")
             logLines.append(diag.output)
@@ -362,12 +390,20 @@ final class EnvironmentInstaller: ObservableObject {
             // 现在：先探 community 索引，可达就一起写进 repositories，再 update + add。
             let script = """
             set -e
+            # v9.6：架构取真实值（iSH=x86），并清掉上次强杀留下的 apk 锁，
+            # 否则 apk 会一直停在 "Waiting for repository lock"。
+            ARCH=$(apk --print-arch 2>/dev/null || uname -m)
+            rm -f /lib/apk/db/lock
             printf '%s\n' '\(repoMain)' > /etc/apk/repositories
-            if wget -q -O /dev/null --timeout=10 '\(repoComm)/aarch64/APKINDEX.tar.gz'; then
+            if wget -q -O /dev/null --timeout=10 "\(repoComm)/$ARCH/APKINDEX.tar.gz"; then
               printf '%s\n' '\(repoComm)' >> /etc/apk/repositories
               echo '[env] community 源可用，已加入'
             else
               echo '[env] community 源不可达（py3-pip 等包可能缺失）'
+            fi
+            if ! wget -q -O /dev/null --timeout=10 "\(repoMain)/$ARCH/APKINDEX.tar.gz"; then
+              echo '[env] main 源 https 不通，降级 http 重试'
+              sed -i 's|^https://|http://|' /etc/apk/repositories
             fi
             apk --wait 60 update
             apk --wait 60 add \(d.packages)
