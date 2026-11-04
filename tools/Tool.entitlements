@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- 本地调试用：工具链编译出的探针/守护，用本文件签名后才能被 shell_run 执行。
+     ldid -STool.entitlements <program>   （打包进 deb 的二进制另由 ldid -S 签） -->
+<plist version="1.0">
+<dict>
+    <key>platform-application</key>
+    <true/>
+    <key>com.apple.private.security.no-sandbox</key>
+    <true/>
+    <key>com.apple.private.security.storage.AppBundles</key>
+    <true/>
+    <key>com.apple.private.security.storage.AppDataContainers</key>
+    <true/>
+    <key>com.apple.private.security.container-required</key>
+    <false/>
+    <key>com.apple.private.skip-library-validation</key>
+    <true/>
+</dict>
+</plist>

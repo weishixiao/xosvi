@@ -120,6 +120,9 @@
 	<true/>
 	<key>com.apple.usernotifications.legacy-extension</key>
 	<true/>
+	<!-- v0.2.0：root 通道走 XPC（tools/xosvid.c 的 MachService），客户端需带这张凭证 -->
+	<key>wiki.qaq.xosvi.client</key>
+	<true/>
 	<key>com.apple.security.exception.mach-lookup.global-name</key>
 	<array>
 		<string>com.apple.frontboard.systemappservices</string>
@@ -127,6 +130,8 @@
 		<string>com.apple.springboard</string>
 		<string>com.apple.backboardd</string>
 		<string>com.apple.usernotifications.usernotificationd</string>
+		<!-- v0.2.0：root 通道走 XPC（tools/xosvid.c 的 MachService），客户端需带这张凭证 -->
+		<string>wiki.qaq.xosvi.service</string>
 	</array>
 	<key>uicache.app-data-container-required</key>
 	<true/>

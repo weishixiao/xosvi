@@ -151,7 +151,7 @@ cat > "$pkg/Library/LaunchDaemons/wiki.qaq.xosvid.plist" <<'PLIST'
 PLIST
 
 # ---- DEBIAN ------------------------------------------------------------------
-VERSION="0.2.0"   # 0.1.0 是旧的 /var/jb 硬编码版本，helper 路径全 ENOENT
+VERSION="0.2.1"   # 0.2.0 起 helper 按运行期 bootstrap 解析路径；0.2.1 加 xosvi-build --exec（App 的 root 通道走 XPC）
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: com.xosvi.daemon
 Version: ${VERSION}

@@ -1,33 +1,38 @@
 import Foundation
 import Darwin
 
-/// v7.16.6：rootd 桥——给 AI 一条**真正可用的 root 通道**。
-/// v7.16.8：真机上 App（mobile/沙箱视图）看不到 `/var/mobile/Library/Rootd`，
-/// 导致 status 报 installed:false。改成：
-///   · 多目录候选（含 App 一定能读写的 Documents 侧），逐个做**真实写入探针**而不是只查 isWritableFile
-///   · daemon 存活按「任一目录的 rootd.pid」判断（pid 只在主目录）
-///   · 探针失败时把 errno 原样报出来，别再用"视图不一致"这种猜测
+/// v0.2.0（rootd 桥 → XPC 桥）：给 AI 一条**真正可用的 root 通道**。
 ///
-/// 通道协议（rootd v1.5.0 同时服务三个目录；LaunchDaemon 标签 com.xosvi.rootd）：
-///   写 `<dir>/.cmd` → rootd 执行 → `<dir>/.out` / `<dir>/.status`（IDLE / RUNNING / DONE rc=N）
+/// v0.2.0 起执行不再靠目录轮询，而是直接连 root 守护 `xosvid` 的 MachService
+/// `wiki.qaq.xosvi.service`（deb `com.xosvi.daemon` 的 LaunchDaemon `wiki.qaq.xosvid`）：
+///   App ──XPC──▶ xosvid(uid 0) ──▶ <bootstrap>/usr/libexec/xosvi/xosvi-build --exec <cwd> <命令>
+/// 理由：roothide 下 App 与 root 进程是两套文件视图，1777 目录的 `.cmd/.out/.status`
+/// 会被视图差异、心跳时延、写探针误判反复坑；XPC 走 launchd 的 Mach bootstrap，不依赖共享目录，
+/// 也没有可被别的进程抢占的命令文件。
+///
+/// 守护侧在连接时校验 `wiki.qaq.xosvi.client` entitlement，所以 App 必须在 Support/Xosvi.entitlements
+/// 里声明它，并在 `com.apple.security.exception.mach-lookup.global-name` 加上服务名。
+///
+/// 旧目录通道（rootd v1.5.0，LaunchDaemon `com.xosvi.rootd`）保留在 `runViaDirectory` 里作为参考实现，
+/// 主流程不再调用。
 final class RootdTool: MCPTool {
     let definition = ToolDefinition(
         name: "root",
-        summary: "Run a command as root through the rootd daemon (installed by the newterm-autoroot deb with a LaunchDaemon, survives reboot). Commands: status / exec / probe / enable / disable. Use for: chown/chmod, launchctl, editing /Library, anything shell.exec refuses. Don't use for: normal file reads (use shell.exec) or when rootd is not installed (status will say so). Example: root command:exec cmd:\"id -u\"",
+        summary: "Run a command as root through the xosvid daemon (MachService wiki.qaq.xosvi.service, LaunchDaemon wiki.qaq.xosvid, installed by the com.xosvi.daemon deb). Commands: status / exec / probe / enable / disable. Use for: chown/chmod, launchctl, editing /Library, anything shell.exec refuses. Don't use for: normal file reads (use shell.exec) or on a device without the daemon (status says so). Example: root command:exec cmd:\"id -u\"",
         parameters: [
             "command": "status / exec / probe / enable / disable",
-            "cmd": "shell script text (for exec) — runs as root via the daemon",
+            "cmd": "shell script text (for exec) — runs as root in xosvid",
             "timeout": "seconds to wait for the result (default 30, max 300)"
         ],
         returns: [
-            "stdout": "命令输出（exec）",
+            "stdout": "命令输出（exec），以 root 身份由守护的子进程产生",
             "exit_code": "退出码（exec）",
-            "status": "daemon 状态：IDLE / RUNNING / DONE rc=N",
-            "dirs": "各候选目录的可用性 + 写入探针错误码（status / probe）",
+            "transport": "exec 走的通道：xpc",
+            "xpc": "XPC 通道状态：reachable / client_entitled / daemon pid 与 uid / 失败原因（status、probe）",
             "diagnosis": "失败时的现场诊断"
         ],
         verified: false, category: "shell",
-        prerequisites: ["需要先安装 newterm-autoroot deb（≥1.5.0，LaunchDaemon 标签 com.xosvi.rootd）；status 返回 daemon_alive:false 时让用户在终端跑 sh /var/mobile/.newterm-autoroot/selfcheck.sh"], annotations: .readOnlyLocal, cache: ToolCachePolicy.none)
+        prerequisites: ["需要已安装 com.xosvi.daemon deb（LaunchDaemon wiki.qaq.xosvid，MachService wiki.qaq.xosvi.service）；App 须带 wiki.qaq.xosvi.client 并声明该服务名的 mach-lookup。status 里 xpc.reachable=false 或缺 entitlement 时通道不可用。"], annotations: .readOnlyLocal, cache: ToolCachePolicy.none)
 
     /// 候选目录，**App 侧可写的排前面**。
     /// v7.16.8：Library 在真机上对 App 不可见（写入探针会报 ENOENT/EACCES），Documents 侧才是通的。
@@ -229,10 +234,12 @@ final class RootdTool: MCPTool {
             return m
         }
         let domain = daemonDomain()
+        let xpc = xpcStatus()
         var out: [String: Any] = [
             "installed": states.contains { $0.exists },
             "daemon_domain": domain,
             "privileged": domain == "system",
+            "xpc": xpc,
             "daemon_alive": alive,
             "daemon_pid": pid.map { Int($0) } ?? 0,
             "alive_source": aliveSource,
@@ -243,10 +250,20 @@ final class RootdTool: MCPTool {
             "jbroot": JBEnvironment.jbrootPath ?? "",
             "rootfs": JBEnvironment.rootfsPrefix.isEmpty ? "无" : JBEnvironment.rootfsPrefix
         ]
-        // v7.16.12：诊断「launchd 反复拉起又秒死」——plist 里的脚本路径必须真实存在。
+        // v0.2.0：诊断「launchd 反复拉起又秒死」——plist 里的脚本路径必须真实存在。
         // 现场就踩过：脚本被复制到 Library/Rootd，plist 仍指向旧位置 → 进程起不来，
         // 而 launchctl print 只显示 program（dash），看不到 arguments，极难发现。
-        // 域错误最高优先：pid 活着、心跳也新鲜，但身份是 mobile，root 命令全都会失败
+        // 域错误最高优先：pid 活着、心跳也新鲜，但身份是 mobile，root 命令全都会失败。
+        // v0.2.0 起执行走 XPC，所以「XPC 可达」才是通道可用的判据，目录心跳只做旁证。
+        if (xpc["reachable"] as? Bool) == true {
+            out["hint"] = "XPC 通道可用（daemon uid=\(xpc["uid"] ?? "?")）"
+            return out
+        }
+        if domain == "system" {
+            out["hint"] = "xosvid 已在 system 域，但 App 侧 XPC 连不上（xpc.error）："
+                + "看 xpc.client_entitled，App 必须带 \(XosviXPC.clientEntitlement) 并获准查找该 MachService"
+            return out
+        }
         if domain == "user/501" {
             out["hint"] = "daemon 跑在 user/501 域（mobile 身份），没有 root 权限。修复："
                 + "launchctl bootout user/501/com.xosvi.rootd; "
@@ -271,26 +288,17 @@ final class RootdTool: MCPTool {
     }
 
     private func probe() -> [String: Any] {
-        var results: [[String: Any]] = []
-        var working = false
-        for dir in Self.candidateDirs {
-            var r: [String: Any] = ["dir": dir]
-            let st = dirState(dir)
-            r["exists"] = st.exists
-            if let e = st.writeError { r["write_error"] = e }
-            guard st.writable else { results.append(r); continue }
-            do {
-                let res = try run("id -u", timeout: 8, forceDir: dir)
-                r["uid"] = res["stdout"] ?? ""
-                r["completed"] = res["completed"] ?? false
-                if let s = res["stdout"] as? String, s.contains("0") { working = true }
-            } catch {
-                r["error"] = "\(error)"
-            }
-            results.append(r)
-        }
-        return ["working": working, "results": results,
-                "hint": working ? "root 通道可用" : "没有目录能拿到 uid=0：看 results 里每个目录的 write_error / completed"]
+        let xpc = xpcStatus()
+        let res = run("id -u", timeout: 8)
+        let uidText = (res["stdout"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let working = (xpc["reachable"] as? Bool) == true && (res["exit_code"] as? Int) == 0
+        return ["working": working,
+                "transport": "xpc",
+                "xpc": xpc,
+                "uid": uidText,
+                "result": res,
+                "hint": working ? "root 通道可用（XPC → xosvid uid=\(xpc["uid"] ?? "?"))"
+                                : "XPC 不通：看 xpc.error / xpc.client_entitled / daemon_domain"]
     }
 
     private func setDisabled(_ disabled: Bool) -> [String: Any] {
@@ -312,8 +320,75 @@ final class RootdTool: MCPTool {
     }
 
     // MARK: - 执行
+    //
+    // v0.2.0：执行改走 XPC（MachService `wiki.qaq.xosvi.service`，守护 tools/xosvid.c）。
+    // 旧的 1777 目录 `.cmd/.out/.status` 轮询在 roothide 下不可靠（App 与 root 是两套文件视图），
+    // 只在 XPC 明确不可达时才作为兜底保留。目录相关字段仍由 statusReport / dirState 提供。
 
     private func run(_ script: String, timeout: Double, forceDir: String? = nil) throws -> [String: Any] {
+        return runViaXPC(script, timeout: timeout)
+    }
+
+    /// 通过 root 守护执行命令。守护以 root 身份起 `<bootstrap>/usr/bin/dash -c <脚本>`。
+    private func runViaXPC(_ script: String, timeout: Double) -> [String: Any] {
+        // 守护只认三个 helper；给一条命令用的是 xosvi-build 的 --exec 模式（见 tools/xosvi-build.c）
+        let res = XosviXPC.helper("xosvi-build",
+                                  args: ["--exec", execWorkingDir(), script],
+                                  timeout: Int(max(3, min(timeout, 300))))
+        guard (res["ok"] as? Bool) == true else {
+            let err = res["error"] as? String ?? "unknown"
+            return ["completed": false, "error": "xpc_unreachable", "transport": "xpc",
+                    "detail": err, "diagnosis": statusReport(),
+                    "hint": "root 通道依赖 xosvid（MachService \(XosviXPC.serviceName)）在 system 域加载；"
+                        + "它没起来时 App 无法以 root 执行。"]
+        }
+        let stdout = res["stdout"] as? String ?? ""
+        if let e = res["error"] as? String, !e.isEmpty {
+            return ["completed": false, "error": e, "transport": "xpc",
+                    "resolved": res["resolved"] ?? "", "stdout": stdout,
+                    "diagnosis": statusReport()]
+        }
+        var out: [String: Any] = [
+            "completed": true,
+            "transport": "xpc",
+            "stdout": stdout,
+            "exit_code": res["exit_code"] ?? -1,
+            "status": "DONE rc=\(res["exit_code"] ?? -1)",
+            "resolved": res["resolved"] ?? "",
+            "daemon_pid": res["pid"] ?? 0
+        ]
+        if let timedOut = res["timed_out"] as? Bool, timedOut { out["timed_out"] = true }
+        if let ms = res["elapsed_ms"] as? Double { out["elapsed_ms"] = ms }
+        return out
+    }
+
+    /// 守护进程里 helper 的 cwd：固定用数据目录下的 work（xosvi-build 的项目根白名单就在它下面）。
+    private func execWorkingDir() -> String {
+        if let jb = JBEnvironment.jbrootPath, !jb.isEmpty {
+            let p = jb + "/private/var/mobile/Documents/wiki.qaq.xosvi/work"
+            if FSStat.exists(p) { return p }
+        }
+        let fallback = "/private/var/mobile/Documents/wiki.qaq.xosvi/work"
+        return FSStat.exists(fallback) ? fallback : "/"
+    }
+
+    /// XPC 侧状态：守护是否可达。与磁盘目录探测分开，避免把视图问题当成守护问题。
+    private func xpcStatus() -> [String: Any] {
+        let res = XosviXPC.serviceStatus(timeout: 5)
+        var out: [String: Any] = [
+            "service": XosviXPC.serviceName,
+            "reachable": (res["ok"] as? Bool) == true && (res["error"] as? String ?? "").isEmpty,
+            "client_entitled": XosviXPC.hasClientEntitlement()
+        ]
+        if let e = res["error"] as? String { out["error"] = e }
+        for k in ["status", "bootstrap", "resolved", "dash", "helper", "peer", "pid", "uid"] {
+            if let v = res[k] { out[k] = v }
+        }
+        return out
+    }
+
+    /// 旧通道：1777 目录 `.cmd/.out/.status`。仅在 XPC 不可达且目录心跳新鲜时使用。
+    private func runViaDirectory(_ script: String, timeout: Double, forceDir: String? = nil) -> [String: Any] {
         let target: DirState?
         if let fd = forceDir {
             let st = dirState(fd)

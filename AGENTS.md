@@ -174,5 +174,16 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   应看到 `resolved bootstrap prefix = /private/var/containers/Bundle/Application/.jbroot-*`。
 - helper 端到端：`<bootstrap>/usr/libexec/xosvi/xosvi-build <work 下的项目目录>`，
   `work` 固定为 `/private/var/mobile/Documents/wiki.qaq.xosvi/work`。
-- **未通的一环**：`Sources/XosviMCP/RootdTool.swift` 仍在对 1777 目录做文件轮询（.cmd/.out/.status），
-  还没有改成走 `wiki.qaq.xosvi.service`。守护这一侧已经就绪并通过 cli 验证，缺的是 App 侧客户端。
+- **App 侧 root 通道走 XPC（0.2.1 起）**：`Sources/XosviMCP/XosviXPC.swift` 是客户端，
+  `RootdTool.run` → `xosvi-cli` 同一条协议：请求 `{command:"helper", name:"xosvi-build",
+  args:["--exec", <cwd>, <命令>], timeout}`，`xosvi-build --exec` 以 root 跑 `<shell> -c <命令>`。
+  验证（在终端/`shell_run` 里，用 `com.xosvi.daemon` 自带的 cli 就够）：
+  `<bootstrap>/usr/bin/xosvi-cli helper xosvi-build --exec /tmp 'id -u'` 应得 `uid: 0`。
+- App 的 `Support/Xosvi.entitlements` 必须同时有 `wiki.qaq.xosvi.client`（守护校验）
+  和 `com.apple.security.exception.mach-lookup.global-name` 里的 `wiki.qaq.xosvi.service`；
+  改了 entitlement 必须**重新签名并重装 App** 才生效，旧的签名不会自动带上。
+- **已知未决**：本机 launchd 把 `wiki.qaq.xosvid.plist` 起在 **user/501 域**（mobile 身份，
+  `launchctl print system/wiki.qaq.xosvid` 说找不到），`xosvi-cli` 能连上但守护是 uid 501，
+  于是 `--exec` 里的 `id -u` 得 501、`/Library` 写不进。system 域才是 root 通道的前提：
+  `launchctl bootout user/501/wiki.qaq.xosvid` + `icli svc bootstrap <plist>` 属于改 launchd，
+  必须先得到用户明确同意。
