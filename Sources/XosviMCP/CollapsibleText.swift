@@ -25,7 +25,8 @@ struct CollapsibleUserText: View {
             Text(text)
                 .font(ChatType.body)
                 .lineSpacing(ChatType.bodyLineSpacing)
-                .foregroundColor(.white)
+                // v9.1：用户气泡深灰底 → 白字
+                .foregroundColor(MonoChat.userText)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
                 .lineLimit(expanded || !needsCollapse ? nil : lineLimitCollapsed)
@@ -40,10 +41,10 @@ struct CollapsibleUserText: View {
                         Image(systemName: expanded ? "chevron.up" : "chevron.down")
                             .font(.system(size: 8, weight: .bold))
                     }
-                    .foregroundColor(.white.opacity(0.85))
+                    .foregroundColor(MonoChat.userText.opacity(0.75))
                     .padding(.horizontal, 8)
                     .padding(.vertical, 3)
-                    .background(Capsule().fill(Color.white.opacity(0.16)))
+                    .background(Capsule().fill(MonoChat.userText.opacity(0.08)))
                 }
                 .buttonStyle(PlainButtonStyle())
             }

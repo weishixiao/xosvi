@@ -73,20 +73,20 @@ struct AttachmentPreviewStrip: View {
                 } else {
                     Image(systemName: "app.fill")
                         .font(.system(size: 22))
-                        .foregroundColor(.white)
+                        .foregroundColor(MonoChat.text)
                         .frame(width: 36, height: 36)
-                        .background(Color.blue)
+                        .background(MonoChat.surfaceRaised)
                         .cornerRadius(8)
                 }
                 Text(att.displayName)
                     .font(.footnote)
                     .fontWeight(.medium)
-                    .foregroundColor(.primary)
+                    .foregroundColor(MonoChat.text)
                     .lineLimit(1)
             }
             .padding(.horizontal, 10)
             .frame(height: 52)
-            .background(Color(.secondarySystemBackground))
+            .background(MonoChat.surfaceRaised)
             .cornerRadius(12)
         case .file:
             placeholder(icon: "doc.fill", label: att.displayName)
@@ -97,14 +97,14 @@ struct AttachmentPreviewStrip: View {
         VStack(spacing: 4) {
             Image(systemName: icon)
                 .font(.system(size: 20))
-                .foregroundColor(.white)
+                .foregroundColor(MonoChat.text)
             Text(label)
                 .font(.caption2)
-                .foregroundColor(.white)
+                .foregroundColor(MonoChat.text)
                 .lineLimit(1)
         }
         .frame(width: 60, height: 60)
-        .background(Color.gray.opacity(0.6))
+        .background(MonoChat.surfaceRaised)
         .cornerRadius(10)
     }
 }

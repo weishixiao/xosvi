@@ -124,7 +124,7 @@ struct BalanceChipBar: View {
         } label: {
             HStack(spacing: 4) {
                 Circle()
-                    .fill(cfg.isDefault ? DoubaoTheme.accent : Color.secondary.opacity(0.4))
+                    .fill(cfg.isDefault ? MonoChat.text : Color.secondary.opacity(0.4))
                     .frame(width: 5, height: 5)
                 Text(cfg.name)
                     .font(.system(size: 11.5))
@@ -135,8 +135,8 @@ struct BalanceChipBar: View {
                     .foregroundColor(.secondary.opacity(0.7))
             }
             .padding(.horizontal, 7).padding(.vertical, 3)
-            .background(Capsule().fill(DoubaoTheme.card))
-            .overlay(Capsule().strokeBorder(DoubaoTheme.hairline, lineWidth: 0.6))
+            .background(Capsule().fill(MonoChat.surfaceRaised))
+            .overlay(Capsule().strokeBorder(MonoChat.stroke, lineWidth: 0.6))
         }
     }
 
@@ -160,11 +160,12 @@ struct BalanceChipBar: View {
                             .font(.system(size: 8))
                     }
                 }
-                .foregroundColor(b.isLow ? .orange : .secondary)
+                // v9.1：黑白主题——低余额用白色高对比 + 三角提示，不用橙色
+                .foregroundColor(b.isLow ? MonoChat.text : .secondary)
                 .padding(.horizontal, 7).padding(.vertical, 3)
-                .background(Capsule().fill(DoubaoTheme.card))
+                .background(Capsule().fill(MonoChat.surfaceRaised))
                 .overlay(Capsule().strokeBorder(
-                    b.isLow ? Color.orange.opacity(0.4) : DoubaoTheme.hairline,
+                    b.isLow ? MonoChat.strokeStrong : MonoChat.stroke,
                     lineWidth: 0.6))
             }
             .buttonStyle(PlainButtonStyle())
@@ -184,8 +185,8 @@ struct BalanceChipBar: View {
                 }
                 .foregroundColor(.secondary.opacity(0.7))
                 .padding(.horizontal, 7).padding(.vertical, 3)
-                .background(Capsule().fill(DoubaoTheme.card))
-                .overlay(Capsule().strokeBorder(DoubaoTheme.hairline, lineWidth: 0.6))
+                .background(Capsule().fill(MonoChat.surfaceRaised))
+                .overlay(Capsule().strokeBorder(MonoChat.stroke, lineWidth: 0.6))
             }
             .buttonStyle(PlainButtonStyle())
             .contextMenu {
@@ -201,7 +202,7 @@ struct BalanceChipBar: View {
                 Text("查询中").font(.system(size: 11.5)).foregroundColor(.secondary)
             }
             .padding(.horizontal, 7).padding(.vertical, 3)
-            .background(Capsule().fill(DoubaoTheme.card))
+            .background(Capsule().fill(MonoChat.surfaceRaised))
         }
     }
 
@@ -235,52 +236,6 @@ struct BalanceChipBar: View {
     }
 }
 
-// MARK: - 余额显示设置（文档第五节 + 第六节）
-
-struct BalanceSettingsSection: View {
-    @AppStorage("xosvi.quota_per_unit") private var quotaPerUnit: Double = 500_000
-    @AppStorage("xosvi.newapi_user_id") private var newAPIUserID: String = ""
-    @AppStorage("xosvi.balance_display") private var displayMode: Int = 0
-    @State private var unitText: String = ""
-    @State private var uidText: String = ""
-
-    var body: some View {
-        Group {
-            HStack {
-                Text("额度换算")
-                Spacer()
-                TextField("500000", text: $unitText)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 110)
-                    .onAppear { unitText = String(Int(quotaPerUnit)) }
-                    .onChange(of: unitText) { v in
-                        if let d = Double(v), d > 0 { quotaPerUnit = d }
-                    }
-                Text("单位 = $1")
-                    .foregroundColor(.secondary)
-                    .font(.caption)
-            }
-            Picker("展示形态", selection: $displayMode) {
-                ForEach(BalanceDisplayMode.allCases) { m in
-                    Text(m.label).tag(m.rawValue)
-                }
-            }
-            .pickerStyle(.menu)
-            HStack {
-                Text("New-Api-User")
-                Spacer()
-                TextField("可选，用户 ID", text: $uidText)
-                    .keyboardType(.numberPad)
-                    .multilineTextAlignment(.trailing)
-                    .frame(width: 130)
-                    .onAppear { uidText = newAPIUserID }
-                    .onChange(of: uidText) { v in newAPIUserID = v }
-            }
-        }
-    }
-}
-
 
 // MARK: - 形态 C：输入框右下角小字（独立视图，挂在输入框内 overlay）
 
@@ -299,7 +254,7 @@ struct BalanceCornerOverlay: View {
                     Text("余额 …")
                 } else if let b = balance {
                     Text(b.text)
-                        .foregroundColor(b.isLow ? .orange.opacity(0.9) : .secondary.opacity(0.55))
+                        .foregroundColor(b.isLow ? MonoChat.text : MonoChat.subtext)
                         .onTapGesture { refresh(cfg, force: true) }
                 } else if errorText != nil {
                     Text("余额 ?")
@@ -307,7 +262,7 @@ struct BalanceCornerOverlay: View {
                 }
             }
             .font(.system(size: 9.5, design: .monospaced))
-            .foregroundColor(.secondary.opacity(0.55))
+            .foregroundColor(MonoChat.subtext)
             .padding(.trailing, 12)
             .padding(.bottom, 6)
             .onAppear { refresh(cfg) }

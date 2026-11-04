@@ -112,7 +112,8 @@ struct WorkflowProgressView: View {
                 }
             }
             .padding(.vertical, 6)
-            .background(Color(.systemGray6).opacity(0.5))
+            // v9.2：白底黑字——工作流条用浅灰底，白页上才有边界
+            .background(MonoChat.surfaceRaised)
         }
     }
 
@@ -129,7 +130,7 @@ struct WorkflowProgressView: View {
         .padding(.vertical, 4)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(colorFor(step.status).opacity(0.1))
+                .fill(MonoChat.surfaceRaised)
         )
     }
 
@@ -143,13 +144,14 @@ struct WorkflowProgressView: View {
         }
     }
 
+    /// v9.2：白底黑字——状态用明度区分（进行中黑 / 完成灰 / 失败红 / 待办浅灰）
     private func colorFor(_ status: WorkflowManager.Step.Status) -> Color {
         switch status {
-        case .pending: return .gray
-        case .running: return .blue
-        case .success: return .green
-        case .failed: return .red
-        case .skipped: return .gray
+        case .pending: return MonoChat.subtext.opacity(0.55)
+        case .running: return MonoChat.text
+        case .success: return MonoChat.subtext
+        case .failed: return Color(red: 0.80, green: 0.16, blue: 0.16)
+        case .skipped: return MonoChat.subtext.opacity(0.45)
         }
     }
 }

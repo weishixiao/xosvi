@@ -23,9 +23,10 @@ struct ToolStepResultSheet: View {
         return isError ? "出错" : "完成"
     }
 
+    /// v9.2：白底黑字——状态用明度表达（进行中黑 / 完成灰 / 出错暗红）
     private var statusColor: Color {
-        if isRunning { return .blue }
-        return isError ? .red : .green
+        if isRunning { return MonoChat.text }
+        return isError ? Color(red: 0.80, green: 0.16, blue: 0.16) : MonoChat.subtext
     }
 
     private var durationText: String {
@@ -68,7 +69,7 @@ struct ToolStepResultSheet: View {
                 }
                 .padding(16)
             }
-            .background(DoubaoTheme.bg.ignoresSafeArea())
+            .background(MonoChat.bg.ignoresSafeArea())
             .navigationTitle("工具结果")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -105,7 +106,7 @@ struct ToolStepResultSheet: View {
                 .padding(10)
                 .background(
                     RoundedRectangle(cornerRadius: 9, style: .continuous)
-                        .fill(Color(UIColor.tertiarySystemFill).opacity(0.55))
+                        .fill(MonoChat.surfaceRaised)
                 )
         }
     }

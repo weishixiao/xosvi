@@ -40,6 +40,31 @@ enum ChatMetrics {
     static let bubblePaddingV: CGFloat = 10       // 气泡上下内边距
 }
 
+// MARK: - v9.1：聊天页黑白主题
+//
+// 用户要求：对话界面只要黑白色，不要现在的「白底浅灰气泡」。
+// 设计：整页纯黑；AI 气泡近黑 + 白字；用户气泡纯白 + 黑字（唯一留白，反衬层次）；
+//       工具卡/输入框抬一档灰；所有装饰色（蓝/绿）收敛成白/灰。
+// 注意：本主题只作用于聊天页，设置页等其他页面维持系统语义色。
+
+enum MonoChat {
+    // v9.2：白底黑字（用户指定）——纯白页面 + 黑色文字，唯一的反色块是用户气泡与发送键。
+    static let bg            = Color.white
+    static let surface       = Color.white            // AI 气泡：白底 + 黑细描边
+    static let surfaceRaised = Color(white: 0.95)     // 工具卡 / 输入框 / 抬升面
+    static let stroke        = Color.black.opacity(0.12)
+    static let strokeStrong  = Color.black.opacity(0.30)
+    static let text          = Color.black
+    static let subtext       = Color.black.opacity(0.55)
+    /// 用户气泡：纯黑底 + 白字（黑白设计里唯一的实心反色块）
+    static let userBubble    = Color.black
+    static let userStroke    = Color.clear
+    static let userText      = Color.white
+    /// 反色令牌（发送键 / toast / 开关开启态 / 引用角标）
+    static let invertBg      = Color.black
+    static let invertText    = Color.white
+}
+
 struct MessageBlock: Identifiable {
     enum Kind {
         case text(String)
@@ -268,8 +293,9 @@ enum CitationRenderer {
             let marker = NSMutableAttributedString(string: " \(id) ")
             marker.addAttributes([
                 .font: UIFont.systemFont(ofSize: 11, weight: .semibold),
+                // v9.2：白底黑字——命中=黑底白字，未命中=浅灰底灰字
                 .foregroundColor: hit ? UIColor.white : UIColor.secondaryLabel,
-                .backgroundColor: hit ? UIColor.systemBlue : UIColor.systemGray5
+                .backgroundColor: hit ? UIColor.black : UIColor(white: 0, alpha: 0.07)
             ], range: NSRange(location: 0, length: marker.length))
             // v8.6：命中条目带上跳转 URL——SelectableText 点击命中测试用（未命中的灰标不可点）
             if let target {
@@ -436,7 +462,7 @@ struct MarkdownTable: View {
                             }
                         }
                         .background(rowIndex == 0
-                                    ? Color(UIColor.tertiarySystemFill).opacity(0.35)
+                                    ? MonoChat.surfaceRaised.opacity(0.7)
                                     : Color.clear)
                         .overlay(alignment: .bottom) {
                             if rowIndex < rows.count - 1 {
@@ -508,11 +534,11 @@ struct CodeBlockView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-        .background(Color(white: 0.10))     // 浅色/深色模式都是近黑，和 DeepSeek 的代码块一致
+        .background(Color(white: 0.14))     // v9.1：黑白主题——比 AI 气泡抬一档，纯黑页面上能看出块边界
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 0.8)
+                .stroke(Color.white.opacity(0.16), lineWidth: 0.8)
         )
     }
 }
@@ -609,11 +635,11 @@ struct ToolCallCard: View {
             .padding(.vertical, 10)
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(DoubaoTheme.card)
+                    .fill(MonoChat.surfaceRaised)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color(UIColor.separator).opacity(0.55), lineWidth: 0.7)
+                    .stroke(MonoChat.stroke, lineWidth: 0.7)
             )
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         }

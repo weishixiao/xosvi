@@ -127,6 +127,11 @@ struct ChatView: View {
             }
             // v6.9.16：iOS16+ 顶部栏自绘，系统导航栏整条隐藏（iOS15 仍走系统导航栏）
             .navigationBarHidden(isNavBarHidden)
+            // v9.2：聊天页黑白主题——纯白底 + 黑字，仅本页强制浅色环境
+            // 用 environment(而不是 preferredColorScheme)：只影响聊天页子树，
+            // 设置页等其他页面仍跟随系统；同时 .primary/.secondary 在本页自动变黑/灰。
+            .background(MonoChat.bg.ignoresSafeArea())
+            .environment(\.colorScheme, .light)
 
             .navigationTitle(selectionMode ? "已选 \(selectedIds.count) 条" : store.currentTitle)
             .navigationBarTitleDisplayMode(.inline)
@@ -144,7 +149,7 @@ struct ChatView: View {
                                 HStack(spacing: 3) {
                                     Image(systemName: "circle.fill")
                                         .font(.system(size: 5))
-                                        .foregroundColor(.green)
+                                        .foregroundColor(MonoChat.subtext)
                                     Text(modelStore.defaultConfig?.name ?? "未选择模型")
                                         .font(.system(size: 10))
                                         .foregroundColor(.secondary)
@@ -207,12 +212,13 @@ struct ChatView: View {
             }
             .overlay(Group {
                 if showToast {
+                    // v9.1：纯黑页面上黑底 toast 看不见 → 白底黑字
                     Text(toastText)
                         .font(.footnote)
                         .padding(.horizontal, 16)
                         .padding(.vertical, 8)
-                        .background(Color.black.opacity(0.75))
-                        .foregroundColor(.white)
+                        .background(MonoChat.invertBg.opacity(0.95))
+                        .foregroundColor(MonoChat.invertText)
                         .cornerRadius(10)
                         .padding(.top, 8)
                 }
@@ -477,7 +483,7 @@ struct ChatView: View {
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
+                    .fill(MonoChat.surfaceRaised)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -562,8 +568,8 @@ struct ChatView: View {
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 8)
-                            // v3.1.66：tertiarySystemBackground 浅色模式≈白看不见，改 systemGray5
-                            .background(Color(.systemGray5).opacity(0.9))
+                            // v9.1：黑白主题——近黑抬升面
+                            .background(MonoChat.surfaceRaised)
                             .cornerRadius(14)
                             .padding(.leading, 16)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -720,11 +726,12 @@ struct ChatView: View {
 
                     if store.selectedIsRequesting {
                         Button(action: { store.cancelCurrent() }) {
+                            // v9.1：黑白主题——停止键用白底黑方块（红色留给错误语义）
                             Image(systemName: "stop.fill")
                                 .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(.white)
+                                .foregroundColor(MonoChat.invertText)
                                 .frame(width: 32, height: 32)
-                                .background(Color.red)
+                                .background(MonoChat.invertBg)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -732,10 +739,10 @@ struct ChatView: View {
                         Button(action: send) {
                             Image(systemName: "paperplane.fill")
                                 .font(.system(size: 14, weight: .semibold))
-                                // 对齐 OpenMinis / DeepSeek：label 色实心圆，图标反色；空输入时低对比禁用
-                                .foregroundColor(Color(UIColor.systemBackground))
+                                // v9.1：黑白——可发送=白底黑箭头，空输入=深灰底灰箭头
+                                .foregroundColor(inputText.isEmpty ? MonoChat.subtext : MonoChat.invertText)
                                 .frame(width: 32, height: 32)
-                                .background(inputText.isEmpty ? Color(UIColor.quaternaryLabel) : Color(UIColor.label))
+                                .background(inputText.isEmpty ? MonoChat.surfaceRaised : MonoChat.invertBg)
                                 .clipShape(Circle())
                         }
                         .buttonStyle(.plain)
@@ -750,9 +757,9 @@ struct ChatView: View {
                     }) {
                         Image(systemName: attachExpanded ? "xmark" : "plus")
                             .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(DoubaoTheme.subText)
+                            .foregroundColor(MonoChat.subtext)
                             .frame(width: 32, height: 32)
-                            .background(Circle().fill(Color(UIColor.secondarySystemBackground)))
+                            .background(Circle().fill(MonoChat.surfaceRaised))
                             .contentShape(Circle())
                     }
                     .buttonStyle(PlainButtonStyle())
@@ -760,14 +767,13 @@ struct ChatView: View {
                 .padding(.horizontal, 6)
                 .padding(.bottom, 8)
             }
-            // DeepSeek 式输入卡：大圆角（22）+ 白色底 + 细描边，阴影收敛
-            .background(DoubaoTheme.card)
+            // v9.1：黑白输入卡——近黑底 + 白色细描边（不用阴影，纯黑上阴影看不出来）
+            .background(MonoChat.surfaceRaised)
             .clipShape(RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
-                    .stroke(Color(UIColor.separator).opacity(0.6), lineWidth: 0.6)
+                    .stroke(MonoChat.stroke, lineWidth: 0.8)
             )
-            .shadow(color: Color.black.opacity(0.06), radius: 8, x: 0, y: 2)
             // v9：余额形态 C（最轻）——小字挂在输入卡内右下角，不额外占一行
             .overlay(alignment: .bottomTrailing) {
                 BalanceCornerOverlay(config: modelStore.defaultConfig)
@@ -782,8 +788,8 @@ struct ChatView: View {
             }
         }
         .padding(.bottom, 8)
-        // v6.9.13（豆包风格）：输入区底色跟对话列表统一成 #F5F5F7（深色模式自动跟随）
-        .background(DoubaoTheme.bg)
+        // v9.1：输入区与整页统一纯黑（向下延伸盖住底部安全区，否则 Home 指示条那一条会是系统白）
+        .background(MonoChat.bg.ignoresSafeArea(edges: .bottom))
         // v2.9.30：授权弹窗已移出到 NavigationView 外层（见 body 链），
         // 此处不再挂 actionSheet，避免与上方 +号 的 actionSheet 同 view 覆盖。
     }
@@ -836,9 +842,9 @@ struct ChatView: View {
                 // v3.4.8：方形圆角瓦片（参考图：相机/图片/文件/打电话样式），不再是圆形
                 Image(systemName: icon)
                     .font(.system(size: 22, weight: .medium))
-                    .foregroundColor(.primary)
+                    .foregroundColor(MonoChat.text)
                     .frame(width: 52, height: 52)
-                    .background(Color(UIColor.tertiarySystemFill))
+                    .background(MonoChat.surfaceRaised)
                     .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
                 Text(label)
                     .font(.caption)
@@ -1152,17 +1158,10 @@ struct FloatingCircleButton: View {
     var body: some View {
         Image(systemName: icon)
             .font(.system(size: 15, weight: .semibold))
-            .foregroundColor(.primary)
+            .foregroundColor(MonoChat.text)
             .frame(width: size, height: size)
-            .background(
-                Circle().fill(Color(UIColor { $0.userInterfaceStyle == .dark
-                    ? UIColor(white: 0.16, alpha: 1)
-                    : .white }))
-            )
-            .overlay(
-                Circle().stroke(Color(UIColor.separator).opacity(0.45), lineWidth: 0.8)
-            )
-            .shadow(color: Color.black.opacity(0.10), radius: 6, x: 0, y: 2)
+            .background(Circle().fill(MonoChat.surfaceRaised))
+            .overlay(Circle().stroke(MonoChat.stroke, lineWidth: 0.8))
             .contentShape(Circle())
     }
 }
@@ -1194,7 +1193,7 @@ struct DeepSeekTopBar: View {
                         HStack(spacing: 3) {
                             Image(systemName: "circle.fill")
                                 .font(.system(size: 5))
-                                .foregroundColor(.green)
+                                .foregroundColor(MonoChat.subtext)
                             Text(modelStore.defaultConfig?.name ?? "未选择模型")
                                 .font(.system(size: 11))
                                 .foregroundColor(DoubaoTheme.subText)
@@ -1218,7 +1217,7 @@ struct DeepSeekTopBar: View {
                     Button(action: onLeft) {
                         Text("取消")
                             .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(DoubaoTheme.accent)
+                            .foregroundColor(MonoChat.text)
                     }
                     .buttonStyle(PlainButtonStyle())
                 }
@@ -1266,14 +1265,13 @@ struct DeepSeekPillButton: View {
             }
             .padding(.horizontal, 10)
             .frame(height: 28)
-            .foregroundColor(isOn ? DoubaoTheme.accent : DoubaoTheme.subText)
+            // v9.1：黑白——开启=白底黑字，关闭=深灰底灰字
+            .foregroundColor(isOn ? MonoChat.invertText : MonoChat.subtext)
             .background(
-                Capsule().fill(isOn ? DoubaoTheme.accent.opacity(0.12) : DoubaoTheme.card)
+                Capsule().fill(isOn ? MonoChat.invertBg : MonoChat.surfaceRaised)
             )
             .overlay(
-                Capsule().stroke(
-                    isOn ? DoubaoTheme.accent.opacity(0.45) : Color(UIColor.separator).opacity(0.35),
-                    lineWidth: 0.8)
+                Capsule().stroke(isOn ? Color.clear : MonoChat.stroke, lineWidth: 0.8)
             )
             .contentShape(Capsule())
         }
@@ -1303,11 +1301,12 @@ struct ChatChip: View {
             }
             .frame(height: 36)
             .padding(.horizontal, 10)
-            .background(accent ? Color(UIColor.tertiarySystemFill) : Color(.systemGray5))
-            .foregroundColor(accent ? Color.primary : Color.secondary)
+            .background(accent ? MonoChat.invertBg : MonoChat.surfaceRaised)
+            // v9.1：白底必须配黑字（深色环境下 .primary 是白色，会看不见）
+            .foregroundColor(accent ? MonoChat.invertText : MonoChat.subtext)
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(accent ? Color(UIColor.separator).opacity(0.6) : Color.clear, lineWidth: 1)
+                    .stroke(accent ? Color.clear : MonoChat.stroke, lineWidth: 1)
             )
             .cornerRadius(16)
         }
@@ -1333,7 +1332,7 @@ struct QuickTabButton: View {
             .frame(height: 36)
             // v3.4.4：与 ChatChip 统一内边距/圆角，保证滑动模块比例一致
             .padding(.horizontal, 10)
-            .background(Color(.secondarySystemBackground))
+            .background(MonoChat.surfaceRaised)
             .foregroundColor(.secondary)
             .cornerRadius(16)
         }
@@ -1611,7 +1610,7 @@ struct QuickActionCard: View {
             .padding(.vertical, 14)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(.secondarySystemBackground))
+                    .fill(MonoChat.surfaceRaised)
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
                             .stroke(colors[0].opacity(0.15), lineWidth: 1)
@@ -1906,7 +1905,8 @@ struct MessageBubble: View {
             blocks: blocks,
             isUser: isUser,
             citedURLs: urls,
-            textColor: isUser ? Color.white : Color.primary,
+            // v9.1：黑白主题——用户气泡深灰(0.20)+白字，AI 气泡近黑(0.06)+白字
+            textColor: isUser ? MonoChat.userText : MonoChat.text,
             renderText: { t in
                 AnyView(
                     Group {
@@ -1919,7 +1919,7 @@ struct MessageBubble: View {
                             SelectableText(
                                 attributed: urls.isEmpty ? body(t)
                                     : CitationRenderer.apply(to: body(t), urls: urls),
-                                textColor: .label,
+                                textColor: .black,
                                 onTapCitation: { url in
                                     pendingCitation = CitationLink(url: url)
                                 })
@@ -1944,7 +1944,7 @@ struct MessageBubble: View {
             // 流式期间直接 Text(纯文本)，完成后再走 attributed/SelectableText 富文本路径。
             Text(AttributedString(capped))
                 .font(.system(size: 16.5))
-                .foregroundColor(.primary)
+                .foregroundColor(MonoChat.text)
                 .textSelection(.enabled)
         } else {
             // v4.5.0：完成消息用原生 NSAttributedString 富文本（加粗/橙色/暗黑模式都正确渲染），避免 SwiftUI AttributedString 桥接丢失样式
@@ -1952,10 +1952,10 @@ struct MessageBubble: View {
             if capped.contains("[cite:") {
                 let urls = CitationRenderer.collectURLs(around: message, in: ConversationStore.shared.currentMessages)
                 SelectableText(attributed: CitationRenderer.apply(to: attributedBody(capped), urls: urls),
-                               textColor: .label,
+                               textColor: .black,
                                onTapCitation: { url in pendingCitation = CitationLink(url: url) })
             } else {
-                SelectableText(attributed: attributedBody(capped), textColor: .label)
+                SelectableText(attributed: attributedBody(capped), textColor: .black)
             }
         }
     }
@@ -1971,7 +1971,7 @@ struct MessageBubble: View {
             // v7.4.1：行内代码不再用橙色装饰——等宽 + 浅灰底，和黑块代码保持一致的中性风
             c.foregroundColor = .primary
             c.font = .system(.body, design: .monospaced)
-            c.backgroundColor = Color(UIColor.tertiarySystemFill)
+            c.backgroundColor = MonoChat.surfaceRaised
             out += c
             pos = range.upperBound
         }
@@ -2000,8 +2000,9 @@ struct MessageBubble: View {
     // 解析 **加粗** 与 `代码`(橙色)；直接写 UIKit font + UIColor（动态 .label 适配暗黑模式），
     // 不走 SwiftUI AttributedString 桥接（会丢橙色/加粗样式，导致暗黑下看不清、字体变小）。
     private func attributedBody(_ text: String) -> NSAttributedString {
-        let baseColor = UIColor.label
-        let orangeColor = UIColor.systemOrange
+        // v9.2：白底黑字——正文纯黑；行内代码用深灰（不再用橙色装饰）
+        let baseColor = UIColor.black
+        let orangeColor = UIColor(white: 0.30, alpha: 1)
         let regular = UIFont.systemFont(ofSize: 17)
         let bold = UIFont.boldSystemFont(ofSize: 17)
         let mono = UIFont.monospacedSystemFont(ofSize: 17, weight: .regular)
@@ -2037,29 +2038,23 @@ struct MessageBubble: View {
         return ms
     }
 
-    /// v8.6：分层气泡背景填充——用户 accent 实色、AI 卡片色、出错红底
+    /// v9.2：白底黑字——用户纯黑（白字）、AI 纯白（黑字 + 细描边）、出错浅红提示
     @ViewBuilder
     private var bubbleFill: some View {
         if isUser {
-            DoubaoTheme.accent
+            MonoChat.userBubble
         } else if message.isError {
-            Color.red.opacity(0.15)
+            Color(red: 0.99, green: 0.93, blue: 0.93)
         } else {
-            // 浅色用 secondarySystemBackground（白底页面上能看出卡片），
-            // 深色用比页面底色亮一档的灰——两种模式下卡片边界都成立。
-            Color(UIColor { trait in
-                trait.userInterfaceStyle == .dark
-                    ? UIColor(white: 0.15, alpha: 1)
-                    : UIColor.secondarySystemBackground
-            })
+            MonoChat.surface
         }
     }
 
-    /// v8.6：气泡描边色——AI 卡片 0.6pt 细描边；用户/accent 底不需要
+    /// v9.2：气泡描边色——AI 黑色细描边，用户黑底不需要
     private var bubbleStroke: Color {
-        if isUser { return .clear }
-        if message.isError { return Color.red.opacity(0.35) }
-        return Color(UIColor.separator).opacity(0.45)
+        if isUser { return MonoChat.userStroke }
+        if message.isError { return Color.red.opacity(0.30) }
+        return MonoChat.stroke
     }
 
     /// v8.6：分层气泡容器（文档要求）——思考块 / 附件 / 正文同处一张卡片
@@ -2249,11 +2244,11 @@ struct FileCardRow: View {
             HStack(spacing: 10) {
                 ZStack {
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color.tmCyan.opacity(0.12))
+                        .fill(MonoChat.surfaceRaised)
                         .frame(width: 36, height: 36)
                     Image(systemName: iconName)
                         .font(.system(size: 16))
-                        .foregroundColor(.tmCyan)
+                        .foregroundColor(MonoChat.text)
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(fileName)
@@ -2269,11 +2264,11 @@ struct FileCardRow: View {
                 Spacer()
                 Image(systemName: "eye")
                     .font(.caption)
-                    .foregroundColor(.tmCyan)
+                    .foregroundColor(MonoChat.subtext)
             }
             .padding(10)
-            // v3.1.66：同 toolBubble——tertiarySystemBackground 浅色模式≈白色看不见，改 systemGray5
-            .background(Color(.systemGray5))
+            // v9.1：黑白主题——抬升面
+            .background(MonoChat.surfaceRaised)
             .cornerRadius(10)
         }
         .buttonStyle(PlainButtonStyle())
@@ -2310,7 +2305,7 @@ struct TypingIndicator: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 12)
-        .background(Color(.secondarySystemBackground))
+        .background(MonoChat.surfaceRaised)
         .cornerRadius(18)
         .onAppear { offset = -4 }
     }
@@ -2330,8 +2325,8 @@ struct LiveTrailCard: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        // v3.1.66：同 toolBubble——tertiarySystemBackground 浅色模式≈白色看不见，改 systemGray5
-        .background(Color(.systemGray5).opacity(0.85))
+        // v9.1：黑白主题——抬升面
+        .background(MonoChat.surfaceRaised)
         .cornerRadius(12)
     }
 }
@@ -2369,7 +2364,7 @@ struct TrailCard: View {
         }
         .padding(10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(UIColor.tertiarySystemFill))
+        .background(MonoChat.surfaceRaised)
         .cornerRadius(12)
     }
 
@@ -2454,9 +2449,10 @@ struct ChatInputTextView: UIViewRepresentable {
         let tv = RSKGrowingTextView()
         tv.backgroundColor = .clear
         tv.font = .systemFont(ofSize: 16)
-        tv.textColor = UIColor.label
+        tv.textColor = .black
+        tv.keyboardAppearance = .light   // v9.2：白底黑字——键盘浅色
         tv.placeholder = "输入消息..."
-        tv.placeholderColor = .gray
+        tv.placeholderColor = UIColor(white: 0.62, alpha: 1)
         tv.minimumNumberOfLines = 1
         tv.maximumNumberOfLines = 4
         tv.delegate = context.coordinator

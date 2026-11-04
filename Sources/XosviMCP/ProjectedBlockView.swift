@@ -27,7 +27,7 @@ struct ProjectedBlockView: View {
                     blocks: MessageBlockParser.parse(s),   // 已有的 text/code/list/table 切分
                     isUser: isUser,
                     citedURLs: citedURLs,
-                    textColor: isUser ? Color.white : Color.primary
+                    textColor: isUser ? MonoChat.userText : MonoChat.text
                 )
             }
 
@@ -126,7 +126,7 @@ struct ProcessStepsView: View {
                 .padding(.leading, 10)
                 .overlay(alignment: .leading) {
                     Rectangle()
-                        .fill(isUser ? Color.white.opacity(0.25) : DoubaoTheme.hairline)
+                        .fill(isUser ? MonoChat.userText.opacity(0.25) : MonoChat.stroke)
                         .frame(width: 2)
                 }
             }
@@ -146,17 +146,17 @@ struct ProcessStepsView: View {
                 } else {
                     Image(systemName: "checkmark.circle")
                         .font(.system(size: 10))
-                        .foregroundColor(isUser ? Color.white.opacity(0.8) : Color.secondary)
+                        .foregroundColor(isUser ? MonoChat.userText.opacity(0.8) : MonoChat.subtext)
                 }
                 Text(allTools ? collapsedSummary : "过程 \(steps.count) 步")
                     .font(ChatType.meta)
                     .foregroundColor(hasError
                                      ? .red.opacity(0.9)
-                                     : (isUser ? Color.white.opacity(0.9) : Color.secondary))
+                                     : (isUser ? MonoChat.userText.opacity(0.9) : MonoChat.subtext))
                 Spacer(minLength: 4)
                 Image(systemName: expanded ? "chevron.up" : "chevron.down")
                     .font(.system(size: 9, weight: .bold))
-                    .foregroundColor(isUser ? Color.white.opacity(0.7) : Color.secondary)
+                    .foregroundColor(isUser ? MonoChat.userText.opacity(0.7) : MonoChat.subtext)
             }
             .contentShape(Rectangle())
         }
@@ -171,15 +171,15 @@ struct ProcessStepsView: View {
                 HStack(spacing: 5) {
                     Image(systemName: "sparkles")
                         .font(.system(size: 9))
-                        .foregroundColor(isUser ? Color.white.opacity(0.7) : Color.secondary)
+                        .foregroundColor(isUser ? MonoChat.userText.opacity(0.7) : MonoChat.subtext)
                     Text(after > 0 ? "思考（之后还有 \(after) 个工具）" : "思考")
                         .font(ChatType.meta)
-                        .foregroundColor(isUser ? Color.white.opacity(0.75) : Color.secondary)
+                        .foregroundColor(isUser ? MonoChat.userText.opacity(0.75) : MonoChat.subtext)
                 }
                 Text(text)
                     .font(ChatType.secondary)
                     .lineSpacing(4.5)
-                    .foregroundColor(isUser ? Color.white.opacity(0.9) : Color.secondary)
+                    .foregroundColor(isUser ? MonoChat.userText.opacity(0.9) : MonoChat.subtext)
                     .fixedSize(horizontal: false, vertical: true)
             }
 
@@ -197,7 +197,7 @@ struct ProcessStepsView: View {
                 if hidden > 0 {
                     Text("另有 \(hidden) 步已折叠")
                         .font(ChatType.meta)
-                        .foregroundColor(isUser ? Color.white.opacity(0.7) : Color.secondary)
+                        .foregroundColor(isUser ? MonoChat.userText.opacity(0.7) : MonoChat.subtext)
                         .padding(.leading, 2)
                 }
                 ForEach(refs) { ref in
@@ -341,7 +341,7 @@ struct MessageFileView: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(payload.name)
                     .font(ChatType.secondary)
-                    .foregroundColor(.primary)
+                    .foregroundColor(MonoChat.text)
                     .lineLimit(1)
                 if let m = payload.mime {
                     Text(m)
@@ -356,11 +356,11 @@ struct MessageFileView: View {
         .padding(.vertical, 9)
         .background(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(UIColor.tertiarySystemFill).opacity(0.6))
+                .fill(MonoChat.surfaceRaised)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .strokeBorder(Color(UIColor.separator).opacity(0.4), lineWidth: 0.6)
+                .strokeBorder(MonoChat.stroke, lineWidth: 0.6)
         )
     }
 }
