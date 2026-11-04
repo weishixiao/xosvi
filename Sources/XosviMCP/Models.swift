@@ -951,46 +951,6 @@ final class ConversationStore: ObservableObject {
 
     /// v3.1.70：写入活动请求的会话 (无活动请求时写入当前选中会话）
 
-    /// v7.9.13：收尾合并——把「被工具卡截断的半句话」接回来。
-    /// 之前的合并只在 append 路径生效；但有些轮次是直接改已存在消息（reuse 路径），
-    /// 绕过合并，于是仍然出现「…之前 md5sum 只读」+ 工具卡 + 「了一个…」。
-    /// 这里按结构扫一遍：assistant 文本 + 仅隔工具消息 + assistant 文本，
-    /// 且前一段不以句末标点结尾 → 合并成一条。
-    private func mergeSplitAssistantFragments() {
-        guard let idx = activeConvIndex else { return }
-        var msgs = conversations[idx].messages
-        var changed = false
-        var i = 0
-        while i < msgs.count {
-            guard msgs[i].role == "assistant", !msgs[i].content.isEmpty else {
-                i += 1
-                continue
-            }
-            var j = i + 1
-            while j < msgs.count, msgs[j].role == "tool" { j += 1 }
-            if j < msgs.count, msgs[j].role == "assistant",
-               msgs[j].toolCalls == nil, !msgs[j].content.isEmpty {
-                let head = msgs[i].content
-                let endings = ["。", "！", "？", ".", "!", "?", "：", ":", "\n"]
-                let finished = endings.contains { head.hasSuffix($0) }
-                if !finished {
-                    msgs[i].content = head + msgs[j].content
-                    if (msgs[i].thinking ?? "").isEmpty, let th = msgs[j].thinking {
-                        msgs[i].thinking = th
-                    }
-                    msgs.remove(at: j)
-                    changed = true
-                    continue   // 同一段可能被拆成三段
-                }
-            }
-            i += 1
-        }
-        if changed {
-            conversations[idx].messages = msgs
-            conversations[idx].updatedAt = Date()
-            sortAndSave()
-        }
-    }
 
     func appendToCurrent(_ message: ChatMessage) {
         guard let idx = activeConvIndex else { return }
@@ -1012,7 +972,10 @@ final class ConversationStore: ObservableObject {
             let between = conv.messages[(prev + 1)...]
             let onlyTools = between.allSatisfy { $0.role == "tool" }
             let prevText = conv.messages[prev].content
-            let endings = ["。", "！", "？", ".", "!", "?", "：", ":", "\n"]
+            // v9.1：结束符判定放宽。原来只认 。！？.!?: 和换行，以 ）」》】** … 代码块 结尾的
+            // 句子被判成"没写完"，于是被无分隔符地并进下一段 → 用户看到的"断句不完整/串味"。
+            let endings = ["。", "！", "？", ".", "!", "?", "：", ":", "\n",
+                           "）", ")", "」", "》", "】", "”", "’", "…", "```", "**"]
             let unfinished = !endings.contains { prevText.hasSuffix($0) }
             if onlyTools, unfinished, !prevText.isEmpty {
                 let glue = prevText.hasSuffix("\n") ? "" : ""
@@ -1039,8 +1002,10 @@ final class ConversationStore: ObservableObject {
         conv.updatedAt = Date()
         conversations[idx] = conv
         sortAndSave()
-        // v7.9.13：兜底收尾（覆盖 reuse / 直接改消息等绕过上面合并逻辑的路径）
-        if message.role != "user" { mergeSplitAssistantFragments() }
+        // v9.1：不再调用 mergeSplitAssistantFragments()。
+        // 它按「上一个 assistant 文本是否以句末标点结尾」猜两段该不该合并，以 ）」** ，、 结尾的
+        // 句子全被判成"没写完"，然后**无分隔符**直接黏成一句——用户看到的"断句不完整/句子串味"
+        // 就是它造成的。半句话被工具打断的问题应该在流式层用同一 message id 累积修，不能在落盘层猜。
     }
 
     /// v3.1.70：更新活动请求会话内消息内容 (无活动请求时用当前选中会话）
@@ -1048,14 +1013,33 @@ final class ConversationStore: ObservableObject {
         guard let idx = activeConvIndex,
               let mi = conversations[idx].messages.firstIndex(where: { $0.id == id }) else { return }
         conversations[idx].messages[mi].content = content
-        // v9：覆盖时同步 parts 里的 text 段（保留 reasoning / toolCall 及其顺序与结果）
+        // v9.1：覆盖时同步 parts 里的 text 段（保留 reasoning / toolCall 及其顺序与结果）。
+        //
+        // 旧写法 `parts[ti] = .text(content)` 把**整条内容**塞进最后一个 text 段。
+        // 一条消息里若有多个 text 段（工具调用前后各一段），渲染按 effectiveParts 走，
+        // 结果是「前面那段的文字还在 + 最后一段被换成全文」——同一句话重复、顺序看着像断裂，
+        // 就是用户反馈的"断句不完整"。现在按段数分别处理：
+        //   · 只有一段 text：直接覆盖（原行为）
+        //   · 多段：只有当 content 确实以「前面各段拼接」为前缀时，才把增量写进最后一段；
+        //           对不上就只更新 content，不动 parts（宁可少更新，也不制造重复/错位）
         var parts = conversations[idx].messages[mi].effectiveParts
-        if let ti = parts.lastIndex(where: { if case .text = $0 { return true }; return false }) {
+        let textIndices = parts.indices.filter { if case .text = parts[$0] { return true }; return false }
+        if textIndices.count == 1, let ti = textIndices.first {
             parts[ti] = .text(content)
+            conversations[idx].messages[mi].parts = parts
+        } else if let ti = textIndices.last {
+            var prefix = ""
+            for i in textIndices.dropLast() {
+                if case .text(let t) = parts[i] { prefix += t }
+            }
+            if content.hasPrefix(prefix) {
+                parts[ti] = .text(String(content.dropFirst(prefix.count)))
+                conversations[idx].messages[mi].parts = parts
+            }
         } else if !content.isEmpty {
             parts.append(.text(content))
+            conversations[idx].messages[mi].parts = parts
         }
-        conversations[idx].messages[mi].parts = parts
         ProjectedBlockCache.shared.invalidate(id: id)
         conversations[idx].updatedAt = Date()
     }
@@ -1374,16 +1358,20 @@ final class ConversationStore: ObservableObject {
         } else {
             basePrompt = SystemPrompts.shared.selected
         }
-        history.insert(ChatMessage(role: "system", content: basePrompt.content), at: 0)
-        // v6.9.10：路由规则紧随其后（稳定块内，保持前缀缓存友好）
+        // v9.1：**合并成一条 system 消息**。
+        // 旧写法往 history 头插 4 条独立 system（base / router / 开发者指令 / 动态状态），
+        // 多条 system 相互竞争语义，模型容易挑错的规则执行 → 表现为"跑偏、逻辑不严谨"。
+        // 顺序仍是「稳定前缀在前、动态状态在后」（前缀缓存仍然命中），只是合并成一条。
+        var systemBlocks: [String] = [basePrompt.content]
         if let router = SystemPrompts.shared.routerBlock(), !router.isEmpty {
-            history.insert(ChatMessage(role: "system", content: router), at: 0)
+            systemBlocks.append(router)
         }
         if let devInstr = DeveloperInstructionStore.shared.defaultInjectionContent(), !devInstr.isEmpty {
-            history.insert(ChatMessage(role: "system", content: "以下是开发者指令，请始终遵守：\n" + devInstr), at: 0)
+            systemBlocks.append("以下是开发者指令，请始终遵守：\n" + devInstr)
         }
-        // 动态状态块：最新信息放最后，不影响稳定前缀缓存
-        history.insert(ChatMessage(role: "system", content: Self.dynamicStatePrompt()), at: 0)
+        systemBlocks.append(Self.toolArbitration)
+        systemBlocks.append(Self.dynamicStatePrompt())
+        history.insert(ChatMessage(role: "system", content: systemBlocks.joined(separator: "\n\n---\n\n")), at: 0)
         // v3.5.5：自适应纠正注入——若上一轮模型漏了"先解说后执行"（直接发工具没写可见解说），
         // 把纠正消息拼到本次请求末尾（最新指令，模型必须回应）。仅进请求、不显示为 UI 用户气泡。
         if let correction = self.pendingNarrationCorrection, !correction.isEmpty {
@@ -2253,6 +2241,20 @@ final class ConversationStore: ObservableObject {
         ProjectedBlockCache.shared.invalidate(id: mid)
         self.pendingToolMsgID = nil
     }
+
+    /// v9.1：工具裁决表——工具描述里大量重叠（file/artifact/container、app/package、
+    /// shell.exec/py），模型只能靠猜 → 选错工具是"跑偏"的头号来源。
+    /// 这里只写**互斥裁决**，不重复各工具的用法说明，保持短。
+    private static let toolArbitration = """
+    === 工具裁决（按此优先级选，不要再猜）===
+    · 读一个已知文件的文本 → shell.exec cat；看类型、字符串、架构等二进制特征 → file command:inspect；看包（.deb/.ipa）里有什么 → package。
+    · 找 App 的安装路径/数据目录/entitlements → app command:info；找 App 容器里的文件 → container。
+    · 执行系统命令 → shell.exec（iOS 原生优先；需要 Linux 工具链才 runtime:"alpine"）；算术/数据处理 → py。两者不要互相替代。
+    · 需要 root → root command:exec；root command:status 只用来诊断通道，不用来干活。
+    · 改 App 二进制/注入 → inject；改内存 → memory；抓 HTTPS → network.capture（App 内）/ vpn.capture（系统级）。三者互不替代。
+    · 联网 → web.search 找、web.fetch 读正文；不要用 curl 抓搜索引擎结果。
+    · 失败先读 code/reason/next_step：同一工具+同一参数+同一类错误连续 2 次即停，换工具或先诊断，不要重试第三次。
+    """
 
     /// v2.9.138：动态会话状态块——设备/App/工作区/当前会话，injected system 最前
     ///  (位于稳定块之后，最新状态放最后）。让 AI 始终感知当前环境，不靠猜。
