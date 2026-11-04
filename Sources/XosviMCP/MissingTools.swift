@@ -385,6 +385,18 @@ final class KnowledgeStore {
         return (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
     }
 
+    /// v9.4：文件字节数（知识库页展示用）
+    func size(of name: String) -> Int {
+        let url = dir.appendingPathComponent(name)
+        return (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+    }
+
+    /// v9.4：删除单个条目并重建索引（知识库页滑动删除用）
+    func delete(_ name: String) {
+        try? FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+        KnowledgeIndex.shared.rebuild(packs: KnowledgeLoader.loadAll())
+    }
+
     /// v3.6.19l：清空整个知识库目录（删除所有条目，含 session_memory.md，随后自动重建）
     func clearAll() -> Int {
         ensure()
@@ -598,7 +610,58 @@ final class KnowledgeSearchTool: MCPTool {
             }
         }
         AuditLog.shared.log("knowledge.search", detail: "\(query) → contains \(hits.count) 条")
+        // v9.4：本地全空时按用户要求自动联网补（可在 设置 → 知识库 关闭）
+        if hits.isEmpty, let web = KnowledgeWebFallback.run(query: query, limit: limit) {
+            return web
+        }
         return ["query": query, "engine": "contains", "count": hits.count, "hits": hits]
+    }
+}
+
+/// v9.4：知识库联网补充——本地没命中时调 web.search，结果标成 engine=web，
+/// 让模型知道这部分是外部资料（需注明来源、不可当作本机事实）。
+/// 限流：同一 query 10 分钟内只联网一次，避免工具循环把搜索额度打光。
+enum KnowledgeWebFallback {
+    /// 设置 → 知识库 的开关，默认开
+    static var enabled: Bool {
+        UserDefaults.standard.object(forKey: "knowledge.web_fallback") == nil
+            ? true : UserDefaults.standard.bool(forKey: "knowledge.web_fallback")
+    }
+
+    private static let lastKey = "knowledge.web_fallback_last"
+    private static let cooldown: TimeInterval = 600
+
+    static func run(query: String, limit: Int) -> [String: Any]? {
+        guard enabled, !query.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        // 限流：同一 query 冷却期内直接跳过，不再联网
+        let store = UserDefaults.standard
+        var recent = (store.dictionary(forKey: lastKey) as? [String: Double]) ?? [:]
+        let now = Date().timeIntervalSince1970
+        if let last = recent[query], now - last < cooldown { return nil }
+        recent[query] = now
+        // 只保留最近 40 条，防止无限增长
+        if recent.count > 40 {
+            recent = Dictionary(uniqueKeysWithValues: recent.sorted { $0.value > $1.value }.prefix(40))
+        }
+        store.set(recent, forKey: lastKey)
+
+        let r = WebSearchService.search(query: query, provider: nil, limit: min(limit, 5))
+        let hits = r.hits.map { h -> [String: Any] in
+            ["title": h.title, "url": h.url, "snippet": h.snippet]
+        }
+        guard !hits.isEmpty || (r.answer?.isEmpty == false) else { return nil }
+        AuditLog.shared.log("knowledge.search", detail: "\(query) → 本地无命中，联网 \(r.provider) \(hits.count) 条")
+        var out: [String: Any] = [
+            "query": query,
+            "engine": "web",
+            "provider": r.provider,
+            "local_hits": 0,
+            "count": hits.count,
+            "hits": hits,
+            "note": "本地知识库没有匹配条目，以下是联网检索的外部资料，回答时请注明来源，不要当作本机事实。"
+        ]
+        if let a = r.answer, !a.isEmpty { out["answer"] = a }
+        return out
     }
 }
 

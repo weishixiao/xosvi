@@ -230,6 +230,28 @@ final class ReasoningSettings {
     /// 实际生效的档位（开关关掉就是 off）
     var effectiveLevel: ReasoningLevel { enabled ? level : .off }
 
+    /// v9.4：思考改为内置自动——界面上不再有开关/强度胶囊。
+    /// 按请求内容判强度（返回 chat_reasoning 的旧整数档位）：
+    ///   0 低 · 1 中 · 2 高 · 3 最高 · 4 极限
+    /// 判据只看用户本轮文字，不看历史，避免"聊久了永远拉满"。
+    ///   · 极短寒暄/确认 → 低
+    ///   · 含代码/日志/逆向/排查类词 → 高
+    ///   · 明确要求"仔细/深入/逐步分析/写代码/为什么" → 最高
+    ///   · 长文本（>400 字）或多段 → 至少中
+    static func autoLevel(for text: String) -> Int {
+        let t = text.lowercased()
+        let n = text.count
+        let heavyWords = ["深入", "仔细", "详细", "逐步", "分析", "为什么", "原理", "逆向",
+                          "反汇编", "崩溃", "闪退", "排查", "调试", "写个", "写一个", "实现",
+                          "重构", "优化", "架构", "证明", "推导", "漏洞", "越狱"]
+        let lightWords = ["你好", "hi", "hello", "在吗", "谢谢", "好的", "ok", "嗯", "收到", "继续"]
+        if n <= 8, lightWords.contains(where: { t.contains($0) }) { return 0 }
+        if heavyWords.contains(where: { t.contains($0) }) { return n > 120 ? 3 : 2 }
+        if n > 400 { return 2 }
+        if n > 120 { return 1 }
+        return 0
+    }
+
     func spec(for model: String, protocol proto: String) -> ReasoningSpec {
         let key = "reasoning.spec.\(proto).\(model)"
         if let data = UserDefaults.standard.data(forKey: key),

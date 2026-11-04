@@ -118,8 +118,8 @@ struct ChatView: View {
                 } else {
                     messageList
                 }
-                // v2.9.72：工作流可视化步骤条
-                WorkflowProgressView()
+                // v9.4：按用户要求移除「处理请求」工作流步骤条（WorkflowProgressView）——
+                // 它和消息里的「过程 N 步」重复展示同一批工具调用，属于噪声。
             }
             // v2.9.244：输入框改用 safeAreaInset 挂底部——标准键盘避让，不再手动 padding 双重压缩内容区
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -497,7 +497,9 @@ struct ChatView: View {
         guard let cfg = modelStore.defaultConfig else { return }
         if store.selectedId == nil { store.newConversation() }
         inputText = ""
-        store.send(text, using: cfg, reasoningLevel: thinkEnabled ? reasoning : 5, smartSearch: true, in: store.selectedId)
+        store.send(text, using: cfg,
+                   reasoningLevel: ReasoningSettings.autoLevel(for: text),
+                   smartSearch: true, in: store.selectedId)
     }
 
     /// v7.9.12：只渲染最近 N 条。会话几百条时，任何一次流式 delta 都会让整列 body 重算，
@@ -551,7 +553,8 @@ struct ChatView: View {
                             onDelete: { store.removeMessage(id: msg.id) },
                             isStreaming: store.streamingMessageId == msg.id,
                             forceType: store.liveProducedID == msg.id,
-                            thinkEnabled: thinkEnabled
+                            // v9.4：思考内置自动，始终展示模型返回的思考块
+                            thinkEnabled: true
                         )
                         .id(msg.id)
                     }
@@ -677,30 +680,9 @@ struct ChatView: View {
                     .padding(.top, 6)
 
                 HStack(spacing: 10) {
-                    // v6.9.15：原来的「技能」换成「思考 + 搜索」——两个开关就待在输入框里的工具行上。
-                    // 思考 = 原「推理·高」+「思考·开」合并：点一下开关，长按弹菜单调强度。
-                    DeepSeekPillButton(
-                        icon: dsSymbol("brain", fallback: "lightbulb"),
-                        title: thinkEnabled ? "思考·\(reasoningLabel())" : "思考·关",
-                        isOn: thinkEnabled
-                    ) {
-                        thinkEnabled.toggle()
-                    }
-                    .contextMenu {
-                        ForEach(ReasoningLevel.allCases) { level in
-                            Button {
-                                ReasoningSettings.shared.level = level
-                                ReasoningSettings.shared.enabled = (level != .off)
-                                reasoning = level.legacyIndex
-                                thinkEnabled = (level != .off)
-                            } label: {
-                                Label(level.displayName,
-                                      systemImage: ReasoningSettings.shared.level == level ? "checkmark" : "")
-                            }
-                        }
-                        Divider()
-                        Button(thinkEnabled ? "关闭思考" : "开启思考") { thinkEnabled.toggle() }
-                    }
+                    // v9.4：按用户要求删除「思考·强度」胶囊——思考改为内置自动：
+                    // 由 ReasoningSettings.autoEnabledForRequest 按请求内容决定强度，
+                    // 界面上不再暴露开关（用户指定"默认为自动，根据情况自动调整强度"）。
 
                     // v9：搜索服务快捷切换（Kelivo 的 search_settings_sheet）——
                     // 联网检索仍然默认全开，这个胶囊只用来「临时换一家服务商」和看读取方式。
@@ -927,8 +909,10 @@ struct ChatView: View {
         let attImgs = pendingAttachments.compactMap { $0.dataURL }
         pendingAttachments = []
         let finalImgs = attImgs.isEmpty ? imagesToSend : attImgs
-        // v3.4.1：思考总开关接入主发送路径（此前漏传，思考·开/关在输入框无效）
-        store.send(text, using: cfg, imageDataURLs: finalImgs, reasoningLevel: thinkEnabled ? reasoning : 3, smartSearch: true, in: store.selectedId)
+        // v9.4：思考内置自动——按本轮文字判断强度（原来读输入框胶囊的开关+档位）
+        store.send(text, using: cfg, imageDataURLs: finalImgs,
+                   reasoningLevel: ReasoningSettings.autoLevel(for: text),
+                   smartSearch: true, in: store.selectedId)
         AuditLog.shared.log("chat", detail: "发送消息")
     }
 
@@ -2171,7 +2155,7 @@ struct MessageBubble: View {
             if !message.isRunning, !message.content.isEmpty {
                 Text(Self.toolSummaryLine(message.content))
                     .font(.system(size: 11.5, design: .monospaced))
-                    .foregroundColor(.secondary)
+                    .foregroundColor(MonoChat.secondaryText)
                     .lineLimit(1)
                     .truncationMode(.tail)
                     .padding(.leading, 27)
@@ -2259,7 +2243,7 @@ struct FileCardRow: View {
                         .truncationMode(.middle)
                     Text(sizeText)
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(MonoChat.secondaryText)
                 }
                 Spacer()
                 Image(systemName: "eye")
@@ -2298,7 +2282,7 @@ struct TypingIndicator: View {
             ForEach(0..<3) { i in
                 Circle()
                     .frame(width: 6, height: 6)
-                    .foregroundColor(.secondary)
+                    .foregroundColor(MonoChat.secondaryText)
                     .offset(y: offset)
                     .animation(Animation.easeInOut(duration: 0.4).repeatForever().delay(Double(i) * 0.15), value: offset)
             }
@@ -2344,11 +2328,11 @@ struct TrailCard: View {
                         .font(.system(size: 13))
                     Text(L10n.t("ui_158", steps.count))
                         .font(.caption.weight(.medium))
-                        .foregroundColor(.secondary)
+                        .foregroundColor(MonoChat.secondaryText)
                     Spacer()
                     Text(summaryText)
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(MonoChat.secondaryText)
                         .lineLimit(1)
                 }
             }
@@ -2396,18 +2380,18 @@ struct TrailRow: View {
                 if step.status == .running {
                     Text(L10n.t("ui_64"))
                         .font(.caption2)
-                        .foregroundColor(.secondary)
+                        .foregroundColor(MonoChat.secondaryText)
                 } else if !step.detail.isEmpty {
                     if detailExpanded {
                         Text(step.detail)
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(MonoChat.secondaryText)
                             .lineLimit(6)
                             .onTapGesture { detailExpanded = false }
                     } else {
                         Text(step.detail)
                             .font(.caption2)
-                            .foregroundColor(.secondary)
+                            .foregroundColor(MonoChat.secondaryText)
                             .lineLimit(1)
                             .onTapGesture { detailExpanded = true }
                     }

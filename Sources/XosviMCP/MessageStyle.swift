@@ -52,10 +52,14 @@ enum MonoChat {
     static let bg            = Color.white
     static let surface       = Color.white            // AI 气泡：白底 + 黑细描边
     static let surfaceRaised = Color(white: 0.95)     // 工具卡 / 输入框 / 抬升面
-    static let stroke        = Color.black.opacity(0.12)
-    static let strokeStrong  = Color.black.opacity(0.30)
+    static let stroke        = Color.black.opacity(0.18)
+    static let strokeStrong  = Color.black.opacity(0.38)
     static let text          = Color.black
-    static let subtext       = Color.black.opacity(0.55)
+    /// v9.4：弱色从 0.55 提到 0.68——白底上 0.55 黑字对比度只有约 4.1:1，
+    /// 11pt 小字（工具名、时间、过程行）看起来发灰发虚，用户反馈"对比不明显"。
+    static let subtext       = Color.black.opacity(0.68)
+    /// v9.4：正文外的次级正文（思考块、引用、列表标记）统一走它，不再用系统 .secondary
+    static let secondaryText = Color.black.opacity(0.76)
     /// v9.3：用户气泡也改白底（抬升面灰 + 黑细描边）+ 黑字，与 AI 气泡同向，
     /// 用户指定"我发的信息和输入框都不要黑底"。
     static let userBubble    = Color(white: 0.95)
@@ -380,7 +384,7 @@ struct MessageBodyView: View {
                             HStack(alignment: .top, spacing: 8) {
                                 Text(ordered ? "\(i + 1)." : "•")
                                     .font(ChatType.body)
-                                    .foregroundColor(isUser ? textColor.opacity(0.8) : .secondary)
+                                    .foregroundColor(isUser ? textColor.opacity(0.8) : MonoChat.secondaryText)
                                     .frame(minWidth: 16, alignment: .trailing)
                                 if let renderText = renderText {
                                     renderText(item)
@@ -409,7 +413,7 @@ struct MessageBodyView: View {
                         Text(t)
                             .font(ChatType.secondary)
                             .lineSpacing(4)
-                            .foregroundColor(isUser ? textColor.opacity(0.85) : .secondary)
+                            .foregroundColor(isUser ? textColor.opacity(0.85) : MonoChat.secondaryText)
                             .fixedSize(horizontal: false, vertical: true)
                     }
 
@@ -429,7 +433,7 @@ struct MessageBodyView: View {
 struct MarkdownTable: View {
     let rows: [[String]]
     /// v8.6：文字色——用户气泡（accent 底）传白字，AI 气泡传主色
-    var textColor: Color = .primary
+    var textColor: Color = MonoChat.text
 
     private var columnCount: Int { rows.map(\.count).max() ?? 0 }
 

@@ -35,11 +35,7 @@ struct SettingsView: View {
     @State private var jumpToSystemPrompts = false
     // v3.3.2：抓包 VPN 开关失败提示
     @State private var vpnToggleError = ""
-    // v4.3.29：订阅更新管理器，副标题实时显示 检查中/下载进度/发现新版本
-    @ObservedObject private var updateManager = UpdateManager.shared
-    // v4.3.30：更新镜像源编辑器
-    @State private var showMirrorEditor = false
-    @State private var mirrorsText = ""
+    // v9.4：更新管理器的订阅与镜像编辑器随「检查更新」入口删除
     var body: some View {
         // v2.9.247：GeometryReader 拿真实全屏尺寸——fullScreenCover+NavigationStack 组合下 List 高度被解析为内容高度(内容不满一屏时列表只占上半屏、下半空白),外层 frame 也无效;改用几何尺寸显式强制 List 与 NavigationStack 铺满全屏,所有机型一致
         GeometryReader { geo in
@@ -196,11 +192,14 @@ struct SettingsView: View {
                              subtitle: "注入 · UI 树 · 截图 · 点按 · 滑动 · 输入 · 按键",
                              icon: "slider.horizontal.3", color: .gray,
                              destination: AnyView(ControlConsoleView())),
-                // v7.8.0：深度思考（方言 / 采样策略 / 回传 / token 预算）
-                SettingsItem(title: "深度思考",
-                             subtitle: "参数方言 · 采样策略 · token 预算",
-                             icon: "brain", color: .gray,
-                             destination: AnyView(ReasoningSettingsView())),
+                // v9.4：MCP 服务入口（原有 MCPGatewayServer 一直没有界面，用户以为本机没有 MCP）
+                SettingsItem(title: "MCP 服务",
+                             subtitle: "外部客户端连本机工具 · JSON-RPC · 令牌",
+                             icon: "point.3.connected.trianglepath.dotted", color: .gray,
+                             destination: AnyView(MCPServerView())),
+                // v9.4：按用户要求删除「深度思考」入口（ReasoningSettingsView 源文件一并删除）——
+                // 思考改为内置自动：按请求内容判强度（ReasoningSettings.autoLevel），用户无需配置。
+                // 方言/采样策略等 ReasoningSpec 兼容层仍在 ReasoningDialects.swift 里，供协议层使用。
                 // v7.6.0：环境（移植 Kelivo 的 Environment 页：环境预设 / 镜像 / 挂载 / 修复）
                 SettingsItem(title: "环境",
                              subtitle: "Python · Node · Git · 镜像 · 挂载",
@@ -214,44 +213,34 @@ struct SettingsView: View {
                 SettingsItem(title: L10n.t("row_agents"),
                              subtitle: "隔离指令 · 工作流",
                              icon: "person.3.fill", color: .indigo,
-                             destination: AnyView(AgentsAndSkillsView())),
-                SettingsItem(title: L10n.t("row_kb"),
-                             subtitle: "文件导入 · 来源检索",
-                             icon: "books.vertical.fill", color: .brown,
-                             destination: AnyView(KnowledgeBaseView()))
+                             destination: AnyView(AgentsAndSkillsView()))
+                // v9.4：按用户要求删除「本机知识库」入口——其导入能力并入上面的「知识库」页
+                // （KnowledgeSettingsView），KnowledgeBaseView 源码一并移除。
             ]
             groups.append(SettingsGroup(header: "工具与管理", items: devItems))
 
-        // 安全
-        groups.append(SettingsGroup(header: L10n.t("sec_security"), items: [
-            SettingsItem(title: L10n.t("row_audit"),
-                         subtitle: "工具调用 · 成功/失败 · 导出给 AI 查看",
-                         icon: "list.bullet.rectangle", color: .tmIndigo,
-                         destination: AnyView(AuditLogView())),
-            // v7.16.11：按用户要求删除「重置所有数据」入口（含 resetAllData 实现）。
-            // 卸载即清空数据已由 AppDelegate 的「首装检测」接管，不再需要手动重置。
-            // v7.16.11：按用户要求删除「工作区文件」入口（WorkspaceBrowserView 已从设置移除）。
-            // v7.4.1：清理中心（含系统清理 / App 清理）整块删除（用户要求）
-            // v6.9.15：Coruna 安全盾 / Web 注入已按用户要求删除
-        ]))
+        // v9.4：按用户要求删除「安全」分组里的「本机工具审计」入口，AuditLogView / ToolAuditView /
+        // CrashLogsView 三个页面源码一并移除（MoreViews.swift 1–491 行）。分组随之清空，整块删除。
+        // AuditLog 记录层（AuditLog.shared.log 各处调用）保留，不影响任何功能。
+        // v7.16.11：按用户要求删除「重置所有数据」入口（含 resetAllData 实现）。
+        // 卸载即清空数据已由 AppDelegate 的「首装检测」接管，不再需要手动重置。
+        // v7.16.11：按用户要求删除「工作区文件」入口（WorkspaceBrowserView 已从设置移除）。
+        // v7.4.1：清理中心（含系统清理 / App 清理）整块删除（用户要求）
+        // v6.9.15：Coruna 安全盾 / Web 注入已按用户要求删除
 
         // 关于
-        let ver = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        // v9.4：版本文本统一走 appVersionText()（不再用局部 ver 变量）
         var aboutItems: [SettingsItem] = [
             // v7.16.11：按用户要求删除「关于作者」入口（AboutAuthorView 源文件一并删除）
             SettingsItem(title: L10n.t("row_lang"),
                          subtitle: LanguageManager.shared.language.displayName,
                          icon: "globe", color: .purple,
                          action: { showLanguagePicker = true }),
-            // v4.3.29：一键更新——单行点击即进入更新页面（里面包含检查更新和镜像源设置）
-            // v4.3.39：发现新版时行尾显示红点提醒
-            SettingsItem(title: L10n.t("row_check_update"),
-                         subtitle: updateSubtitle(),
-                         icon: "arrow.triangle.2.circlepath.circle.fill", color: .green,
-                         destination: AnyView(UpdateView()),
-                         redDot: { UpdateManager.shared.hasUpdateRedDot }),
+            // v9.4：按用户要求删除「检查更新」入口与 UpdateView 页面源码。
+            // UpdateManager 本身保留（侧载环境下不再自动检查），只是不再有界面入口。
+            // v9.4：版本行——读数失败时回退到 bundle 版本号/构建号，不再显示 "unknown"
             SettingsItem(title: L10n.t("version"),
-                         subtitle: ver, icon: "number.circle.fill", color: .gray,
+                         subtitle: Self.appVersionText(), icon: "number.circle.fill", color: .gray,
                          destination: nil)
         ]
         groups.append(SettingsGroup(header: L10n.t("sec_about"), items: aboutItems))
@@ -296,57 +285,56 @@ struct SettingsView: View {
         } message: {
             Text(vpnToggleError)
         }
-        // v4.3.30：更新镜像源编辑（GitHub 被墙时的备用通道，每行一个前缀，逗号分隔）
-        .sheet(isPresented: $showMirrorEditor) {
-            NavigationView {
-                Form {
-                    Section(footer: Text("GitHub 被墙（国内常见）时，自动按顺序尝试这些镜像前缀来检查与下载更新。每行一个，用逗号分隔；留空恢复默认（ghfast.top、gh-proxy.com）。")) {
-                        TextEditor(text: $mirrorsText)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 110)
-                    }
+        // v9.4：更新镜像源弹窗随「检查更新」入口一起删除
+    }
+
+    /// v9.4：每一行改用圆框卡片（灰底 + 黑细描边），不再用系统分隔线。
+    /// rowCard 统一处理背景、圆角、描边与行间距。
+    @ViewBuilder
+    private func listRow(_ item: SettingsItem) -> some View {
+        rowCard {
+            // 开关优先：Toggle 项同时带 destination 时用 NavigationLink 包 Toggle（如抓包 VPN 开关）
+            if let isOn = item.isOn, let onToggle = item.onToggle {
+                let toggle = Toggle(isOn: Binding(get: isOn, set: onToggle)) {
+                    SettingRowContent(item: item)
                 }
-                .navigationTitle("更新镜像源")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { showMirrorEditor = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("保存") {
-                            UpdateManager.shared.saveMirrors(mirrorsText)
-                            showMirrorEditor = false
-                        }
-                    }
+                .accentColor(.primary)   // v7.1.1：开关也走黑白，不再用青色
+                if let dest = item.destination {
+                    NavigationLink(destination: dest) { toggle }
+                } else {
+                    toggle
                 }
+            } else if let dest = item.destination {
+                NavigationLink(destination: dest) {
+                    SettingRowContent(item: item)
+                }
+            } else if let action = item.action {
+                Button(action: action) {
+                    SettingRowContent(item: item)
+                }
+            } else {
+                SettingRowContent(item: item)
             }
         }
     }
 
-    @ViewBuilder
-    private func listRow(_ item: SettingsItem) -> some View {
-        // 开关优先：Toggle 项同时带 destination 时用 NavigationLink 包 Toggle（如抓包 VPN 开关）
-        if let isOn = item.isOn, let onToggle = item.onToggle {
-            let toggle = Toggle(isOn: Binding(get: isOn, set: onToggle)) {
-                SettingRowContent(item: item)
-            }
-            .accentColor(.primary)   // v7.1.1：开关也走黑白，不再用青色
-            if let dest = item.destination {
-                NavigationLink(destination: dest) { toggle }
-            } else {
-                toggle
-            }
-        } else if let dest = item.destination {
-            NavigationLink(destination: dest) {
-                SettingRowContent(item: item)
-            }
-        } else if let action = item.action {
-            Button(action: action) {
-                SettingRowContent(item: item)
-            }
-        } else {
-            SettingRowContent(item: item)
-        }
+    /// 行卡片的容器修饰（所有行共用，保证圆框/描边/间距一致）
+    private func rowCard<C: View>(@ViewBuilder _ content: () -> C) -> some View {
+        content()
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            // 行底用抬升面灰、白页上才有边界；与对话页聊天气泡同色系
+            .background(MonoChat.surfaceRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                    .strokeBorder(MonoChat.stroke, lineWidth: 0.8)
+            )
+            // 圆框之间留 8pt 空隙，替代原来的分隔线
+            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
     }
 
     // MARK: - 动态值
@@ -403,57 +391,21 @@ struct SettingsView: View {
         return host.isEmpty ? "未配置" : host
     }
 
-    // v4.3.29：副标题实时反映更新状态（检查中/下载进度/发现新版本/错误/已是最新）
-    // v4.3.30：已是最新时附带检查源（GitHub / jsDelivr / 镜像）
-    private func updateSubtitle() -> String {
-        let m = updateManager
-        if m.isChecking {
-            return "正在检查 GitHub 最新构建…"
+    /// v9.4：版本显示——CFBundleShortVersionString 为空时用构建号补齐，
+    /// 两者都缺才退回 "—"，不再把 "unknown" 显示给用户。
+    static func appVersionText() -> String {
+        let info = Bundle.main.infoDictionary ?? [:]
+        func s(_ k: String) -> String {
+            (info[k] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         }
-        if m.isDownloading {
-            let pct = Int(m.downloadProgress * 100)
-            return "正在下载 v\(m.latestVersion ?? "")… \(pct)%"
+        let short = s("CFBundleShortVersionString")
+        let build = s("CFBundleVersion")
+        if !short.isEmpty {
+            return build.isEmpty || short.contains(build) ? short : "\(short) (\(build))"
         }
-        if m.updateAvailable, let v = m.latestVersion {
-            return "发现新版本 v\(v) · 点此一键更新安装"
-        }
-        if let s = m.installMessage, !s.isEmpty {
-            return s
-        }
-        if let e = m.errorMessage, !e.isEmpty {
-            return e
-        }
-        if let s = m.lastSource {
-            return "已是最新 · 检查源: \(s)"
-        }
-        return "已是最新"
+        return build.isEmpty ? "—" : build
     }
 
-    // v4.3.30：镜像源副标题（显示当前生效的镜像，去协议前缀）
-    private func mirrorSubtitle() -> String {
-        let list = UpdateManager.shared.mirrors
-            .map { $0.replacingOccurrences(of: "https://", with: "")
-                      .replacingOccurrences(of: "http://", with: "")
-                      .replacingOccurrences(of: "/", with: "") }
-        return "GitHub 被墙时备用 · " + list.joined(separator: ", ")
-    }
-
-    // v3.3.2：抓包 VPN 开关副标题
-    private func vpnActiveSubtitle() -> String {
-        VpnManager.shared.vpnActive ? "运行中 · 点击右侧开关关闭" : "未运行 · 点击右侧开关开启"
-    }
-
-}
-
-/// 行内容（列表/卡片共用视觉）
-struct SettingRowContent: View {
-    let item: SettingsItem
-
-    /// v7.1.1：DeepSeek 的设置项是纯线条图标、没有底板；原来的 xxx.fill 在这里会变成一坨黑块，
-    /// 所以统一去掉 .fill 落到同名线条版。
-    private var lineIcon: String {
-        let raw = item.icon
-        guard raw.hasSuffix(".fill") else { return raw }
         return String(raw.dropLast(5))
     }
 
@@ -493,179 +445,6 @@ struct LabeledRow: View {
                 .foregroundColor(.secondary)
                 .font(.system(.footnote, design: .monospaced))
         }
-    }
-}
-
-// v6.0.28：更新页面（包含检查更新和更新镜像源设置）
-struct UpdateView: View {
-    @ObservedObject private var updateManager = UpdateManager.shared
-    @State private var showMirrorEditor = false
-    @State private var mirrorsText = ""
-    @State private var showTokenEditor = false
-    @State private var tokenText = ""
-    @State private var tokenHint = ""
-    @State private var tokenRevision = 0
-    
-    private var currentVersion: String {
-        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
-    }
-    
-    private var updateSubtitle: String {
-        if updateManager.isChecking { return "正在检查更新…" }
-        if updateManager.downloadProgress > 0 { return "正在下载 v\(updateManager.latestVersion ?? "")… \(Int(updateManager.downloadProgress*100))%" }
-        if updateManager.updateAvailable, let v = updateManager.latestVersion {
-            return "发现新版本 v\(v) · 点下方按钮更新"
-        }
-        if let s = updateManager.installMessage, !s.isEmpty { return s }
-        return "已是最新版本"
-    }
-    
-    var body: some View {
-        List {
-            Section(header: Text("更新状态")) {
-                HStack {
-                    Text("当前版本")
-                    Spacer()
-                    Text(currentVersion)
-                        .foregroundColor(.secondary)
-                }
-                HStack {
-                    Text("状态")
-                    Spacer()
-                    Text(updateSubtitle)
-                        .foregroundColor(.secondary)
-                        .multilineTextAlignment(.trailing)
-                }
-                // v7.16.10：把更新源摆出来——旧版默认指向 zrrt/xosvi（别人的仓库），
-                // 用户看到"检测出来的不是我的包"却查不到原因。
-                HStack {
-                    Text("更新源")
-                    Spacer()
-                    Text(UpdateManager.shared.repoDisplay)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
-                Button(action: { updateManager.updateNow(currentVersion: currentVersion) }) {
-                    HStack {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                        Text("立即检查更新")
-                    }
-                }
-            }
-            
-            Section(header: Text("私有仓库令牌"),
-                    footer: Text("仓库是 private 时，GitHub Releases 直链和所有镜像都会 404，必须带令牌走 API 下载。\n令牌与「构建与注入」页的 Git 令牌共用（存 Keychain），只需要 repo 读权限（Fine-grained: Contents / Actions 只读）。环境变量 GITHUB_TOKEN / GH_TOKEN 也会被自动使用。")) {
-                Button(action: {
-                    tokenText = GitNative.token ?? ""
-                    tokenHint = ""
-                    showTokenEditor = true
-                }) {
-                    HStack {
-                        Image(systemName: "key.fill")
-                            .foregroundColor(.orange)
-                        Text("访问令牌")
-                        Spacer()
-                        Text(GitNative.token == nil ? "未设置" : "已设置")
-                            .foregroundColor(.secondary)
-                            .font(.caption)
-                    }
-                }
-                .id(tokenRevision)
-                if GitNative.token != nil {
-                    Button(action: {
-                        _ = KeychainStore.shared.delete("git.github.token")
-                        tokenRevision += 1
-                        updateManager.errorMessage = "已清除令牌（若配了环境变量仍会使用环境变量里的）"
-                    }) {
-                        Text("清除令牌").foregroundColor(.red)
-                    }
-                }
-            }
-
-            Section(header: Text("高级设置"), footer: Text("GitHub 被墙（国内常见）时，自动按顺序尝试这些镜像前缀来检查与下载更新。每行一个，用逗号分隔；留空恢复默认（ghfast.top、gh-proxy.com）。")) {
-                Button(action: {
-                    mirrorsText = UpdateManager.shared.mirrorsText
-                    showMirrorEditor = true
-                }) {
-                    HStack {
-                        Image(systemName: "arrow.triangle.branch")
-                            .foregroundColor(.orange)
-                        Text("更新镜像源")
-                        Spacer()
-                        Text(mirrorHost())
-                            .foregroundColor(.secondary)
-                            .font(.caption)
-                    }
-                }
-            }
-        }
-        .navigationTitle("检查更新")
-        .navigationBarTitleDisplayMode(.inline)
-        .sheet(isPresented: $showTokenEditor) {
-            NavigationView {
-                Form {
-                    Section(header: Text("GitHub 访问令牌"),
-                            footer: Text("用于私有仓库的更新检查与下载（API 鉴权）。只需 repo 读权限：Fine-grained PAT → Contents: Read, Actions: Read；或 classic PAT 勾选 repo。保存在 Keychain，不会写进 UserDefaults。")) {
-                        SecureField("github_pat_… 或 ghp_…", text: $tokenText)
-                            .font(.system(.body, design: .monospaced))
-                            .autocapitalization(.none)
-                            .disableAutocorrection(true)
-                    }
-                    if !tokenHint.isEmpty {
-                        Section { Text(tokenHint).font(.caption).foregroundColor(.secondary) }
-                    }
-                }
-                .navigationTitle("访问令牌")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { showTokenEditor = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("保存") {
-                            if GitNative.saveToken(tokenText) {
-                                tokenRevision += 1
-                                showTokenEditor = false
-                                updateManager.errorMessage = nil
-                            } else {
-                                tokenHint = "令牌太短（至少 11 个字符），请检查是否复制完整"
-                            }
-                        }
-                    }
-                }
-            }
-        }
-        .sheet(isPresented: $showMirrorEditor) {
-            NavigationView {
-                Form {
-                    Section(footer: Text("GitHub 被墙（国内常见）时，自动按顺序尝试这些镜像前缀来检查与下载更新。每行一个，用逗号分隔；留空恢复默认（ghfast.top、gh-proxy.com）。")) {
-                        TextEditor(text: $mirrorsText)
-                            .font(.system(.body, design: .monospaced))
-                            .frame(minHeight: 110)
-                    }
-                }
-                .navigationTitle("更新镜像源")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .cancellationAction) {
-                        Button("取消") { showMirrorEditor = false }
-                    }
-                    ToolbarItem(placement: .confirmationAction) {
-                        Button("保存") {
-                            UpdateManager.shared.saveMirrors(mirrorsText)
-                            showMirrorEditor = false
-                        }
-                    }
-                }
-            }
-        }
-    }
-    
-    private func mirrorHost() -> String {
-        let m = UpdateManager.shared.mirrorsText.trimmingCharacters(in: .whitespacesAndNewlines)
-        if m.isEmpty { return "默认（ghfast.top）" }
-        let first = m.components(separatedBy: [",", "\n"]).first(where: { !$0.isEmpty }) ?? ""
-        return first.isEmpty ? "默认" : first
     }
 }
 

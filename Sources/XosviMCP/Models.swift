@@ -1528,8 +1528,9 @@ final class ConversationStore: ObservableObject {
                         self.streamProjections.removeValue(forKey: sid)
                         self.streamingMessageId = nil
                         // v6.5.7：自我批判精炼——深度思考开、答案足够长、本轮未精炼过 → 追加一轮"批判→改进"
-                        let thinkOn = UserDefaults.standard.object(forKey: "chat_think_enabled") == nil
-                            ? true : UserDefaults.standard.bool(forKey: "chat_think_enabled")
+                        // v9.4：思考已内置自动——"自我批判精炼"也随之自动：深档（≥2）的回答才追加一轮批判，
+                        // 且答案需足够长。chat_auto_refine 作为可选的强制开关注入保留，不再有设置界面。
+                        let thinkOn = true
                         // v7.15.3：改为显式开关（默认关）。原来只要"思考开 + 答案 >120 字"就
                         // 静默再发一次完整 LLM 请求并把结果 += 追加到同一条消息：
                         // 用户看到两个答案、成本翻倍，且不可预期。

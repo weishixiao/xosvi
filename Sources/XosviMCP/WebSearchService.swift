@@ -259,6 +259,47 @@ enum WebSearchService {
 
 enum BingLocal {
     static func search(query: String, limit: Int) -> SearchResponse {
+        // v9.4：先走 RSS 接口（稳定、结构化、不受改版与反爬影响）；
+        // 实测 https://cn.bing.com/search?q=..&format=rss 在本机网络可直接出 XML。
+        // 原来只解析 HTML 的 b_algo 块，必应改版或返回验证页时一条也拿不到。
+        let rss = rssSearch(query: query, limit: limit)
+        if !rss.hits.isEmpty { return rss }
+        let html = htmlSearch(query: query, limit: limit)
+        if !html.hits.isEmpty { return html }
+        // 两个都空：把 RSS 的错误优先报出去（HTML 多半是被拦成验证页）
+        return SearchResponse(provider: "必应", answer: nil, hits: [],
+                              error: rss.error ?? html.error ?? "无结果")
+    }
+
+    /// v9.4：RSS 通道——<item><title/><link/><description/></item>
+    private static func rssSearch(query: String, limit: Int) -> SearchResponse {
+        let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
+        let (xml, err) = WebSearchService.getText("https://cn.bing.com/search?q=\(q)&format=rss&count=\(limit)")
+        guard let x = xml else { return SearchResponse(provider: "必应", answer: nil, hits: [], error: err) }
+        var hits: [SearchHit] = []
+        for block in x.components(separatedBy: "<item>").dropFirst() {
+            if hits.count >= limit { break }
+            guard let link = block.firstCapture(pattern: "<link>([\\s\\S]*?)</link>")?
+                              .trimmingCharacters(in: .whitespacesAndNewlines),
+                  link.hasPrefix("http") else { continue }
+            let title = (block.firstCapture(pattern: "<title>([\\s\\S]*?)</title>") ?? "")
+                .replacingOccurrences(of: "<![CDATA[", with: "")
+                .replacingOccurrences(of: "]]>", with: "")
+                .stripHTMLTags()
+            let desc = (block.firstCapture(pattern: "<description>([\\s\\S]*?)</description>") ?? "")
+                .replacingOccurrences(of: "<![CDATA[", with: "")
+                .replacingOccurrences(of: "]]>", with: "")
+                .stripHTMLTags()
+            guard !title.isEmpty else { continue }
+            if hits.contains(where: { $0.url == link }) { continue }
+            hits.append(SearchHit(title: title, url: link, snippet: desc))
+        }
+        return SearchResponse(provider: "必应", answer: nil, hits: hits,
+                              error: hits.isEmpty ? "RSS 无结果" : nil)
+    }
+
+    /// 旧通道：HTML 的 b_algo 块（RSS 不可用时兜底）
+    private static func htmlSearch(query: String, limit: Int) -> SearchResponse {
         let q = query.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? query
         let (html, err) = WebSearchService.getText("https://cn.bing.com/search?q=\(q)&count=\(limit)")
         guard let h = html else { return SearchResponse(provider: "必应", answer: nil, hits: [], error: err) }
