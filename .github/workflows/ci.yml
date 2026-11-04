@@ -45,8 +45,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # ubuntu-latest 升到 26.04 后镜像里不再预装 swiftc，门禁会把每个文件都判成
+      # "swiftc: command not found → 语法错误"。显式装一个 Swift 工具链再解析。
+      - uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: '6.0'
       - name: swift version
-        run: swift --version || true
+        run: swift --version
       - name: Parse all Swift sources
         run: |
           set -o pipefail
