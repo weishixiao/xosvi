@@ -161,8 +161,10 @@ final class RootdTool: MCPTool {
     /// v8.2：daemon 跑在哪个 launchd 域。
     /// user/501 域里进程是 mobile 身份——state 也是 running，但执行 root 命令必然失败。
     /// 旧版只看 pid/心跳，会把这种「假活」当成可用。
+    /// v0.2.2：当前守护的真实 label（xosvid）排在旧的 rootd label 之前。
+    /// 旧版只认 com.xosvi.rootd，于是 xosvid 明明在跑，status 仍报 daemon_domain: none。
     private func daemonDomain() -> String {
-        let labels = ["com.xosvi.rootd", "com.trollhax.rootd"]
+        let labels = ["wiki.qaq.xosvid", "com.xosvi.rootd", "com.trollhax.rootd"]
         for label in labels {
             if launchctlPrint("system/\(label)") { return "system" }
         }
@@ -170,6 +172,17 @@ final class RootdTool: MCPTool {
             if launchctlPrint("user/501/\(label)") { return "user/501" }
         }
         return "none"
+    }
+
+    /// xosvid 的 LaunchDaemon plist 在哪（roothide 的 jbroot 每次重装都会变）。
+    private func daemonPlistPath() -> String? {
+        var candidates: [String] = []
+        if let jb = JBEnvironment.jbrootPath, !jb.isEmpty {
+            candidates.append(jb + "/Library/LaunchDaemons/wiki.qaq.xosvid.plist")
+        }
+        candidates.append("/var/jb/Library/LaunchDaemons/wiki.qaq.xosvid.plist")
+        candidates.append("/Library/LaunchDaemons/wiki.qaq.xosvid.plist")
+        return candidates.first { fm.fileExists(atPath: $0) }
     }
 
     private func launchctlPrint(_ target: String) -> Bool {
@@ -199,6 +212,8 @@ final class RootdTool: MCPTool {
         if let jb = JBEnvironment.jbrootPath, !jb.isEmpty {
             plistCandidates.insert(jb + "/Library/LaunchDaemons/com.xosvi.rootd.plist", at: 0)
         }
+        // 当前守护（xosvid）优先
+        if let p = daemonPlistPath() { plistCandidates.insert(p, at: 0) }
 
         for path in plistCandidates {
             guard let data = fm.contents(atPath: path) else { continue }
@@ -223,8 +238,6 @@ final class RootdTool: MCPTool {
         let states = Self.candidateDirs.map(dirState)
         let pid = daemonPID()
         let hb = freshestHeartbeat()
-        let alive = pid != nil || (hb != nil && hb! <= 5)
-        let aliveSource = pid != nil ? "pid" : (alive ? "heartbeat" : "none")
         let dirs: [[String: Any]] = states.map {
             var m: [String: Any] = ["path": $0.path, "exists": $0.exists,
                                     "writable": $0.writable, "status": $0.status,
@@ -235,13 +248,20 @@ final class RootdTool: MCPTool {
         }
         let domain = daemonDomain()
         let xpc = xpcStatus()
+        // v0.2.2：xosvid 是 C 守护，不写 .rootd.pid、也不写 .alive 心跳（那套是旧 rootd.sh 的），
+        // 所以旧的两种判据在它身上永远为假。XPC 握手成功 = 守护活着且身份正确，这才是权威判据。
+        let xpcReachable = (xpc["reachable"] as? Bool) == true
+        let alive = pid != nil || (hb != nil && hb! <= 5) || xpcReachable
+        let aliveSource: String
+        if pid != nil { aliveSource = "pid" } else if xpcReachable { aliveSource = "xpc" }
+        else if alive { aliveSource = "heartbeat" } else { aliveSource = "none" }
         var out: [String: Any] = [
-            "installed": states.contains { $0.exists },
+            "installed": states.contains { $0.exists } || daemonPlistPath() != nil,
             "daemon_domain": domain,
-            "privileged": domain == "system",
+            "privileged": domain == "system" || ((xpc["uid"] as? Int) == 0),
             "xpc": xpc,
             "daemon_alive": alive,
-            "daemon_pid": pid.map { Int($0) } ?? 0,
+            "daemon_pid": pid.map { Int($0) } ?? (xpc["pid"] as? Int ?? 0),
             "alive_source": aliveSource,
             "heartbeat_age": hb ?? -1,
             "dirs": dirs,
@@ -276,9 +296,9 @@ final class RootdTool: MCPTool {
             return out
         }
         if !states.contains(where: { $0.exists }) {
-            out["hint"] = "rootd 未安装，或 App 完全看不到候选目录（看 dirs[].write_error）：安装 newterm-autoroot ≥1.5.0"
+            out["hint"] = "xosvid 未安装（找不到 LaunchDaemon plist）：装 com.xosvi.daemon"
         } else if !alive {
-            out["hint"] = "目录在但守护进程没跑：让用户执行 sh /var/mobile/.newterm-autoroot/selfcheck.sh 或 launchctl kickstart -k system/com.xosvi.rootd"
+            out["hint"] = "plist 在但服务没跑：root 下执行 icli svc bootstrap <jbroot>/Library/LaunchDaemons/wiki.qaq.xosvid.plist，再 icli svc start wiki.qaq.xosvid"
         } else if !states.contains(where: { $0.shared }) {
             out["hint"] = "daemon 活着但没有任何目录收到心跳（.alive 不新鲜）：App 与本机文件系统是两个视图。dirs[].inode 与终端 ls -di 对比可确认"
         } else if !states.contains(where: { $0.writable }) {

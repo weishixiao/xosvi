@@ -130,6 +130,12 @@ cat > "$pkg/Library/LaunchDaemons/wiki.qaq.xosvid.plist" <<'PLIST'
 	</dict>
 	<key>UserName</key>
 	<string>root</string>
+	<!-- 0.2.2：装完由 icli svc bootstrap 注册后即自启，重启也不必再人工拉起。
+	     KeepAlive 让崩溃后被 launchd 重新拉起；两者配合，on-demand 的 MachService 才稳。 -->
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
 	<key>Umask</key>
 	<integer>18</integer>
 	<key>ProcessType</key>
@@ -151,7 +157,7 @@ cat > "$pkg/Library/LaunchDaemons/wiki.qaq.xosvid.plist" <<'PLIST'
 PLIST
 
 # ---- DEBIAN ------------------------------------------------------------------
-VERSION="0.2.1"   # 0.2.0 起 helper 按运行期 bootstrap 解析路径；0.2.1 加 xosvi-build --exec（App 的 root 通道走 XPC）
+VERSION="0.2.2"   # 0.2.0 helper 运行期解析路径；0.2.1 xosvi-build --exec；0.2.2 plist 加 RunAtLoad/KeepAlive（装完即自启，重启不用人工拉）
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: com.xosvi.daemon
 Version: ${VERSION}
