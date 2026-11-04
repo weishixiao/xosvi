@@ -54,8 +54,8 @@ final class MCPGatewayServer {
 
     /// v9.7：给 ChatBridgeServer 用的公开只读访问器——
     /// 本机兼容端点复用同一套 token，用户不用记两份密钥。
-    public static var sharedFullToken: String { GatewayServer.shared.currentToken }
-    public static var sharedReadToken: String { GatewayServer.shared.currentReadToken }
+    public static var sharedFullToken: String { MCPGatewayServer.shared.currentToken }
+    public static var sharedReadToken: String { MCPGatewayServer.shared.currentReadToken }
 
     func status() -> [String: Any] {
         stateLock.lock(); defer { stateLock.unlock() }

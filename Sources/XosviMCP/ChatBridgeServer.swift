@@ -67,7 +67,7 @@ public final class ChatBridgeServer {
 
         var addr = sockaddr_in()
         addr.sin_family = sa_family_t(AF_INET)
-        addr.sin_port = port().bigEndian
+        addr.sin_port = self.port.bigEndian
         addr.sin_addr.s_addr = inet_addr("127.0.0.1")   // 只本机可达
 
         let bindOK = withUnsafePointer(to: &addr) { ptr -> Bool in
@@ -145,8 +145,8 @@ public final class ChatBridgeServer {
         // 鉴权：与 GatewayServer 共享 token
         let auth = request.headers["authorization"] ?? ""
         let bearer = auth.hasPrefix("Bearer ") ? String(auth.dropFirst(7)) : ""
-        let fullToken = GatewayServer.sharedFullToken
-        let readToken = GatewayServer.sharedReadToken
+        let fullToken = MCPGatewayServer.sharedFullToken
+        let readToken = MCPGatewayServer.sharedReadToken
         let role: String
         if !bearer.isEmpty && bearer == fullToken { role = "full" }
         else if !bearer.isEmpty && bearer == readToken { role = "read" }

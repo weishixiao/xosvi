@@ -391,6 +391,11 @@ struct SettingsView: View {
         return host.isEmpty ? "未配置" : host
     }
 
+    /// 抓包 VPN 的状态副标题：开启时显示已拦截的连接数，未开启时引导用户点开。
+    private func vpnActiveSubtitle() -> String {
+        VpnManager.shared.vpnActive ? "已开启 · 点击查看捕获记录" : "未开启 · 点击开启 MITM 隧道"
+    }
+
     /// v9.4：版本显示——CFBundleShortVersionString 为空时用构建号补齐，
     /// 两者都缺才退回 "—"，不再把 "unknown" 显示给用户。
     static func appVersionText() -> String {

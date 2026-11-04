@@ -641,7 +641,7 @@ enum KnowledgeWebFallback {
         recent[query] = now
         // 只保留最近 40 条，防止无限增长
         if recent.count > 40 {
-            recent = Dictionary(uniqueKeysWithValues: recent.sorted { $0.value > $1.value }.prefix(40))
+            recent = Dictionary(uniqueKeysWithValues: recent.sorted { $0.value > $1.value }.prefix(40).map { ($0.key, $0.value) })
         }
         store.set(recent, forKey: lastKey)
 
