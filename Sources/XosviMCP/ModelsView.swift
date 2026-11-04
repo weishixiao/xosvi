@@ -602,26 +602,6 @@ struct ModelEditorView: View {
                             .font(.caption)
                             .foregroundColor(.blue)
                     }
-                } else {
-                    // v9.7：完整编辑表单里若已拿到上游模型列表，也给入口改选，不必重拉
-                    Section(header: sectionHeader("上游模型")) {
-                        Button(action: fetchUpstreamModels) {
-                            HStack(spacing: 12) {
-                                Image(systemName: "arrow.down.circle")
-                                    .font(.system(size: 20))
-                                    .foregroundColor(.blue)
-                                Text(L10n.t("ui_128"))
-                                    .foregroundColor(.blue)
-                                Spacer()
-                                if isTesting && fetchedModels.isEmpty { ProgressView() }
-                            }
-                        }
-                        .disabled(isTesting)
-                        if !fetchedModels.isEmpty {
-                            Button("浏览全部 \(fetchedModels.count) 个模型") { showingModelPicker = true }
-                                .foregroundColor(.blue)
-                        }
-                    }
                 }
 
                 if !validationError.isEmpty {
