@@ -12,6 +12,14 @@ import Darwin
 ///   请求 `{command: ping|status|helper, name, args:[String], timeout:Int, dryrun:Bool}`
 ///   回复 `{status, error, resolved, pid, uid, exit_code, stdout:Data, timed_out, elapsed_ms}`
 ///
+/// 编译约定（踩过的坑，改动时别退回去）：
+///   * `xpc_connection_create_mach_service` 在 iOS SDK 里标了 API_UNAVAILABLE(ios)，
+///     只能用 dlsym 取；它的第二参数是 `dispatch_queue_t`，Swift 没有对应的 C 兼容名字，
+///     这里按指针（`UnsafeMutableRawPointer?`）传 NULL —— 传 NULL 就是走默认队列，语义不变。
+///   * `XPC_TYPE_*` 是 `&_xpc_type_xxx` 这类宏，Swift 侧不一定能取；判断"是不是错误"
+///     一律用错误字典里的 XPCErrorDescription 键，不碰类型常量。
+///   * `XPC_ARRAY_APPEND` 是 `((size_t)(-1))` 宏，Swift 侧同样靠不住，用 `Int(bitPattern: UInt.max)`。
+///
 /// 本机实测：`xpc_connection_create_mach_service` 对**任何**服务都返回 `Connection invalid`
 /// （系统服务同样如此），所以这里把失败原样报出去，不做"连不上就当守护不在"的猜测。
 enum XosviXPC {
@@ -21,20 +29,19 @@ enum XosviXPC {
     /// 守护允许的 helper 白名单，与 tools/xosvid.c 的 normalize_helper 一致
     static let allowedHelpers = ["xosvi-build", "xosvi-install", "xosvi-symbolicate"]
 
+    /// XPC_ERROR_KEY_DESCRIPTION 的字面值（xpc/xpc.h）：错误事件就是带这个键的字典。
+    private static let errorKey = "XPCErrorDescription"
+    /// XPC_ARRAY_APPEND == (size_t)-1
+    private static let arrayAppend = Int(bitPattern: UInt.max)
+
     // 公共头把这两个符号标为 iOS 不可用，但运行时一直都在；按 LaunchdLauncher 的做法用 dlsym 取。
-    private typealias CreateMachFn = @convention(c) (UnsafePointer<CChar>, dispatch_queue_t, UInt64) -> xpc_connection_t?
-    private typealias GetPIDFn = @convention(c) (xpc_connection_t) -> pid_t
+    private typealias CreateMachFn = @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?, UInt64) -> xpc_connection_t?
 
     private static let rtlDefault = UnsafeMutableRawPointer(bitPattern: -2)
 
     private static func createMach() -> CreateMachFn? {
         guard let fn = dlsym(rtlDefault, "xpc_connection_create_mach_service") else { return nil }
         return unsafeBitCast(fn, to: CreateMachFn.self)
-    }
-
-    private static func getPID() -> GetPIDFn? {
-        guard let fn = dlsym(rtlDefault, "xpc_connection_get_pid") else { return nil }
-        return unsafeBitCast(fn, to: GetPIDFn.self)
     }
 
     /// 一次性把回复取回来的盒子：回调在 XPC 的连接队列上跑，主线程等信号量。
@@ -44,13 +51,12 @@ enum XosviXPC {
         var done = false
     }
 
-    private static func str(_ obj: xpc_object_t?, _ key: String) -> String? {
-        guard let obj = obj else { return nil }
-        return xpc_dictionary_get_string(obj, key).map { String(cString: $0) }
+    private static func str(_ obj: xpc_object_t, _ key: String) -> String? {
+        guard let p = xpc_dictionary_get_string(obj, key) else { return nil }
+        return String(cString: p)
     }
 
-    private static func replyDict(_ obj: xpc_object_t?) -> [String: Any]? {
-        guard let obj = obj else { return nil }
+    private static func replyDict(_ obj: xpc_object_t) -> [String: Any] {
         var out: [String: Any] = [:]
         for key in ["status", "error", "bootstrap", "resolved", "dash", "helper", "peer"] {
             if let v = str(obj, key) { out[key] = v }
@@ -73,18 +79,23 @@ enum XosviXPC {
         return out
     }
 
-    private static func errorText(_ obj: xpc_object_t) -> String {
-        return str(obj, XPC_ERROR_KEY_DESCRIPTION) ?? "unknown xpc error"
+    /// 错误事件（含 Connection invalid / Interrupted）都是带 XPCErrorDescription 的字典；
+    /// 正常回复没有这个键。返回 nil 表示"这不是错误"。
+    private static func errorText(_ obj: xpc_object_t) -> String? {
+        return str(obj, errorKey)
     }
 
     /// 发一条请求并等回复。
     /// - Returns: `ok:false` 时 `error` 是连接层的原因（创建失败 / 错误事件 / 超时），
-    ///            `ok:true` 时 `reply` 是守护返回的字典（可能仍带守护侧的 `error` 字段）。
+    ///            `ok:true` 时其余键来自守护返回的字典（可能仍带守护侧的 `error` 字段）。
     static func request(_ message: [String: Any], timeout: Double) -> [String: Any] {
         guard let create = createMach() else {
             return ["ok": false, "error": "libxpc 缺 xpc_connection_create_mach_service"]
         }
-        guard let conn = create(serviceName, nil, 0) else {
+        let made: xpc_connection_t? = serviceName.withCString { name in
+            create(name, nil, 0)
+        }
+        guard let conn = made else {
             return ["ok": false, "error": "xpc_connection_create_mach_service(\(serviceName)) 返回 NULL"]
         }
 
@@ -92,11 +103,10 @@ enum XosviXPC {
         let sem = DispatchSemaphore(value: 0)
         xpc_connection_set_event_handler(conn) { event in
             guard !box.done else { return }
-            if xpc_get_type(event) == XPC_TYPE_DICTIONARY {
+            if let e = errorText(event) {
+                box.error = e
+            } else {
                 box.reply = event
-            } else if xpc_get_type(event) == XPC_TYPE_ERROR {
-                // 服务没加载时典型就是这里的 Connection invalid
-                box.error = errorText(event)
             }
             box.done = true
             sem.signal()
@@ -111,7 +121,7 @@ enum XosviXPC {
             case let b as Bool: xpc_dictionary_set_bool(msg, k, b)
             case let a as [String]:
                 let arr = xpc_array_create(nil, 0)
-                for s in a { xpc_array_set_string(arr, XPC_ARRAY_APPEND, s) }
+                for s in a { xpc_array_set_string(arr, arrayAppend, s) }
                 xpc_dictionary_set_value(msg, k, arr)
             default: break
             }
@@ -120,31 +130,31 @@ enum XosviXPC {
         // 发送也要走同一个连接；连接不可用时这里常常是**同步**回调错误事件。
         xpc_connection_send_message_with_reply(conn, msg, nil) { reply in
             guard !box.done else { return }
-            if xpc_get_type(reply) == XPC_TYPE_DICTIONARY {
+            if let e = errorText(reply) {
+                box.error = e
+            } else {
                 box.reply = reply
-            } else if xpc_get_type(reply) == XPC_TYPE_ERROR {
-                box.error = errorText(reply)
             }
             box.done = true
             sem.signal()
         }
 
         let waited = sem.wait(timeout: .now() + timeout)
-        let reply = box.reply.map { replyDict($0) }
+        let reply: [String: Any]? = box.reply.map { replyDict($0) }
+        let err = box.error
         xpc_connection_cancel(conn)
 
         if waited == .timedOut {
             return ["ok": false, "error": "等待 xosvid 回复超时（\(Int(timeout))s）",
                     "hint": "守护可能没在 system 域加载：看 root command:status"]
         }
-        if let e = box.error, reply == nil {
+        if reply == nil, let e = err {
             return ["ok": false, "error": "xosvid 不可达：\(e)",
                     "hint": "服务 \(serviceName) 未在 launchd 注册；Connection invalid 是本机对任何 MachService 都出现的返回，需要先让守护在 system 域加载"]
         }
-        guard let r = reply else {
+        guard var out = reply else {
             return ["ok": false, "error": "xosvid 没有返回字典"]
         }
-        var out = r
         out["ok"] = true
         return out
     }
@@ -182,6 +192,7 @@ enum XosviXPC {
         guard let raw = secTaskCopyValueForEntitlement(task, clientEntitlement as CFString, nil) else {
             return false
         }
-        return CFGetTypeID(raw) == CFBooleanGetTypeID() && CFBooleanGetValue((raw as! CFBoolean))
+        guard CFGetTypeID(raw) == CFBooleanGetTypeID() else { return false }
+        return CFBooleanGetValue((raw as! CFBoolean))
     }
 }

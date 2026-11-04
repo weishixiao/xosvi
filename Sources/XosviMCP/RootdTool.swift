@@ -289,7 +289,8 @@ final class RootdTool: MCPTool {
 
     private func probe() -> [String: Any] {
         let xpc = xpcStatus()
-        let res = run("id -u", timeout: 8)
+        // run() 声明成 throws（老目录通道会 throw），这里必须 try? 兜住，否则非 throws 的 probe() 编不过
+        let res: [String: Any] = (try? run("id -u", timeout: 8)) ?? ["completed": false, "exit_code": -1]
         let uidText = (res["stdout"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         let working = (xpc["reachable"] as? Bool) == true && (res["exit_code"] as? Int) == 0
         return ["working": working,
