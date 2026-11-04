@@ -89,6 +89,8 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 
 ## 第一原则：先路由，后动手
 
+0. **排障/修复类任务先读 `docs/TROUBLESHOOTING.md`**：证据驱动六步（现象→事实→对回代码→同类扫描→闭环验证→回写），
+   以及「已查证 / 推断 / 未验证」三态必须分开表述的规矩。
 1. **读 `RULES.md`** 的操作契约（MUST / SHOULD 语义）。
 2. **路由**：用 `skills.list` 搜索匹配技能（`query` 用任务关键词，如 `inject` / `capture` / `db` / `package` / `memory`）。
    命中则 `skills.read name:<技能名>` 读取完整指令并**按指令执行**；输出应包含所选技能的 **PRIMARY 路径 + 一句话依据**。

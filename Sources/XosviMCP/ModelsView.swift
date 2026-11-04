@@ -6,6 +6,12 @@ struct ModelsView: View {
     @ObservedObject private var store = ModelStore.shared
     @State private var editing: ModelConfig?
     @State private var isNewModel = false
+    /// v9.7：顶部「快速添加服务商」折叠区是否展开
+    @State private var showProviderPresets = false
+    /// v9.7：本机工具桥信息是否展开
+    @State private var showBridgeInfo = false
+    /// v9.7：工具桥运行状态（启动/停止后刷新 UI）
+    @State private var bridgeRunning = ChatBridgeServer.shared.isRunning
     // v2.9.107：用量统计 / 导入导出
     @State private var showingImporter = false
     @State private var showingExporter = false
@@ -19,6 +25,63 @@ struct ModelsView: View {
             // RecommendCardArea()  ← 已移除
 
             List {
+                // v9.7：可见时总在最上面给一行「快速添加」，展开内置主流服务商预设，
+                // 点一下只填好 Base URL/协议/模型，再贴密钥即可。
+                Section {
+                    DisclosureGroup(isExpanded: $showProviderPresets) {
+                        ForEach(Array(ModelConfig.providerPresets.enumerated()), id: \.offset) { _, p in
+                            Button(action: {
+                                isNewModel = true
+                                editing = ModelConfig(name: p.name, provider: p.provider,
+                                                      apiProtocol: p.protocol, baseURL: p.baseURL,
+                                                      apiKey: "", model: p.model)
+                            }) {
+                                HStack {
+                                    Text(p.name).foregroundColor(.primary)
+                                    Spacer()
+                                    Text(p.model).font(.caption).foregroundColor(.secondary)
+                                    Image(systemName: "chevron.right").font(.caption).foregroundColor(.secondary)
+                                }
+                            }
+                        }
+                    } label: {
+                        Label("快速添加服务商", systemImage: "bolt.horizontal")
+                    }
+                }
+                // v9.7：本机工具桥——把任何 OpenAI 兼容的模型指到这里即可调用本机能力。
+                // 这样「登录即用」不再是逐家对接，而是所有家共用一套协议。
+                Section {
+                    DisclosureGroup(isExpanded: $showBridgeInfo) {
+                        let st = ChatBridgeServer.shared.status()
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Base URL").font(.caption).foregroundColor(.secondary)
+                            Text(st["base_url"] as? String ?? "")
+                                .font(.system(.footnote, design: .monospaced))
+                                .textSelection(.enabled)
+                            Text("模型名").font(.caption).foregroundColor(.secondary)
+                            Text("xosvi-local").font(.system(.footnote, design: .monospaced))
+                            Text("鉴权").font(.caption).foregroundColor(.secondary)
+                            Text("Bearer <上页「MCP 服务」里的 token>")
+                                .font(.footnote).foregroundColor(.secondary)
+                            HStack(spacing: 10) {
+                                Button(ChatBridgeServer.shared.isRunning ? "停止" : "启动") {
+                                    if ChatBridgeServer.shared.isRunning {
+                                        ChatBridgeServer.shared.stop()
+                                    } else {
+                                        _ = ChatBridgeServer.shared.start()
+                                    }
+                                    bridgeRunning = ChatBridgeServer.shared.isRunning
+                                }
+                                .foregroundColor(.blue)
+                                Text(ChatBridgeServer.shared.isRunning ? "运行中 :\(ChatBridgeServer.shared.port)" : "未启动")
+                                    .font(.caption).foregroundColor(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    } label: {
+                        Label("本机工具桥（任何模型都能用）", systemImage: "point.3.connected.trianglepath.dotted")
+                    }
+                }
                 if store.configs.isEmpty {
                     Section {
                         HStack {
@@ -420,20 +483,26 @@ struct ModelEditorView: View {
     /// v8：表单校验错误提示（防呆——空配置不再落库）
     @State private var validationError = ""
 
+    /// v9.7：是否为「新建 API」流程（决定用三字段精简表单还是完整编辑表单）
+    private var isNewAPI: Bool { config == nil }
+    /// v9.7：高级设置是否展开（默认收起）
+    @State private var showAdvanced = false
+
     private let providers = ["openai", "deepseek", "anthropic", "custom"]
 
     // 在 init 中一次性初始化，避免 iOS 14 上 .onAppear 重复触发把用户输入冲回默认值
     init(config: ModelConfig?, onSave: @escaping (ModelConfig) -> Void) {
         self.config = config
         self.onSave = onSave
-        let p = ModelConfig.providerPresets.first
-        _name = State(initialValue: config?.name ?? (p?.name ?? ""))
-        _provider = State(initialValue: config?.provider ?? (p?.provider ?? "custom"))
-        _apiProtocol = State(initialValue: config?.apiProtocol ?? (p?.protocol ?? "OpenAI Chat Completions"))
-        _baseURL = State(initialValue: config?.baseURL ?? (p?.baseURL ?? ""))
+        // v9.7：新建时名称/协议留空——保存时按 baseURL 自动推断（见 makeConfigRelaxed），
+        // 与精简表单「只管密钥+URL+模型」保持一致，不再默认落到第一个预设 Botcf。
+        _name = State(initialValue: config?.name ?? "")
+        _provider = State(initialValue: config?.provider ?? "custom")
+        _apiProtocol = State(initialValue: config?.apiProtocol ?? "OpenAI Chat Completions")
+        _baseURL = State(initialValue: config?.baseURL ?? "")
         _apiKey = State(initialValue: config?.apiKey ?? "")
-        _model = State(initialValue: config?.model ?? (p?.model ?? ""))
-        _authMethod = State(initialValue: config?.authMethod ?? (p?.auth ?? "Bearer"))
+        _model = State(initialValue: config?.model ?? "")
+        _authMethod = State(initialValue: config?.authMethod ?? "Bearer")
         _isDefault = State(initialValue: config?.isDefault ?? false)
         _temperature = State(initialValue: config?.temperature ?? 0.7)
         _maxTokens = State(initialValue: config?.maxTokens ?? 2048)
@@ -445,43 +514,114 @@ struct ModelEditorView: View {
     var body: some View {
         CompatNav {
             List {
-                Section(header: sectionHeader(apiProtocol.uppercased())) {
-                    editorRow("名称", text: $name, placeholder: "Botcf")
-                    pickerRow("API 协议", selection: $apiProtocol, options: ModelConfig.apiProtocols)
-                }
-
-                Section(header: sectionHeader("API 配置")) {
-                    editorRow("Base URL", text: $baseURL, placeholder: "https://botcf.com/v1")
-                    editorRow("模型名", text: $model, placeholder: "gpt-5.6-terra")
-                    pickerRow("鉴权方式", selection: $authMethod, options: ModelConfig.authMethods)
-                    tokenRow
-                    // v3.5.13：可配置参数名别名（适配不同中转对参数名接受度不同）
-                    editorRow("参数别名", text: $paramAliasesText, placeholder: "max_tokens:max_completion_tokens")
-                    // v2.9.107：供应商分组（管理页按分组折叠展示）
-                    editorRow("分组", text: $group, placeholder: "默认")
-                }
-
-                Section(header: sectionHeader("参数")) {
-                    HStack {
-                        Text("Temperature")
-                        Spacer()
-                        Text(String(format: "%.1f", temperature))
-                            .foregroundColor(.secondary)
+                // v9.7：用户要求「添加 API 只要三件事」——密钥、基础 URL、获取上游模型。
+                // 新建时默认只显示这三项，其余字段收进「高级设置」，不删功能但不再挡路。
+                if isNewAPI {
+                    Section(header: sectionHeader("添加 API"),
+                            footer: Text("填好密钥和 Base URL 后点「获取模型」，选中一个即可保存。")) {
+                        tokenRow
+                        editorRow("Base URL", text: $baseURL, placeholder: "https://api.openai.com/v1")
+                        Button(action: fetchUpstreamModels) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.down.circle")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.blue)
+                                Text(fetchedModels.isEmpty ? "获取模型" : "重新获取（已取到 \(fetchedModels.count) 个）")
+                                    .foregroundColor(.blue)
+                                Spacer()
+                                if isTesting { ProgressView() }
+                            }
+                        }
+                        .disabled(isTesting || baseURL.trimmingCharacters(in: .whitespaces).isEmpty)
+                        HStack {
+                            Text("模型名")
+                            Spacer()
+                            TextField("选中后自动填入", text: $model)
+                                .multilineTextAlignment(.trailing)
+                                .autocapitalization(.none)
+                                .disableAutocorrection(true)
+                        }
+                        if !fetchedModels.isEmpty {
+                            Button("浏览全部 \(fetchedModels.count) 个模型") { showingModelPicker = true }
+                                .foregroundColor(.blue)
+                        }
                     }
-                    Slider(value: $temperature, in: 0...2, step: 0.1)
-                    Stepper("Max Tokens: \(maxTokens)", value: $maxTokens, in: 256...32768, step: 256)
-                    Stepper("上下文预算: \(contextTokens)", value: $contextTokens, in: 4000...128000, step: 2000)
-                }
-                Section(header: sectionHeader("参数说明")) {
-                    Text(L10n.t("ui_7"))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(L10n.t("ui_18"))
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                    Text(L10n.t("ui_72"))
-                        .font(.caption)
-                        .foregroundColor(.blue)
+                    Section {
+                        DisclosureGroup("高级设置", isExpanded: $showAdvanced) {
+                            editorRow("名称", text: $name, placeholder: "留空自动取名")
+                            pickerRow("API 协议", selection: $apiProtocol, options: ModelConfig.apiProtocols)
+                            pickerRow("鉴权方式", selection: $authMethod, options: ModelConfig.authMethods)
+                            editorRow("参数别名", text: $paramAliasesText, placeholder: "max_tokens:max_completion_tokens")
+                            editorRow("分组", text: $group, placeholder: "默认")
+                            HStack {
+                                Text("Temperature")
+                                Spacer()
+                                Text(String(format: "%.1f", temperature)).foregroundColor(.secondary)
+                            }
+                            Slider(value: $temperature, in: 0...2, step: 0.1)
+                            Stepper("Max Tokens: \(maxTokens)", value: $maxTokens, in: 256...32768, step: 256)
+                            Stepper("上下文预算: \(contextTokens)", value: $contextTokens, in: 4000...128000, step: 2000)
+                        }
+                    }
+                } else {
+                    Section(header: sectionHeader(apiProtocol.uppercased())) {
+                        editorRow("名称", text: $name, placeholder: "Botcf")
+                        pickerRow("API 协议", selection: $apiProtocol, options: ModelConfig.apiProtocols)
+                    }
+
+                    Section(header: sectionHeader("API 配置")) {
+                        editorRow("Base URL", text: $baseURL, placeholder: "https://botcf.com/v1")
+                        editorRow("模型名", text: $model, placeholder: "gpt-5.6-terra")
+                        pickerRow("鉴权方式", selection: $authMethod, options: ModelConfig.authMethods)
+                        tokenRow
+                        // v3.5.13：可配置参数名别名（适配不同中转对参数名接受度不同）
+                        editorRow("参数别名", text: $paramAliasesText, placeholder: "max_tokens:max_completion_tokens")
+                        // v2.9.107：供应商分组（管理页按分组折叠展示）
+                        editorRow("分组", text: $group, placeholder: "默认")
+                    }
+
+                    Section(header: sectionHeader("参数")) {
+                        HStack {
+                            Text("Temperature")
+                            Spacer()
+                            Text(String(format: "%.1f", temperature))
+                                .foregroundColor(.secondary)
+                        }
+                        Slider(value: $temperature, in: 0...2, step: 0.1)
+                        Stepper("Max Tokens: \(maxTokens)", value: $maxTokens, in: 256...32768, step: 256)
+                        Stepper("上下文预算: \(contextTokens)", value: $contextTokens, in: 4000...128000, step: 2000)
+                    }
+                    Section(header: sectionHeader("参数说明")) {
+                        Text(L10n.t("ui_7"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(L10n.t("ui_18"))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Text(L10n.t("ui_72"))
+                            .font(.caption)
+                            .foregroundColor(.blue)
+                    }
+                } else {
+                    // v9.7：完整编辑表单里若已拿到上游模型列表，也给入口改选，不必重拉
+                    Section(header: sectionHeader("上游模型")) {
+                        Button(action: fetchUpstreamModels) {
+                            HStack(spacing: 12) {
+                                Image(systemName: "arrow.down.circle")
+                                    .font(.system(size: 20))
+                                    .foregroundColor(.blue)
+                                Text(L10n.t("ui_128"))
+                                    .foregroundColor(.blue)
+                                Spacer()
+                                if isTesting && fetchedModels.isEmpty { ProgressView() }
+                            }
+                        }
+                        .disabled(isTesting)
+                        if !fetchedModels.isEmpty {
+                            Button("浏览全部 \(fetchedModels.count) 个模型") { showingModelPicker = true }
+                                .foregroundColor(.blue)
+                        }
+                    }
                 }
 
                 if !validationError.isEmpty {
@@ -493,6 +633,8 @@ struct ModelEditorView: View {
                 }
 
                 Section(header: sectionHeader("操作")) {
+                    // v9.7：新建流程已在上方「添加 API」里给过「获取模型」，这里不再重复
+                    if !isNewAPI {
                     Button(action: fetchUpstreamModels) {
                         HStack(spacing: 12) {
                             Image(systemName: "arrow.down.circle")
@@ -507,9 +649,10 @@ struct ModelEditorView: View {
                         }
                     }
                     .disabled(isTesting)
+                    }
 
                     Button(action: saveOnly) {
-                        Text(L10n.t("ui_26"))
+                        Text(isNewAPI ? "保存" : L10n.t("ui_26"))
                             .foregroundColor(.blue)
                     }
 
@@ -569,7 +712,7 @@ struct ModelEditorView: View {
             }
             .listStyle(.insetGrouped)
         .deepseekList()
-            .navigationTitle(config == nil ? "添加模型" : name)
+            .navigationTitle(config == nil ? "添加 API" : name)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button("取消") { presentationMode.wrappedValue.dismiss() }
@@ -579,7 +722,9 @@ struct ModelEditorView: View {
                 }
             }
             .sheet(isPresented: $showingModelPicker) {
-                ModelPickerSheet(models: fetchedModels, selected: $model)
+                // v9.7：新建流程里选完模型直接落库并关窗（用户要的是「选一个就完事」）；
+                // 编辑已有配置时仍只回填，不擅自保存。
+                ModelPickerSheet(models: fetchedModels, selected: $model, autoCommit: isNewAPI && showingModelPicker, onCommit: { saveOnly() })
             }
         }
     }
@@ -633,6 +778,17 @@ struct ModelEditorView: View {
                 Image(systemName: showKey ? "eye.slash" : "eye")
                     .foregroundColor(.secondary)
             }
+            // v9.7：常用流程是「复制密钥→进来粘贴」，这里直接给一个粘贴按钮，省掉长按菜单
+            Button(action: {
+                if let s = UIPasteboard.general.string?
+                    .trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty {
+                    apiKey = s
+                }
+            }) {
+                Image(systemName: "doc.on.clipboard")
+                    .foregroundColor(.blue)
+            }
+            .buttonStyle(.plain)
         }
         .padding(.vertical, 4)
     }
@@ -669,9 +825,17 @@ struct ModelEditorView: View {
 
     /// v8：宽松构造（不做校验）——fetchUpstreamModels 也要用表单值拉列表
     private func makeConfigRelaxed() -> ModelConfig {
-        ModelConfig(
+        // v9.7：名称留空时用模型名，模型名也空时回落主机名（如 api.deepseek.com），
+        // 用户完全不用操心「名称」这一项。
+        let fallbackName: String = {
+            if !model.trimmingCharacters(in: .whitespaces).isEmpty { return model }
+            if let host = URL(string: baseURL.trimmingCharacters(in: .whitespaces))?.host,
+               !host.isEmpty { return host }
+            return name.isEmpty ? "未命名 API" : name
+        }()
+        return ModelConfig(
             id: config?.id ?? UUID(),
-            name: name.isEmpty ? model : name,
+            name: name.isEmpty ? fallbackName : name,
             provider: provider,
             apiProtocol: apiProtocol,
             baseURL: baseURL,
@@ -825,6 +989,9 @@ struct ModelEditorView: View {
 struct ModelPickerSheet: View {
     let models: [String]
     @Binding var selected: String
+    /// v9.7：新建流程传 true —— 选完即回调保存（省掉「选中→再点完成」两步）
+    var autoCommit: Bool = false
+    var onCommit: (() -> Void)? = nil
     @Environment(\.presentationMode) var presentationMode
 
     var body: some View {
@@ -833,6 +1000,7 @@ struct ModelPickerSheet: View {
                 Button(action: {
                     selected = m
                     presentationMode.wrappedValue.dismiss()
+                    if autoCommit { onCommit?() }
                 }) {
                     HStack {
                         Text(m)

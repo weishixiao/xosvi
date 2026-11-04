@@ -52,6 +52,11 @@ final class MCPGatewayServer {
     var currentReadToken: String { stateLock.lock(); defer { stateLock.unlock() }; return config.readOnlyToken }
     var pairingCode: String { stateLock.lock(); defer { stateLock.unlock() }; return config.pairingCode }
 
+    /// v9.7：给 ChatBridgeServer 用的公开只读访问器——
+    /// 本机兼容端点复用同一套 token，用户不用记两份密钥。
+    public static var sharedFullToken: String { GatewayServer.shared.currentToken }
+    public static var sharedReadToken: String { GatewayServer.shared.currentReadToken }
+
     func status() -> [String: Any] {
         stateLock.lock(); defer { stateLock.unlock() }
         return [
