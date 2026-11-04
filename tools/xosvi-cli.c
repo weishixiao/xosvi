@@ -17,6 +17,7 @@
 #include <stdint.h>
 #include <unistd.h>
 #include <dlfcn.h>
+#include <CoreFoundation/CoreFoundation.h>
 #include <xpc/xpc.h>
 #include <dispatch/dispatch.h>
 
@@ -114,7 +115,12 @@ int main(int argc, char **argv) {
     });
 
     int rc = 0;
-    while (!g_done) usleep(20000);
+    /* XPC 的回调在主队列上，主线程空转 sleep 永远等不到：必须跑 runloop。 */
+    CFTimeInterval deadline = CFAbsoluteTimeGetCurrent() + (timeout > 0 ? timeout : 30);
+    while (!g_done && CFAbsoluteTimeGetCurrent() < deadline) {
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
+    }
+    if (!g_done) { fprintf(stderr, "timeout waiting for xosvid\n"); return 2; }
     if (g_error || !g_reply) { fprintf(stderr, "no reply from xosvid\n"); return 1; }
 
     print_str("status");

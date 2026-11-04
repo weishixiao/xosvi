@@ -159,13 +159,20 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   产出的 `.o`（`Unsupported Mach-O type`），所以单架构直接 clang 链接，多架构才 `.o` + `lipo`。
 - 每个二进制都要签名：`xosvid` 用 `Support/xosvid.entitlements`（MachService 需要），
   `xosvi-cli` 用 `Support/xosvi-cli.entitlements`（带 `wiki.qaq.xosvi.client`，否则被守护拒绝）。
-- **launchd plist / postinst 里的前缀占位是 `【@@PREFIX@@】`**：dpkg 解包时会把 `@PREFIX@`
-  展开掉，写裸 `@PREFIX@` 会变成字面量，postinst 直接失败（旧版就是这么挂的）。
+- **launchd plist 里写逻辑路径**（`/usr/libexec/xosvid`、`/var/log/xosvid.log`）。本机实测
+  launchd 不认 `@PREFIX@`、`__ROOTFS__`、`【@@PREFIX@@】` 中的任何一个，会把字面量当相对路径，
+  服务就“已加载、起不来”（status 19968 = 78）。正确流程：`icli svc paths <plist>` 预览 →
+  `icli svc bootstrap <plist>`（root，会把路径就地改写成 jbroot 下的真实路径）→ `icli svc list`。
+  postinst 里**不要**做 launchctl，dpkg 后的 launchd 加载交给 icli。
+- **守护加载后的验证**：`xosvi-cli status` 应输出 `status: OK / uid: 0`；
+  `xosvi-cli helper xosvi-build <work 下的项目目录>` 应 `exit_code: 0`（App 侧给真根视图路径
+  `/private/var/mobile/...`，helper 会自己折到共享视图）。
+- **XPC 的坎**：`xpc_connection_send_message_with_reply` 的回调在主队列上，客户端必须跑
+  runloop（`CFRunLoopRunInMode`）等回复，主线程 `usleep` 空转永远等不到——旧 cli 就卡在这里；
+  另外服务未加载时错误回调也不会触发，只能用超时兜底。
 - 安装后自检：`<bootstrap>/usr/libexec/xosvi/xosvi-pathcheck` 打印解析到的 bootstrap 与写探针，
   应看到 `resolved bootstrap prefix = /private/var/containers/Bundle/Application/.jbroot-*`。
 - helper 端到端：`<bootstrap>/usr/libexec/xosvi/xosvi-build <work 下的项目目录>`，
   `work` 固定为 `/private/var/mobile/Documents/wiki.qaq.xosvi/work`。
-- **未通的一环**：本机上 `xpc_connection_create_mach_service` 对**任何**服务都返回
-  `Connection invalid`（系统服务同样如此），服务端 `SERVICE_LISTENER` 也靠 MachService 注册，
-  所以 `/usr/libexec/xosvid` + `xosvi-cli` 在 launchd 未加载该服务前无法握手。加载服务
-  （`icli svc bootstrap system <plist>` / `launchctl bootstrap`）属于改 launchd，需要用户明确同意。
+- **未通的一环**：`Sources/XosviMCP/RootdTool.swift` 仍在对 1777 目录做文件轮询（.cmd/.out/.status），
+  还没有改成走 `wiki.qaq.xosvi.service`。守护这一侧已经就绪并通过 cli 验证，缺的是 App 侧客户端。

@@ -25,17 +25,35 @@ int main(int argc, char **argv) {
     char work_root[PATH_MAX];
     xosvi_path(work_root, sizeof work_root, prefix, "/private/var/mobile/Documents/wiki.qaq.xosvi/work");
     char work_real[PATH_MAX];
-    if (!realpath(work_root, work_real)) {
-        /* 前缀视图里没有 /private/var 时，退回真根那份 */
-        if (!realpath(XOSVI_WORK_ROOT, work_real)) {
-            fprintf(stderr, "error: work root missing (tried %s and %s)\n",
-                    work_root, XOSVI_WORK_ROOT);
-            return 3;
-        }
+    if (!realpath(work_root, work_real) && !realpath(XOSVI_WORK_ROOT, work_real)) {
+        fprintf(stderr, "error: work root missing (tried %s and %s)\n", work_root, XOSVI_WORK_ROOT);
+        return 3;
     }
 
+    /* 调用方（App / CLI）给的是真根视图路径 /private/var/mobile/...，root 守护看到的是
+     * AppGroup 共享视图；realpath 之后前缀不同但是同一个目录。这里两步都试一次：
+     * 先按原路径，再按「真根逻辑部分拼到当前视图的 /private/var 之前」的候选路径。 */
+    char cand[PATH_MAX];
+    snprintf(cand, sizeof cand, "%s", argv[1]);
     char proj_real[PATH_MAX];
-    if (!realpath(argv[1], proj_real) || !xosvi_inside(proj_real, work_real)) {
+    int ok = realpath(cand, proj_real) != NULL;
+    if (!ok) {
+        char alt[PATH_MAX];
+        snprintf(alt, sizeof alt, "%s%s", prefix, argv[1]);
+        ok = realpath(alt, proj_real) != NULL;
+        if (!ok && strncmp(argv[1], "/private/var/", 13) == 0) {
+            /* 真根视图：/private/var/... 在共享视图里是 <base>/var/... */
+            char base[PATH_MAX];
+            snprintf(base, sizeof base, "%s", prefix);
+            char *slash = strrchr(base, '/');           /* .../AppGroup */
+            if (slash) {
+                *slash = '\0';
+                snprintf(alt, sizeof alt, "%s%s", base, argv[1]);
+                ok = realpath(alt, proj_real) != NULL;
+            }
+        }
+    }
+    if (!ok || !xosvi_inside(proj_real, work_real)) {
         fprintf(stderr, "error: project dir %s escapes %s\n", argv[1], work_real);
         return 4;
     }

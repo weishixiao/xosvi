@@ -60,7 +60,7 @@ build_one() {  # build_one <源文件> <输出名> <额外 clang 参数...>
 echo ">>> 编译 (${APELIN_BOOTSTRAP}, ${ARCHS})"
 build_one tools/xosvid.c               xosvid               -framework Foundation
 build_one tools/xosvi-pathcheck.c      xosvi-pathcheck
-build_one tools/xosvi-cli.c            xosvi-cli            -framework Foundation
+build_one tools/xosvi-cli.c            xosvi-cli            -framework Foundation -framework CoreFoundation
 build_one Support/xosvi/xosvi-build.c       xosvi-build      -ISupport/xosvi
 build_one Support/xosvi/xosvi-install.c     xosvi-install    -ISupport/xosvi
 build_one Support/xosvi/xosvi-symbolicate.c xosvi-symbolicate -ISupport/xosvi
@@ -107,8 +107,11 @@ for f in usr/libexec/xosvid usr/libexec/xosvi/xosvi-build usr/libexec/xosvi/xosv
   [ -f "$pkg/$f" ] || { echo "layout missing: $f" >&2; exit 1; }
 done
 
-# launchd plist：路径是相对 bootstrap 根的逻辑路径，写法必须是 【@@PREFIX@@】
-# （dpkg 展开成安装前缀；roothide 下为空串 → /usr/libexec/xosvid，正好是守护自己的视图）。
+# launchd plist：路径写 bootstrap 根的**逻辑路径**（/usr/libexec/...、/var/log/...）。
+# 为什么不用占位：本机实测 launchd 不认 @PREFIX@、__ROOTFS__、【@@PREFIX@@】 中的任何一个，
+# 会把字面量当相对路径，服务就"已加载、起不来"。正确做法是安装时由 icli svc bootstrap /
+# load 把路径就地改写成 jbroot 下的真实路径（它自己会 patched:true），先 `icli svc paths`
+# 预览、再加载。rootless（/var/jb）同样由 icli 重写，不需要脚本里做替换。
 cat > "$pkg/Library/LaunchDaemons/wiki.qaq.xosvid.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -118,7 +121,7 @@ cat > "$pkg/Library/LaunchDaemons/wiki.qaq.xosvid.plist" <<'PLIST'
 	<string>wiki.qaq.xosvid</string>
 	<key>ProgramArguments</key>
 	<array>
-		<string>【@@PREFIX@@】/usr/libexec/xosvid</string>
+		<string>/usr/libexec/xosvid</string>
 	</array>
 	<key>MachServices</key>
 	<dict>
@@ -137,7 +140,7 @@ cat > "$pkg/Library/LaunchDaemons/wiki.qaq.xosvid.plist" <<'PLIST'
 		<string>1</string>
 	</dict>
 	<key>StandardErrorPath</key>
-	<string>【@@PREFIX@@】/var/log/xosvid.log</string>
+	<string>/var/log/xosvid.log</string>
 	<key>SoftResourceLimits</key>
 	<dict>
 		<key>NumberOfFiles</key>
@@ -164,23 +167,17 @@ Description: Xosvi 特权守护进程与构建 helper
  roothide 下按 /var/containers/Bundle/Application/.jbroot-* 实际探测 bootstrap。
 CONTROL
 
-# postinst：替换 @PREFIX@，刷新 launchd
+# postinst：目录与权限；launchd 的加载交给 icli（它会就地改写成 jbroot 路径）
 #
 # 用 【@@PREFIX@@】 占位而不是 @PREFIX@：dpkg 在解包时就会把 control 里的 @PREFIX@
 # 展开成安装前缀（roothide 下是空串），脚本正文里的同一个串会剩下字面量，
-# 以前就是这么把 postinst 跑挂的（chmod: cannot access '【@@PREFIX@@】/usr/libexec/xosvid'）。
+# 以前就是这么把 postinst 跑挂的（chmod: cannot access '@PREFIX@/usr/libexec/xosvid'）。
 cat > "$root/DEBIAN/postinst" <<'POSTINST'
 #!/bin/sh
 # 这里的 【@@PREFIX@@】 由 dpkg 的 @PREFIX@ 展开规则替换成真实安装前缀
 PREFIX="【@@PREFIX@@】"
-PLIST="${PREFIX}/Library/LaunchDaemons/wiki.qaq.xosvid.plist"
 mkdir -p "${PREFIX}/var/log"
-chmod 0755 "${PREFIX}/usr/libexec/xosvid"
-# 让 launchd 重新读取守护定义（已加载时先卸再装，失败不阻塞安装）
-if [ -x "${PREFIX}/usr/libexec/xosvid" ]; then
-  launchctl bootout system/wiki.qaq.xosvid 2>/dev/null || true
-  launchctl bootstrap system "$PLIST" 2>/dev/null || launchctl load -w "$PLIST" 2>/dev/null || true
-fi
+chmod 0755 "${PREFIX}/usr/libexec/xosvid" "${PREFIX}/usr/libexec/xosvi"/* 2>/dev/null
 exit 0
 POSTINST
 chmod 0755 "$root/DEBIAN/postinst"
