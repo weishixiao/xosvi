@@ -267,6 +267,16 @@ final class InjectionManager {
             // 直写失败：记下来，若后面提权也失败，至少把两边的真实原因都给出去
             nativeError = native.1
         }
+        // v0.2.3：越狱环境下**优先**走守护的 root XPC 通道。
+        // 现场实测：rootHide 上 /var/containers/Bundle/Application 对 root 完全可写
+        // （root 下 mkdir 探针成功），但 App 自己的 spawnRoot / setuid / jb-launcher 三条路
+        // 全部失败（85 / 13），诊断于是误报「Bundle 目录不可写」。xosvid 是 uid=0 的常驻守护，
+        // `xosvi-build --exec` 就是一条可用的 root 通道，直接借它执行这几个内置工具。
+        if JBEnvironment.isJailbroken,
+           let viaXPC = runViaRootChannel(bin, args: args, timeout: timeout) {
+            if viaXPC.0 == 0 { return (0, viaXPC.1) }
+            if nativeError == nil { nativeError = "[xpc-root] " + viaXPC.1 }
+        }
         // v6.6.10：越狱环境专用提权路径。
         // rootHide/Relaxin 会拦截 persona spawn → 恒返回 85 (ENOSYS)，那条路注定失败。
         // 越狱的 amfid 已绕过签名校验，只要 helper 有 setuid + root 属主，
@@ -346,6 +356,25 @@ final class InjectionManager {
         }
         let nativeNote = nativeError.map { " | 直写也失败: \($0)" } ?? ""
         return (result.code, result.output + nativeNote)
+    }
+
+    /// v0.2.3：借 xosvid（uid=0 常驻守护）执行包内工具，绕开 rootHide 上必然失败的
+    /// persona / setuid spawn。走 `xosvi-build --exec <cwd> <命令>`，等价于 `sh -c`。
+    /// 返回 nil = 通道不可用（守护没起 / 没装 / 无 entitlement），调用方退回原路径。
+    private func runViaRootChannel(_ bin: String, args: [String], timeout: Double) -> (Int32, String)? {
+        let cmd = ([bin] + args).map(shellQuote).joined(separator: " ")
+        let res = XosviXPC.helper("xosvi-build",
+                                  args: ["--exec", "/private/var/mobile", cmd],
+                                  timeout: Int(min(max(timeout, 1), 120)))
+        guard (res["ok"] as? Bool) == true else { return nil }
+        let code = Int32((res["exit_code"] as? Int) ?? 0)
+        var out = (res["stdout"] as? String) ?? ""
+        if let err = res["error"] as? String, !err.isEmpty { out += (out.isEmpty ? "" : " ") + err }
+        return (code, out)
+    }
+
+    private func shellQuote(_ s: String) -> String {
+        "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
     /// v2.9.126：root 环境下 FileManager 原生映射 (对齐 TrollFools isPrivileged 快路径）。
