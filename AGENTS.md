@@ -182,8 +182,10 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
 - App 的 `Support/Xosvi.entitlements` 必须同时有 `wiki.qaq.xosvi.client`（守护校验）
   和 `com.apple.security.exception.mach-lookup.global-name` 里的 `wiki.qaq.xosvi.service`；
   改了 entitlement 必须**重新签名并重装 App** 才生效，旧的签名不会自动带上。
-- **已知未决**：本机 launchd 把 `wiki.qaq.xosvid.plist` 起在 **user/501 域**（mobile 身份，
-  `launchctl print system/wiki.qaq.xosvid` 说找不到），`xosvi-cli` 能连上但守护是 uid 501，
-  于是 `--exec` 里的 `id -u` 得 501、`/Library` 写不进。system 域才是 root 通道的前提：
-  `launchctl bootout user/501/wiki.qaq.xosvid` + `icli svc bootstrap <plist>` 属于改 launchd，
-  必须先得到用户明确同意。
+- **system 域已修（0.2.1 起）**：此前 launchd 把 `wiki.qaq.xosvid.plist` 起在 user/501 域，
+  守护是 uid 501，`--exec` 的 `id -u` 得 501、`/Library` 写不进。已按下面两条命令切到 system 域，
+  现在守护自身 `uid: 0`、`--exec` 里的 `id -u` 也是 0：
+  `launchctl bootout user/501/wiki.qaq.xosvid`（root）→
+  `icli svc bootstrap <plist>`（root，会把 plist 里的路径就地改写）。
+  排查 `status` 里的 `peer: xpc uid=…` 是**客户端**身份（mobile 跑 cli 就是 501），守护身份看 `uid:`。
+  重装 deb 后若发现又回到 501，重复这两条即可（属于改 launchd，需用户明确同意）。
