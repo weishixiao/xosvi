@@ -21,7 +21,9 @@ enum ISH {
 
     static let rootfsVersionKey = "ishRootfsVersion"
     /// 与 Sandbox/resources/VERSION 对应；改 rootfs 内容时同步 bump
-    static let bundledVersion = "alpine-3.21.3-r5"
+    /// v9.3：r6 —— guest 源改 http（iSH TLS 挂死）、预装 python3/curl/git/sqlite3 等。
+    /// 版本号一变，下一次安装的 App 首次启动会自动重装 rootfs。
+    static let bundledVersion = "alpine-3.21.3-r6"
 
     // MARK: 路径
 
@@ -89,8 +91,15 @@ enum ISH {
     ///     避免半成品目录留在正式位置（下次启动会误判"已安装"）
     @discardableResult
     static func installRootfsIfNeeded(force: Bool = false) throws -> Bool {
+        // v9.3：每个 App 构建只解压一次 rootfs——旧逻辑只看版本号，r5→r6 改了内容却
+        // 可能因版本号未变/用户已手动修过而继续用旧 rootfs（源还是 https、没有工具）。
+        // 这里把「构建号」也纳入判定：换了 App 包就重装，保证内置源与预装包生效。
+        let buildStampKey = "ishRootfsBuildStamp"
+        let buildStamp = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")
+            + "/" + (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0")
+        let stampMatched = UserDefaults.standard.string(forKey: buildStampKey) == buildStamp
         let saved = UserDefaults.standard.string(forKey: rootfsVersionKey)
-        if !force, saved == bundledVersion, isRootfsValid() { return false }
+        if !force, stampMatched, saved == bundledVersion, isRootfsValid() { return false }
         guard let zip = bundledZip else { throw InstallError.noBundle }
 
         let fm = FileManager.default
@@ -173,6 +182,7 @@ enum ISH {
         }
 
         UserDefaults.standard.set(bundledVersion, forKey: rootfsVersionKey)
+        UserDefaults.standard.set(buildStamp, forKey: buildStampKey)
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "ishInstalledAt")
         return true
     }

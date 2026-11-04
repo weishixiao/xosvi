@@ -77,7 +77,12 @@ enum ISHEngine {
     /// apk 安装
     static func apkAdd(_ packages: [String], timeout: Double, onLine: ((String) -> Void)? = nil)
         -> (output: String, exitCode: Int32, timedOut: Bool) {
-        let cmd = "apk add --no-cache " + packages.joined(separator: " ")
+        let cmd = """
+        set -e
+        rm -f /lib/apk/db/lock 2>/dev/null || true
+        sed -i 's|^https://|http://|' /etc/apk/repositories 2>/dev/null || true
+        apk add --no-cache \(packages.joined(separator: " "))
+        """
         let r = ISH.run(cmd, timeout: timeout)
         onLine?(r.output)
         return (r.output, r.exitCode, r.timedOut)

@@ -292,7 +292,10 @@ struct EnvironmentPane: View {
             _ = ISH.run("""
             set -e
             mkdir -p /etc/apk /etc/pip /root
-            printf '%s\\n%s\\n' '\(apk.guestBase)\(AlpineVersion.branch())/main' '\(apk.guestBase)\(AlpineVersion.branch())/community' > /etc/apk/repositories
+            printf '%s\n%s\n' '\(apk.guestBase)\(AlpineVersion.branch())/main' '\(apk.guestBase)\(AlpineVersion.branch())/community' > /etc/apk/repositories
+            # v9.3：兜底降级 https→http + 清残锁（iSH 里 TLS 挂死、残锁会让 apk 死等）
+            sed -i 's|^https://|http://|' /etc/apk/repositories
+            rm -f /lib/apk/db/lock 2>/dev/null || true
             printf '[global]\\nindex-url = \(pip.pipIndexURL())\\ntrusted-host = mirrors.aliyun.com pypi.tuna.tsinghua.edu.cn mirrors.ustc.edu.cn pypi.org\\n' > /etc/pip.conf
             printf 'registry=\(npm.npmRegistry)\\n' > /root/.npmrc
             """, timeout: 30)

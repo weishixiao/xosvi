@@ -39,7 +39,7 @@ ALPINE_MIRRORS=(
     "https://mirror.sjtu.edu.cn/alpine"
     "$ALPINE_OFFICIAL"
 )
-ROOTFS_REVISION="r5"
+ROOTFS_REVISION="r6"   # r6: guest 源改 http（iSH TLS 挂死）+ 预装常用工具
 
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 log_info()    { echo -e "${BLUE}[rootfs]${NC} $1"; }
@@ -226,6 +226,42 @@ install_apks() {
     log_success "apk packages installed and verified"
 }
 
+# ============================================================================
+# v9.3: 构建期预装常用工具——设备端零联网
+# ============================================================================
+# 之前在设备上装 python3/git/curl 等全靠 guest 里 apk update + add，一旦网络或
+# 源出问题就整包装不上（实测 rootfs 只有 15 个包，python3/curl/git/node/sqlite3
+# 全缺）。这里在 CI 的宿主 iSH 里一次性装好，失败只告警不红。
+# 注意：py3-pandas/numpy 不装——iSH 模拟器上 import 会段错误（v4.3.77 实测）。
+PREINSTALL_PACKAGES="bash coreutils tar gzip unzip zip curl wget python3 py3-pip \
+py3-virtualenv git file sqlite3 binutils openssh-client-default ca-certificates"
+
+preinstall_packages() {
+    local rootfs="$1"
+    command -v "$ISH" >/dev/null 2>&1 || [ -x "$ISH" ] || { log_warning "宿主 iSH 缺失，跳过预装"; return 0; }
+    log_info "预装工具包（设备端免联网）：$(echo $PREINSTALL_PACKAGES | cut -c1-60)…"
+    if "$ISH" -f "$rootfs" /bin/sh -c "
+        set -e
+        rm -f /lib/apk/db/lock /var/cache/apk/* 2>/dev/null || true
+        apk --wait 120 update
+        apk --wait 120 add --no-cache $PREINSTALL_PACKAGES
+        apk --wait 60 fix --reinstall --depends $PREINSTALL_PACKAGES || true
+        rm -f /lib/apk/db/lock 2>/dev/null || true
+        " > "$CACHE_DIR/preinstall.log" 2>&1; then
+        local missing=""
+        for b in bash ls python3 pip3 curl git sqlite3 unzip; do
+            "$ISH" -f "$rootfs" /bin/sh -c "test -x /usr/bin/$b || test -x /bin/$b" || missing="$missing $b"
+        done
+        [ -z "$missing" ] && log_success "预装完成：python3/pip/curl/git/sqlite3/unzip 等已内置" \
+                          || log_warning "预装后仍缺命令:$missing"
+    else
+        log_warning "预装失败（见 .cache/preinstall.log 末尾：$(tail -1 "$CACHE_DIR/preinstall.log" 2>/dev/null)）"
+    fi
+    # 死锁文件绝不能随 rootfs 打包——设备上 apk 会一直报 Operation not permitted
+    rm -f "$rootfs/data/lib/apk/db/lock" 2>/dev/null || true
+    return 0
+}
+
 configure_tree() {
     local root="$ALPINE_TREE"
     mkdir -p "$root"/{dev,proc,sys,tmp,run,root,home,workspace,chat,skills}
@@ -235,9 +271,14 @@ nameserver 1.1.1.1
 nameserver 8.8.8.8
 EOF
 
+    # v9.3：写进 guest 的源必须用 http——iSH 内核里的 TLS 握手会挂死（实测：
+    # HTTP 正常、HTTPS 一路卡到超时），https 源会让设备上 `apk update` 永远转圈。
+    # 另外带上国内镜像（阿里云优先），官方 CDN 在国内手机网络下常被断。
     cat > "$root/etc/apk/repositories" << EOF
-https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_SERIES}/main
-https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_SERIES}/community
+http://mirrors.aliyun.com/alpine/v${ALPINE_SERIES}/main
+http://mirrors.aliyun.com/alpine/v${ALPINE_SERIES}/community
+http://dl-cdn.alpinelinux.org/alpine/v${ALPINE_SERIES}/main
+http://dl-cdn.alpinelinux.org/alpine/v${ALPINE_SERIES}/community
 EOF
 
     if [ -f "$root/etc/passwd" ]; then
@@ -350,6 +391,11 @@ main() {
     ensure_host_tools
     create_fakefs
     install_apks
+    # v9.3：install_apks 内部会把源改回官方地址，预装前重新写回 http 国内源
+    "$ISH" -f "$FAKEFS_OUT" /bin/sh -c '
+        printf "%s/v%s/main\n%s/v%s/community\n" "$1" "$2" "$1" "$2" > /etc/apk/repositories' \
+        sh "http://mirrors.aliyun.com/alpine" "$ALPINE_SERIES" || true
+    preinstall_packages "$FAKEFS_OUT"   # v9.3：设备端免联网的关键一步
     write_version_and_zip
     print_summary
 }
