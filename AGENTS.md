@@ -144,3 +144,28 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 
 Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 + 经验记忆。
 遇到不熟悉的逆向/抓包/注入流程，先查技能库；缺技能可建议新增，不要把任务硬塞到不匹配的工具。
+
+## 构建与安装（com.xosvi.daemon，v0.2.0 起）
+
+- 本项目是 **external workspace**：`apelin/build.sh` 是唯一的构建入口，由 `apelin_project_build`
+  调用（`apelin-project.json` 的 `external.script`）。不要在 `shell_run` 里自己 `dpkg-deb` 打包。
+- 脚本只读 Apelin 给的变量（`APELIN_PROJECT_ROOT` / `APELIN_PACKAGE_DIR` / `APELIN_BOOTSTRAP` /
+  `APELIN_ARCHITECTURE` / `APELIN_PREFIX` / `TMPDIR`），任一为空立刻失败；roothide 为 `arm64e`，
+  rootless 为 `arm64 arm64e`。
+- **只保留 `ApelinBootstrapPath()` / `xosvi_bootstrap()` 这种运行期解析**，任何持久化文件里都不要写
+  解析后的 jbroot 绝对路径（`Support/xosvi/xosvi-common.h` 是三个 helper 共用的解析实现）。
+- **构建脚本内的路径坑**：编译必须在脚本自建的 `$(mktemp -d -p "$TMPDIR" work.XXXXXX)` 里、用
+  **相对路径**传给 clang。绝对路径的 `-o` 在 roothide 视图下会静默不落地；`ldid` 也不认 clang
+  产出的 `.o`（`Unsupported Mach-O type`），所以单架构直接 clang 链接，多架构才 `.o` + `lipo`。
+- 每个二进制都要签名：`xosvid` 用 `Support/xosvid.entitlements`（MachService 需要），
+  `xosvi-cli` 用 `Support/xosvi-cli.entitlements`（带 `wiki.qaq.xosvi.client`，否则被守护拒绝）。
+- **launchd plist / postinst 里的前缀占位是 `【@@PREFIX@@】`**：dpkg 解包时会把 `@PREFIX@`
+  展开掉，写裸 `@PREFIX@` 会变成字面量，postinst 直接失败（旧版就是这么挂的）。
+- 安装后自检：`<bootstrap>/usr/libexec/xosvi/xosvi-pathcheck` 打印解析到的 bootstrap 与写探针，
+  应看到 `resolved bootstrap prefix = /private/var/containers/Bundle/Application/.jbroot-*`。
+- helper 端到端：`<bootstrap>/usr/libexec/xosvi/xosvi-build <work 下的项目目录>`，
+  `work` 固定为 `/private/var/mobile/Documents/wiki.qaq.xosvi/work`。
+- **未通的一环**：本机上 `xpc_connection_create_mach_service` 对**任何**服务都返回
+  `Connection invalid`（系统服务同样如此），服务端 `SERVICE_LISTENER` 也靠 MachService 注册，
+  所以 `/usr/libexec/xosvid` + `xosvi-cli` 在 launchd 未加载该服务前无法握手。加载服务
+  （`icli svc bootstrap system <plist>` / `launchctl bootstrap`）属于改 launchd，需要用户明确同意。

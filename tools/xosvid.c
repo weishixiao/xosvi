@@ -1,0 +1,553 @@
+/*
+ * xosvid —— Xosvi 特权守护进程
+ *
+ * 职责：以 root 执行白名单 helper（xosvi-build / xosvi-install / xosvi-symbolicate）。
+ * 历史：
+ *   v0  rootd.sh：1777 目录文件轮询（.cmd/.out/.status）—— 任何 mobile 进程都能投递
+ *       root 命令；Shell 主循环 fork 风暴打满 launchd 配额被 SIGKILL。
+ *   v1  UDS + RUN 跑任意脚本 —— 仍是「无鉴权的 root 执行」。
+ *   v2（当前）：只有 XPC MachService，只认白名单 helper，没有任何执行任意脚本的入口。
+ *
+ * 传输：XPC MachService wiki.qaq.xosvi.service（launchd 按需拉起）。
+ *   客户端：项目 App（wiki.qaq.xosvi）与命令行 xosvi-cli。
+ *   不提供 Unix 域套接字：iOS 沙盒下每个进程的 /var/tmp 是各自的私有视图，
+ *   root 守护 bind 出来的 socket 客户端根本看不到（实测：同进程 stat 可见、
+ *   换一个进程 ENOENT）。XPC 由 launchd 转接，不存在这个问题。
+ *
+ * 请求（xpc 字典）：
+ *   command = "ping" | "status" | "helper"
+ *   name    = helper 名（xosvi-build 等，可带可不带 xosvi- 前缀）
+ *   args    = 字符串数组；首项为项目目录
+ *   dryrun  = bool；timeout = 秒
+ * 响应：status / error / resolved / bootstrap / pid / uid / exit_code /
+ *       timed_out / elapsed_ms / stdout
+ *
+ * 路径解析（roothide 的核心坑，见 find_bootstrap）：
+ *   不同进程看到的「根」不同 —— App 侧是 AppGroup 里的 .jbroot-XXXX 共享视图，
+ *   launchd 拉起的 root 进程可能是真根（+ libroot）。任何写死 /var/jb 的做法
+ *   都会在另一侧 ENOENT。这里按 env → libroot → 可执行路径 → 扫描 → 真根 逐个实测，
+ *   探测目标统一是 <prefix>/usr/bin/dash（bootstrap 内必有，且与 helper 同树）。
+ *
+ * 构建（tools/build-daemon.sh 调）：
+ *   clang -arch arm64e -arch arm64 -O2 -Wall -o xosvid tools/xosvid.c -framework Foundation
+ * 签名：ldid -S<entitlements>（platform-application / no-sandbox / XPC 服务白名单）
+ */
+
+#define _DARWIN_C_SOURCE 1
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdarg.h>
+#include <string.h>
+#include <stdint.h>
+#include <unistd.h>
+#include <errno.h>
+#include <signal.h>
+#include <dirent.h>
+#include <limits.h>
+#include <fcntl.h>
+#include <time.h>
+#include <dlfcn.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <mach-o/dyld.h>
+#include <xpc/xpc.h>
+#include <dispatch/dispatch.h>
+
+#define SVC_NAME        "wiki.qaq.xosvi.service"
+#define HELPER_DIR      "/usr/libexec/xosvi"
+#define DEFAULT_TIMEOUT 300
+#define MAX_STDOUT      (4u * 1024 * 1024)
+#define MAX_ARGS        64
+
+/* ---------------- bootstrap 路径解析 ---------------- */
+
+typedef int (*rootfs_fn)(char *, size_t);
+
+/* roothide 的 libroot 导出 rootfs_get_path；dlsym 取，缺失即 NULL。 */
+static rootfs_fn g_rootfs;
+
+static const char *env_jbroot(void) {
+    const char *v = getenv("XOSVI_JBROOT");
+    return (v && v[0] == '/') ? v : "";
+}
+
+static int probe_prefix(const char *prefix) {
+    char p[PATH_MAX];
+    snprintf(p, sizeof p, "%s/usr/bin/dash", prefix);
+    return access(p, X_OK) == 0;
+}
+
+/* 从可执行路径截出 /.jbroot-XXXX（roothide）；rootless/真根下返回 0。 */
+static int exe_jbroot(char *out, size_t cap) {
+    char buf[PATH_MAX];
+    uint32_t sz = (uint32_t)sizeof(buf);
+    if (_NSGetExecutablePath(buf, &sz) != 0) return 0;
+    char *p = strstr(buf, "/.jbroot-");
+    if (!p) return 0;
+    char *end = strchr(p + 1, '/');
+    if (!end) return 0;
+    *end = '\0';
+    snprintf(out, cap, "%s", buf);
+    return 1;
+}
+
+static int scan_base(const char *base, char *out, size_t cap) {
+    DIR *d = opendir(base);
+    if (!d) return 0;
+    struct dirent *de;
+    int found = 0;
+    while ((de = readdir(d))) {
+        if (strncmp(de->d_name, ".jbroot-", 8) != 0) continue;
+        char cand[PATH_MAX];
+        snprintf(cand, sizeof cand, "%s/%s", base, de->d_name);
+        if (probe_prefix(cand)) { snprintf(out, cap, "%s", cand); found = 1; break; }
+    }
+    closedir(d);
+    return found;
+}
+
+/* prefix 为拼在 /usr/... 前面的那段（真根时为空串），how 记录凭据。 */
+static int find_bootstrap(char *prefix, size_t cap, char *how, size_t howcap) {
+    if (env_jbroot()[0] && probe_prefix(env_jbroot())) {
+        snprintf(prefix, cap, "%s", env_jbroot());
+        snprintf(how, howcap, "env");
+        return 1;
+    }
+    if (g_rootfs) {
+        char root[PATH_MAX];
+        if (g_rootfs(root, sizeof root) == 0 && root[0]) {
+            const char *pre = strcmp(root, "/") ? root : "";
+            if (probe_prefix(pre)) {
+                snprintf(prefix, cap, "%s", pre);
+                snprintf(how, howcap, "libroot");
+                return 1;
+            }
+        }
+    }
+    char exe[PATH_MAX];
+    if (exe_jbroot(exe, sizeof exe) && probe_prefix(exe)) {
+        snprintf(prefix, cap, "%s", exe);
+        snprintf(how, howcap, "exe");
+        return 1;
+    }
+    const char *bases[] = { "/private/var/containers/Bundle/Application",
+                            "/var/containers/Bundle/Application", NULL };
+    for (int i = 0; bases[i]; i++) {
+        char cand[PATH_MAX];
+        if (scan_base(bases[i], cand, sizeof cand)) {
+            snprintf(prefix, cap, "%s", cand);
+            snprintf(how, howcap, "scan:%s", bases[i]);
+            return 1;
+        }
+    }
+    if (probe_prefix("")) {                        /* 真根 */
+        prefix[0] = '\0';
+        snprintf(how, howcap, "realroot");
+        return 1;
+    }
+    prefix[0] = '\0';
+    snprintf(how, howcap, "none");
+    return 0;
+}
+
+/* ---------------- 日志（launchd 把 stderr 写进 <bootstrap>/var/log/xosvid.log） ---------------- */
+
+static int g_log_fd = -1;
+
+static void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
+static void logmsg(const char *fmt, ...) {
+    char line[1024];
+    va_list ap;
+    va_start(ap, fmt);
+    int n = vsnprintf(line, sizeof line, fmt, ap);
+    va_end(ap);
+    if (n < 0) return;
+    if (n > (int)sizeof line - 2) n = (int)sizeof line - 2;
+    line[n] = '\n';
+    if (g_log_fd >= 0) {
+        ssize_t w = write(g_log_fd, line, (size_t)n + 1);
+        (void)w;
+    }
+    ssize_t w = write(STDERR_FILENO, line, (size_t)n + 1);
+    (void)w;
+}
+
+/* ---------------- 请求模型 ---------------- */
+
+typedef struct {
+    char command[32];
+    char name[64];
+    char **args;
+    int argc;
+    int dryrun;
+    int timeout;
+    char peer[128];
+} request_t;
+
+static void request_free(request_t *r) {
+    if (r->args) {
+        for (int i = 0; i < r->argc; i++) free(r->args[i]);
+        free(r->args);
+        r->args = NULL;
+    }
+    r->argc = 0;
+}
+
+/* helper 白名单，与 deb 里 /usr/libexec/xosvi/ 下的可执行文件一一对应。 */
+static const char *kHelpers[] = { "xosvi-build", "xosvi-install", "xosvi-symbolicate", NULL };
+
+/* "build" / "xosvi-build" / "xosvi/xosvi-build" 归一为白名单项，其它返回 NULL。 */
+static const char *normalize_helper(const char *name) {
+    if (!name || !name[0]) return NULL;
+    const char *base = name;
+    const char *slash = strrchr(name, '/');
+    if (slash && slash[1]) base = slash + 1;
+    for (int i = 0; kHelpers[i]; i++) if (strcmp(base, kHelpers[i]) == 0) return kHelpers[i];
+    char buf[64];
+    snprintf(buf, sizeof buf, "xosvi-%s", base);
+    for (int i = 0; kHelpers[i]; i++) if (strcmp(buf, kHelpers[i]) == 0) return kHelpers[i];
+    return NULL;
+}
+
+/* ---------------- 执行 helper ---------------- */
+
+typedef struct {
+    int exit_code;
+    int timed_out;
+    char *out;
+    size_t outlen;
+} result_t;
+
+/* fork + 双管道跑 helper；到 timeout 仍在跑就 SIGKILL 整个进程组。
+ * stdout/stderr 合并进 res->out（顺序按写出顺序，够用且便于排错）。 */
+static void run_helper(char *const argv[], int argc_unused, int timeout, result_t *res) {
+    (void)argc_unused;
+    int outp[2], errp[2];
+    res->exit_code = -1;
+    res->timed_out = 0;
+    res->out = NULL;
+    res->outlen = 0;
+    if (pipe(outp) != 0) return;
+    if (pipe(errp) != 0) { close(outp[0]); close(outp[1]); return; }
+
+    pid_t pid = fork();
+    if (pid < 0) {
+        close(outp[0]); close(outp[1]); close(errp[0]); close(errp[1]);
+        return;
+    }
+    if (pid == 0) {
+        setpgid(0, 0);
+        dup2(outp[1], STDOUT_FILENO);
+        dup2(errp[1], STDERR_FILENO);
+        close(outp[0]); close(outp[1]); close(errp[0]); close(errp[1]);
+        int devnull = open("/dev/null", O_RDONLY);
+        if (devnull >= 0) { dup2(devnull, STDIN_FILENO); if (devnull > 2) close(devnull); }
+        setenv("PATH", "/usr/bin:/bin:/usr/sbin:/sbin", 1);
+        execv(argv[0], argv);
+        fprintf(stderr, "exec %s failed: %s\n", argv[0], strerror(errno));
+        _exit(127);
+    }
+    setpgid(pid, pid);
+    close(outp[1]);
+    close(errp[1]);
+
+    size_t cap = 64 * 1024, len = 0;
+    char *buf = malloc(cap);
+    int fds[2] = { outp[0], errp[0] };
+    int open_fds = 2;
+    time_t deadline = time(NULL) + (timeout > 0 ? timeout : DEFAULT_TIMEOUT);
+    int killed = 0;
+
+    while (open_fds > 0 && len < MAX_STDOUT) {
+        fd_set rs;
+        FD_ZERO(&rs);
+        int mx = -1;
+        for (int i = 0; i < 2; i++) {
+            if (fds[i] >= 0) { FD_SET(fds[i], &rs); if (fds[i] > mx) mx = fds[i]; }
+        }
+        if (mx < 0) break;
+        struct timeval tv = { 1, 0 };
+        int sel = select(mx + 1, &rs, NULL, NULL, &tv);
+        if (!killed && time(NULL) > deadline) {
+            kill(-pid, SIGKILL);
+            res->timed_out = 1;
+            killed = 1;
+        }
+        if (sel <= 0) {
+            if (sel < 0 && errno == EINTR) continue;
+            continue;
+        }
+        for (int i = 0; i < 2; i++) {
+            if (fds[i] < 0 || !FD_ISSET(fds[i], &rs)) continue;
+            char tmp[16384];
+            ssize_t n = read(fds[i], tmp, sizeof tmp);
+            if (n <= 0) { close(fds[i]); fds[i] = -1; open_fds--; continue; }
+            if (len + (size_t)n > MAX_STDOUT) n = (ssize_t)(MAX_STDOUT - len);
+            if (len + (size_t)n > cap) {
+                size_t ncap = cap * 2;
+                while (ncap < len + (size_t)n) ncap *= 2;
+                char *nb = realloc(buf, ncap);
+                if (!nb) break;
+                buf = nb;
+                cap = ncap;
+            }
+            memcpy(buf + len, tmp, (size_t)n);
+            len += (size_t)n;
+        }
+    }
+    close(outp[0]);
+    close(errp[0]);
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    if (WIFEXITED(status)) res->exit_code = WEXITSTATUS(status);
+    else if (WIFSIGNALED(status)) res->exit_code = 128 + WTERMSIG(status);
+    if (!buf) { buf = strdup(""); len = 0; }
+    res->out = buf;
+    res->outlen = len;
+}
+
+/* ---------------- 客户端校验 ---------------- */
+
+/* 只有带 wiki.qaq.xosvi.client entitlement 的客户端能发请求：主 App、xosvi-cli。
+ * 不做这道校验的话，任何 App 都能借 root 守护跑 helper。 */
+#define CLIENT_ENT "wiki.qaq.xosvi.client"
+
+static int peer_allowed(xpc_connection_t peer) {
+    static int (*has_ent)(xpc_connection_t, const char *);
+    if (!has_ent) has_ent = (int (*)(xpc_connection_t, const char *))
+        dlsym(RTLD_DEFAULT, "xpc_connection_has_bool_entitlement");
+    if (!has_ent) {
+        /* 取不到校验函数时按「有」处理：这里只为挡普通 App，不承担鉴权。 */
+        logmsg("xosvid: WARN xpc_connection_has_bool_entitlement unavailable");
+        return 1;
+    }
+    return has_ent(peer, CLIENT_ENT) != 0;
+}
+
+/* ---------------- 处理一条请求 ---------------- */
+
+static void handle(request_t *r, xpc_object_t reply) {
+    if (strcmp(r->command, "ping") == 0) {
+        xpc_dictionary_set_string(reply, "status", "OK");
+        return;
+    }
+
+    char prefix[PATH_MAX], how[128];
+    if (!find_bootstrap(prefix, sizeof prefix, how, sizeof how)) {
+        xpc_dictionary_set_string(reply, "error", "no bootstrap (dash not found)");
+        return;
+    }
+    xpc_dictionary_set_string(reply, "bootstrap", how);
+
+    if (strcmp(r->command, "status") == 0) {
+        char helper[PATH_MAX], dash[PATH_MAX];
+        snprintf(helper, sizeof helper, "%s%s/xosvi-build", prefix, HELPER_DIR);
+        snprintf(dash, sizeof dash, "%s/usr/bin/dash", prefix);
+        xpc_dictionary_set_string(reply, "status", "OK");
+        xpc_dictionary_set_string(reply, "resolved", helper);
+        xpc_dictionary_set_int64(reply, "pid", (int64_t)getpid());
+        xpc_dictionary_set_int64(reply, "uid", (int64_t)getuid());
+        xpc_dictionary_set_string(reply, "dash", access(dash, X_OK) == 0 ? "ok" : "missing");
+        xpc_dictionary_set_string(reply, "helper",
+                                  access(helper, X_OK) == 0 ? "ok" : "missing");
+        xpc_dictionary_set_string(reply, "peer", r->peer);
+        return;
+    }
+
+    if (strcmp(r->command, "helper") != 0) {
+        xpc_dictionary_set_string(reply, "error", "unknown command (ping/status/helper)");
+        return;
+    }
+
+    const char *helper = normalize_helper(r->name);
+    if (!helper) {
+        xpc_dictionary_set_string(reply, "error",
+                                  "helper not allowed (xosvi-build/xosvi-install/xosvi-symbolicate)");
+        return;
+    }
+    if (r->argc < 1) {
+        xpc_dictionary_set_string(reply, "error", "first argument must be the project dir");
+        return;
+    }
+
+    char helper_path[PATH_MAX];
+    snprintf(helper_path, sizeof helper_path, "%s%s/%s", prefix, HELPER_DIR, helper);
+    if (access(helper_path, X_OK) != 0) {
+        xpc_dictionary_set_string(reply, "error", "helper missing");
+        xpc_dictionary_set_string(reply, "resolved", helper_path);
+        return;
+    }
+
+    char *argv[MAX_ARGS + 8];
+    int n = 0;
+    argv[n++] = helper_path;
+    for (int i = 0; i < r->argc && n < MAX_ARGS; i++) argv[n++] = r->args[i];
+    char tbuf[16];
+    if (r->timeout > 0) {
+        snprintf(tbuf, sizeof tbuf, "%d", r->timeout);
+        argv[n++] = "--timeout";
+        argv[n++] = tbuf;
+    }
+    if (r->dryrun) argv[n++] = "--dry-run";
+    argv[n] = NULL;
+
+    result_t res;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    run_helper(argv, n - 1, r->timeout, &res);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+
+    xpc_dictionary_set_string(reply, "status", "OK");
+    xpc_dictionary_set_string(reply, "resolved", helper_path);
+    xpc_dictionary_set_int64(reply, "pid", (int64_t)getpid());
+    xpc_dictionary_set_int64(reply, "uid", (int64_t)getuid());
+    xpc_dictionary_set_int64(reply, "exit_code", res.exit_code);
+    if (res.timed_out) xpc_dictionary_set_bool(reply, "timed_out", true);
+    xpc_dictionary_set_double(reply, "elapsed_ms",
+                              ((double)(t1.tv_sec - t0.tv_sec) * 1000.0) +
+                              ((double)(t1.tv_nsec - t0.tv_nsec) / 1e6));
+    if (res.out) xpc_dictionary_set_data(reply, "stdout", res.out, res.outlen);
+    free(res.out);
+}
+
+/* ---------------- XPC ---------------- */
+
+typedef xpc_connection_t (*create_mach_fn)(const char *, dispatch_queue_t, uint64_t);
+typedef pid_t (*pid_fn)(xpc_connection_t);
+
+/* 公共头把 xpc_connection_create_mach_service / _get_pid 标成 iOS 不可用，
+ * 运行时符号一直都在；用 dlsym 取，避免与别名的可用性检查纠缠。 */
+static create_mach_fn g_create_mach;
+static pid_fn g_get_pid;
+
+static void peer_desc(xpc_connection_t peer, char *out, size_t cap) {
+    pid_t pid = g_get_pid ? g_get_pid(peer) : 0;
+    snprintf(out, cap, "xpc uid=%d gid=%d pid=%d",
+             (int)xpc_connection_get_euid(peer), (int)xpc_connection_get_egid(peer), (int)pid);
+}
+
+static request_t *request_from_xpc(xpc_object_t msg, const char *peer) {
+    request_t *r = calloc(1, sizeof *r);
+    if (!r) return NULL;
+    const char *cmd = xpc_dictionary_get_string(msg, "command");
+    snprintf(r->command, sizeof r->command, "%s", cmd ? cmd : "status");
+    const char *name = xpc_dictionary_get_string(msg, "name");
+    if (name) snprintf(r->name, sizeof r->name, "%s", name);
+    r->dryrun = xpc_dictionary_get_bool(msg, "dryrun");
+    r->timeout = (int)xpc_dictionary_get_int64(msg, "timeout");
+    snprintf(r->peer, sizeof r->peer, "%s", peer);
+    xpc_object_t args = xpc_dictionary_get_value(msg, "args");
+    if (args && xpc_get_type(args) == XPC_TYPE_ARRAY) {
+        size_t c = xpc_array_get_count(args);
+        if (c > MAX_ARGS) c = MAX_ARGS;
+        r->args = calloc(c + 1, sizeof(char *));
+        if (r->args) {
+            for (size_t i = 0; i < c; i++) {
+                const char *s = xpc_array_get_string(args, i);
+                r->args[r->argc++] = strdup(s ? s : "");
+            }
+        }
+    }
+    return r;
+}
+
+static void xpc_handle(xpc_connection_t peer) {
+    xpc_connection_set_event_handler(peer, ^(xpc_object_t event) {
+        if (xpc_get_type(event) != XPC_TYPE_DICTIONARY) return;
+        char peerdesc[128];
+        peer_desc(peer, peerdesc, sizeof peerdesc);
+        request_t *r = request_from_xpc(event, peerdesc);
+        if (!r) return;
+        xpc_object_t reply = xpc_dictionary_create_reply(event);
+        if (reply) {
+            logmsg("xosvid: %s command=%s name=%s argc=%d", peerdesc, r->command,
+                   r->name, r->argc);
+            handle(r, reply);
+            xpc_connection_send_message(peer, reply);
+            xpc_release(reply);
+        }
+        request_free(r);
+        free(r);
+    });
+    xpc_connection_resume(peer);
+}
+
+/* ---------------- 自退出时钟 ---------------- */
+
+/* 连续 IDLE_SECS 没有请求就退出（launchd 下次连接会重新拉起）。
+ * 必须重置，否则「键盘没电了但守护一直挂着」会占着 root 进程不放。 */
+static const int kIdleSecs = 900;
+
+static void arm_idle_timer(dispatch_source_t t) {
+    dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, (int64_t)kIdleSecs * NSEC_PER_SEC),
+                              DISPATCH_TIME_FOREVER, 5ull * NSEC_PER_SEC);
+}
+
+int main(int argc, char **argv) {
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "--help") == 0) {
+            printf("usage: xosvid\n"
+                   "  XPC MachService %s (started by launchd).\n", SVC_NAME);
+            return 0;
+        }
+    }
+
+    umask(022);
+    chdir("/");
+    signal(SIGPIPE, SIG_IGN);
+
+    g_create_mach = (create_mach_fn)dlsym(RTLD_DEFAULT, "xpc_connection_create_mach_service");
+    g_get_pid = (pid_fn)dlsym(RTLD_DEFAULT, "xpc_connection_get_pid");
+    g_rootfs = (rootfs_fn)dlsym(RTLD_DEFAULT, "rootfs_get_path");
+
+    char prefix[PATH_MAX], how[128];
+    int have = find_bootstrap(prefix, sizeof prefix, how, sizeof how);
+    /* 日志落 <bootstrap>/var/log/xosvid.log：launchd 的 StandardErrorPath 在
+     * roothide 上落点随视图而定，自己再开一份才稳。 */
+    char logpath[PATH_MAX];
+    snprintf(logpath, sizeof logpath, "%s/var/log/xosvid.log", prefix);
+    g_log_fd = open(logpath, O_CREAT | O_WRONLY | O_APPEND, 0644);
+    logmsg("xosvid: start pid=%d euid=%d bootstrap='%s' via=%s libroot=%s log=%s",
+           (int)getpid(), (int)geteuid(), prefix, how,
+           g_rootfs ? "present" : "missing", g_log_fd >= 0 ? logpath : "(stderr only)");
+    if (!have) logmsg("xosvid: WARN bootstrap not found; helpers will fail");
+    if (geteuid() != 0) logmsg("xosvid: WARN not root (euid=%d)", (int)geteuid());
+    if (!g_create_mach) {
+        logmsg("xosvid: FATAL xpc_connection_create_mach_service missing");
+        return 1;
+    }
+
+    dispatch_queue_t q = dispatch_queue_create("wiki.qaq.xosvid", DISPATCH_QUEUE_SERIAL);
+    dispatch_source_t idle = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, q);
+    dispatch_source_set_event_handler(idle, ^{
+        logmsg("xosvid: idle %ds, exiting", kIdleSecs);
+        exit(0);
+    });
+    arm_idle_timer(idle);
+    dispatch_resume(idle);
+
+    xpc_connection_t listener = g_create_mach(SVC_NAME, q, XPC_CONNECTION_MACH_SERVICE_LISTENER);
+    if (!listener) {
+        logmsg("xosvid: FATAL listener unavailable for %s", SVC_NAME);
+        return 1;
+    }
+    xpc_connection_set_event_handler(listener, ^(xpc_object_t event) {
+        if (xpc_get_type(event) != XPC_TYPE_CONNECTION) return;
+        xpc_connection_t peer = (xpc_connection_t)event;
+        arm_idle_timer(idle);
+        if (!peer_allowed(peer)) {
+            char d[128];
+            peer_desc(peer, d, sizeof d);
+            logmsg("xosvid: peer rejected %s (no %s)", d, CLIENT_ENT);
+            xpc_connection_cancel(peer);
+            return;
+        }
+        xpc_handle(peer);
+    });
+    xpc_connection_resume(listener);
+    logmsg("xosvid: listening on %s", SVC_NAME);
+
+    dispatch_main();
+    return 0;
+}
