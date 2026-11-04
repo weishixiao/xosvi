@@ -178,21 +178,34 @@ enum XosviXPC {
         return request(msg, timeout: Double(max(timeout, 30)) + 10)
     }
 
-    // SecTask 是私有 API（公开 SDK 不导出），按 DeviceProbe 的做法直接声明符号。
-    @_silgen_name("SecTaskCreateFromSelf")
-    private static func secTaskCreateFromSelf(_ allocator: CFAllocator?) -> CFTypeRef?
+    // SecTask 是私有 API（公开 SDK 不导出）。这里不用 @_silgen_name：那两个符号在 DeviceProbe
+    // 里已经用 @_silgen_name 声明成**实例方法**，Swift 把它们当作多带一个 self 的 C 函数，
+    // 于是这里一调用就报 convention mismatch（declared `@guaranteed DeviceProbe`）。
+    // 按 MachRaw 的做法走 dlsym + @convention(c)，参数全用裸指针，ABI 与 C 侧一致。
+    private typealias SecTaskCreateFn = @convention(c) (UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?
+    private typealias SecTaskCopyFn = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer,
+                                                      UnsafeMutableRawPointer?) -> UnsafeMutableRawPointer?
 
-    @_silgen_name("SecTaskCopyValueForEntitlement")
-    private static func secTaskCopyValueForEntitlement(_ task: CFTypeRef, _ entitlement: CFString,
-                                                      _ error: UnsafeMutablePointer<Unmanaged<CFError>?>?) -> CFTypeRef?
+    private static let secTaskCreateFn: SecTaskCreateFn? = {
+        guard let p = dlsym(rtlDefault, "SecTaskCreateFromSelf") else { return nil }
+        return unsafeBitCast(p, to: SecTaskCreateFn.self)
+    }()
+
+    private static let secTaskCopyFn: SecTaskCopyFn? = {
+        guard let p = dlsym(rtlDefault, "SecTaskCopyValueForEntitlement") else { return nil }
+        return unsafeBitCast(p, to: SecTaskCopyFn.self)
+    }()
 
     /// 本进程是否带客户端 entitlement（带不上时守护会直接 cancel 连接，表现为错误事件）。
     static func hasClientEntitlement() -> Bool {
-        guard let task = secTaskCreateFromSelf(nil) else { return false }
-        guard let raw = secTaskCopyValueForEntitlement(task, clientEntitlement as CFString, nil) else {
-            return false
-        }
-        guard CFGetTypeID(raw) == CFBooleanGetTypeID() else { return false }
-        return CFBooleanGetValue((raw as! CFBoolean))
+        guard let createTask = secTaskCreateFn, let copyValue = secTaskCopyFn else { return false }
+        guard let task = createTask(nil) else { return false }
+        defer { Unmanaged<AnyObject>.fromOpaque(task).release() }
+
+        let key = Unmanaged.passUnretained(clientEntitlement as CFString).toOpaque()
+        guard let raw = copyValue(task, key, nil) else { return false }
+        // +1 由 takeRetainedValue 收下，交给 ARC 释放；CFBoolean 与 Bool 免费桥接
+        let value = Unmanaged<AnyObject>.fromOpaque(raw).takeRetainedValue()
+        return (value as? Bool) ?? false
     }
 }
