@@ -127,17 +127,24 @@ final class RootdTool: MCPTool {
     /// 设备上的 rootd.sh 写的是 `.rootd.pid`（带点），工具原来只读 `rootd.pid`（无点），
     /// 永远读不到 → pid == nil → status 报未运行、exec 直接拒绝执行。
     private func daemonPID() -> pid_t? {
-        let pidFiles = [".rootd.pid", "rootd.pid"]
+        // v0.2.3：xosvid 走 launchd 时写 <bootstrap>/var/run/xosvid.pid（rootd.sh 那套写 .rootd.pid）。
+        // 前者是唯一一个由守护自己写的、指向真实 launchd 进程的文件，先查它。
+        var files: [String] = []
+        if let jb = JBEnvironment.jbrootPath, !jb.isEmpty {
+            files.append(jb + "/var/run/xosvid.pid")
+        }
         for d in Self.candidateDirs {
-            for name in pidFiles {
-                guard let raw = try? String(contentsOfFile: d + "/" + name, encoding: .utf8) else { continue }
-                // 可能带换行或额外字段，只取第一段数字
-                let first = raw.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\r" }).first ?? ""
-                guard let pid = pid_t(first.trimmingCharacters(in: .whitespaces)), pid > 0 else { continue }
-                // kill(pid,0)：0 = 进程存在；EPERM 说明存在但无权发信号（App 对 root 进程就是这种）
-                if kill(pid, 0) == 0 || errno == EPERM {
-                    return pid
-                }
+            files.append(d + "/.rootd.pid")
+            files.append(d + "/rootd.pid")
+        }
+        for path in files {
+            guard let raw = try? String(contentsOfFile: path, encoding: .utf8) else { continue }
+            // 可能带换行或额外字段，只取第一段数字
+            let first = raw.split(whereSeparator: { $0 == " " || $0 == "\n" || $0 == "\r" }).first ?? ""
+            guard let pid = pid_t(first.trimmingCharacters(in: .whitespaces)), pid > 0 else { continue }
+            // kill(pid,0)：0 = 进程存在；EPERM 说明存在但无权发信号（App 对 root 进程就是这种）
+            if kill(pid, 0) == 0 || errno == EPERM {
+                return pid
             }
         }
         return nil

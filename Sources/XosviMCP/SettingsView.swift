@@ -405,14 +405,17 @@ struct SettingsView: View {
         }
         return build.isEmpty ? "—" : build
     }
+}
 
-        return String(raw.dropLast(5))
-    }
+/// v9.7 修复：v9.4「设置瘦身」误删了本结构体的头两行（类型声明与 item 属性），
+/// 导致这段 body 被并进 SettingsView、图标名失去定义，App 编译不过。现按 v6.6.33 的原样补回。
+struct SettingRowContent: View {
+    let item: SettingsItem
 
     var body: some View {
         // v7.1.1（DeepSeek 风格）：彩色方块 + 白色重图标 → 黑白简洁版（裸线条图标）
         HStack(spacing: 12) {
-            Image(systemName: lineIcon)
+            Image(systemName: item.icon)
                 .font(.system(size: 17, weight: .regular))
                 .foregroundColor(.primary)
                 .frame(width: 26, alignment: .center)

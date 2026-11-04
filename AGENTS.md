@@ -191,3 +191,11 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   `icli svc bootstrap <plist>`（root，会把 plist 里的路径就地改写）。
   排查 `status` 里的 `peer: xpc uid=…` 是**客户端**身份（mobile 跑 cli 就是 501），守护身份看 `uid:`。
   重装 deb 后若发现又回到 501，重复这两条即可（属于改 launchd，需用户明确同意）。
+- **装完自启 + 崩溃自动拉起（0.2.2 起）**：plist 里加了 `RunAtLoad` / `KeepAlive`，
+  用 `icli svc bootstrap` 注册后 launchd 会自己拉起守护，重启设备后也不必再人工 start。
+  实测（root `kill -9` 守护）：`icli svc list wiki.qaq.xosvid` 显示 `last_exit_status: 9`，
+  随即有新 pid 且 `running: true`，`xosvi-cli status` 仍是 `uid: 0`。
+- **`daemon_alive` 的判据（0.2.3 起）**：守护启动时写 `<bootstrap>/var/run/xosvid.pid`，
+  空闲 900 秒退出时清掉；`RootdTool.daemonPID()` 先读它，再用 `kill(pid,0)` 校验（EPERM 也算活）。
+  `statusReport()` 里 `daemon_alive = pid 有效 || 心跳新鲜 || XPC 可达`，
+  `alive_source` 会写明是哪一条成立，排查时看它而不是看单个布尔值。

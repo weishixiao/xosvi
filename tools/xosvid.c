@@ -475,6 +475,27 @@ static void xpc_handle(xpc_connection_t peer) {
 
 /* ---------------- 自退出时钟 ---------------- */
 
+/* v0.2.3：把 pid 写到 <bootstrap>/var/run/xosvid.pid，App 侧的 RootdTool.daemonPID()
+ * 就读得到（它按 kill(pid,0) 校验，死 pid 不会被当成活着）。守护是 launchd 拉起的，
+ * 以前不写这个文件，daemon_alive 只能靠 XPC 兜底；写出来两边判据才一致。 */
+static void write_pidfile(const char *prefix) {
+    char dir[PATH_MAX], path[PATH_MAX], buf[64];
+    snprintf(dir, sizeof dir, "%s/var/run", prefix);
+    mkdir(dir, 0755);
+    snprintf(path, sizeof path, "%s/xosvid.pid", dir);
+    int fd = open(path, O_CREAT | O_WRONLY | O_TRUNC, 0644);
+    if (fd < 0) return;
+    int n = snprintf(buf, sizeof buf, "%d\n", (int)getpid());
+    if (n > 0) (void)!write(fd, buf, (size_t)n);
+    close(fd);
+}
+
+static char g_pidfile[PATH_MAX];
+
+static void remove_pidfile(void) {
+    if (g_pidfile[0]) unlink(g_pidfile);
+}
+
 /* 连续 IDLE_SECS 没有请求就退出（launchd 下次连接会重新拉起）。
  * 必须重置，否则「键盘没电了但守护一直挂着」会占着 root 进程不放。 */
 static const int kIdleSecs = 900;
@@ -513,6 +534,12 @@ int main(int argc, char **argv) {
            g_rootfs ? "present" : "missing", g_log_fd >= 0 ? logpath : "(stderr only)");
     if (!have) logmsg("xosvid: WARN bootstrap not found; helpers will fail");
     if (geteuid() != 0) logmsg("xosvid: WARN not root (euid=%d)", (int)geteuid());
+    if (have) {
+        snprintf(g_pidfile, sizeof g_pidfile, "%s/var/run/xosvid.pid", prefix);
+        write_pidfile(prefix);
+        atexit(remove_pidfile);
+        logmsg("xosvid: pidfile %s", g_pidfile);
+    }
     if (!g_create_mach) {
         logmsg("xosvid: FATAL xpc_connection_create_mach_service missing");
         return 1;
@@ -522,6 +549,7 @@ int main(int argc, char **argv) {
     dispatch_source_t idle = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, q);
     dispatch_source_set_event_handler(idle, ^{
         logmsg("xosvid: idle %ds, exiting", kIdleSecs);
+        remove_pidfile();   /* dispatch_main 不走 atexit，这里手动清 */
         exit(0);
     });
     arm_idle_timer(idle);
