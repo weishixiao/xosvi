@@ -651,8 +651,9 @@ static void remove_pidfile(void) {
 }
 
 /* 连续 IDLE_SECS 没有请求就退出（launchd 下次连接会重新拉起）。
- * 必须重置，否则「键盘没电了但守护一直挂着」会占着 root 进程不放。 */
-static const int kIdleSecs = 900;
+ * 必须重置，否则「键盘没电了但守护一直挂着」会占着 root 进程不放。
+ * XOSVID_IDLE_SECS 可覆盖（排障时缩小到几秒即可验证「有 helper 时不退出」）。 */
+static int kIdleSecs = 900;
 
 static void arm_idle_timer(dispatch_source_t t) {
     dispatch_source_set_timer(t, dispatch_time(DISPATCH_TIME_NOW, (int64_t)kIdleSecs * NSEC_PER_SEC),
@@ -671,6 +672,12 @@ int main(int argc, char **argv) {
     umask(022);
     chdir("/");
     signal(SIGPIPE, SIG_IGN);
+
+    const char *idle_env = getenv("XOSVID_IDLE_SECS");
+    if (idle_env && idle_env[0]) {
+        int v = atoi(idle_env);
+        if (v >= 1) kIdleSecs = v;
+    }
 
     g_create_mach = (create_mach_fn)dlsym(RTLD_DEFAULT, "xpc_connection_create_mach_service");
     g_get_pid = (pid_fn)dlsym(RTLD_DEFAULT, "xpc_connection_get_pid");
