@@ -25,6 +25,17 @@ NAME_RE = re.compile(r"name\s*:\s*\"([^\"]+)\"")
 CATEGORY_RE = re.compile(r"category\s*:\s*\"([^\"]+)\"")
 NAME_LIMIT = 600
 BLOCK_LIMIT = 8000
+CLOSE_RE = re.compile(r"^[ \t]*\)", re.MULTILINE)   # ToolDefinition( 参数串的收尾行
+
+# v0.2.5：只统计**真正注册**的工具。旧实现扫全仓库每一个 ToolDefinition(，把已合并进
+# 大工具、却仍保留类定义的遗留工具也算进去，快照记着 164 个「工具」而运行期只有 51 个：
+#   * 快照校验守的是一个错误基线，删死代码反而 CI 报不一致；
+#   * AI/文档读快照会以为那些名字可以调用（幽灵工具）。
+# 现在：先收集 register(XxxTool()) 的类名，只取这些类（及其外层类）里的 ToolDefinition。
+# 注意类头正则里的 \s 不能跨行，否则会把上一行内容一起吞掉导致游标错位。
+REGISTER_CLASS_RE = re.compile(r"\bregister\s*\(\s*([A-Za-z_]\w*)\s*\(\s*\)")
+CLASS_START_RE = re.compile(
+    r"(?:^|\n)[ \t]*(?:public[ \t]+|final[ \t]+|open[ \t]+)*(?:class|struct)[ \t]+([A-Za-z_]\w*)[ \t]*[:{<]")
 
 
 def parse_args(argv):
@@ -45,19 +56,44 @@ def resolve_src(raw: str) -> Path:
     return p
 
 
+def collect_registered_classes(src: Path) -> set[str]:
+    """所有 register(Xxx()) 里出现的类型名（跨文件；只认无参构造）。"""
+    names: set[str] = set()
+    for f in sorted(src.rglob("*.swift")):
+        text = f.read_text(encoding="utf-8", errors="replace")
+        names.update(REGISTER_CLASS_RE.findall(text))
+    return names
+
+
+def owning_classes(text: str) -> list[tuple[int, str]]:
+    """[(位置, 类名)]，按出现顺序 —— 供单遍游标查找所属类。"""
+    return [(m.start(), m.group(1)) for m in CLASS_START_RE.finditer(text)]
+
+
 def collect_tools(src: Path) -> dict[str, dict]:
     tools: dict[str, dict] = {}
+    registered = collect_registered_classes(src)
     for f in sorted(src.rglob("*.swift")):
         text = f.read_text(encoding="utf-8", errors="replace")
         starts = [m.start() for m in DEF_START_RE.finditer(text)]
+        owners = owning_classes(text)
+        oi, owner = 0, ""
         for i, s in enumerate(starts):
             e = starts[i + 1] if i + 1 < len(starts) else len(text)
             block = text[s:e]
+            while oi < len(owners) and owners[oi][0] < s:
+                owner = owners[oi][1]
+                oi += 1
+            if owner not in registered:
+                continue          # 未注册的工具类：不进快照（运行期不可调用）
             m = NAME_RE.search(block[:NAME_LIMIT])
             if not m:
                 continue
             name = m.group(1)
-            head = block[:BLOCK_LIMIT]
+            # 只取 ToolDefinition 的参数串（到收尾的 ")" 行为止）：长 summary 会超过
+            # BLOCK_LIMIT，整块截断会把末尾的 verified/category 一起切掉。
+            close = CLOSE_RE.search(block)
+            head = block[: close.start() if close else BLOCK_LIMIT]
             meta: dict = {
                 "file": f.name,
                 "category": (CATEGORY_RE.search(head).group(1) if CATEGORY_RE.search(head) else ""),

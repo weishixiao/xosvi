@@ -1,303 +1,62 @@
 {
-  "count": 164,
+  "count": 51,
   "names": [
     "app",
-    "app.decrypt",
-    "app.deps",
-    "app.diagnose",
-    "app.duplicate",
-    "app.encrypt_info",
-    "app.entitlements",
-    "app.inject_package",
-    "app.install",
-    "app.launch",
-    "app.replace_decrypted",
-    "app.restart",
-    "app.start",
-    "app.stats",
-    "app.status",
-    "app.stop",
-    "app.uninstall",
     "app_write_file",
-    "apps.cache_clear",
-    "apps.cache_inspect",
-    "apps.open_and_input",
     "artifact",
-    "assistant.memory_delete",
-    "assistant.memory_list",
-    "assistant.memory_set",
     "assistant_memory",
     "automation",
-    "automation.jobs",
-    "automation.list",
-    "automation.run_now",
-    "automation.status",
-    "automation.stop",
-    "binary.symbols",
     "bind_app",
     "bind_app_write",
-    "build.environment",
-    "build.run",
-    "build.runner.token",
-    "calendar",
-    "calendar.create_event",
-    "contacts.search",
     "container",
-    "container.delete",
-    "container.resolve",
-    "container.write_text",
     "control",
-    "control.inject",
-    "control.screenshot",
-    "control.tap_text",
-    "control.type_text",
-    "crash.repro_template",
-    "cron.fire",
     "db",
-    "debug.dump_conversation",
-    "debug.dump_conversations",
     "device",
-    "device.info",
-    "device.keychain_wipe",
-    "device.probe",
-    "device.refresh_container",
-    "device.snapshot",
     "diagnose",
-    "diagnose.crash",
-    "diagnose.startup",
     "disasm",
-    "dylib.inspect",
     "env",
     "env.setup_re",
     "file",
     "gateway",
     "git",
-    "hook.apply",
     "inject",
-    "injection.diagnose",
-    "injection.disable",
-    "injection.enable",
-    "injection.enable_persisted",
-    "injection.inspect",
-    "injection.list",
-    "injection.mem",
-    "injection.remove",
-    "injection.restore",
-    "injection.static",
-    "injection.status",
-    "injection.verify",
-    "ipa.inspect",
     "ish.doctor",
     "jb",
-    "kb.query",
     "knowledge",
-    "knowledge.delete",
-    "knowledge.import_file",
-    "knowledge.import_text",
-    "knowledge.search",
     "location",
-    "location.fake",
-    "location.fake_clear",
-    "location.fake_status",
-    "location.get",
-    "log.collect",
     "macho",
     "macro",
-    "macro.delete",
-    "macro.export",
-    "macro.list",
-    "macro.record",
-    "macro.run",
-    "macro.stop",
     "memory",
-    "model",
-    "model.authentication",
-    "model.config",
-    "model.list",
-    "model.selectedProfileID",
-    "model.switch",
-    "model.update",
     "network.capture",
-    "ocr.image",
     "package",
-    "phone",
-    "plugin.list",
-    "probe.inspect",
-    "process.list",
     "project",
-    "project.generate_tweak",
     "prompt.read_mode",
     "py",
     "reminder",
-    "reminder.schedule_recurring",
     "rescue",
-    "rescue.cleanup",
-    "rescue.recover_all",
-    "rescue.scan",
     "root",
     "save",
-    "scan.qr",
     "server",
-    "server.start",
-    "server.status",
-    "server.stop",
     "shell.exec",
     "skills.list",
     "skills.read",
     "skills.set_enabled",
     "ssh",
-    "ssh.exec",
-    "ssh.scp",
     "subagent",
     "system.overview",
-    "task.run",
-    "test.run",
     "tool.install",
-    "tool.load_dylib",
     "tools.audit",
     "verify",
-    "verify.app_running",
-    "verify.file",
     "vpn.capture",
     "web.fetch",
     "web.search",
     "wifi",
-    "workspace",
-    "workspace.cleanup",
-    "workspace.info"
+    "workspace"
   ],
   "tools": {
     "app": {
       "category": "app_control",
       "file": "ProcessTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.decrypt": {
-      "category": "app_control",
-      "file": "AppDecryptTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.deps": {
-      "category": "app_control",
-      "file": "AppTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.diagnose": {
-      "category": "app_control",
-      "file": "FailureDiagnoseTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.duplicate": {
-      "category": "app_control",
-      "file": "AppDuplicateTool.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.encrypt_info": {
-      "category": "app_control",
-      "file": "AppDecryptTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.entitlements": {
-      "category": "",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "app.inject_package": {
-      "category": "app_control",
-      "file": "AppDecryptTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.install": {
-      "category": "app_control",
-      "file": "AppInstallTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.launch": {
-      "category": "app_control",
-      "file": "ControlLaunchTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.replace_decrypted": {
-      "category": "app_control",
-      "file": "AppDecryptTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.restart": {
-      "category": "app_control",
-      "file": "ProcessTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.start": {
-      "category": "app_control",
-      "file": "ProcessTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.stats": {
-      "category": "app_control",
-      "file": "ProcessTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.status": {
-      "category": "app_control",
-      "file": "ProcessTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.stop": {
-      "category": "app_control",
-      "file": "ProcessTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "app.uninstall": {
-      "category": "app_control",
-      "file": "AppInstallTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -311,57 +70,9 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "apps.cache_clear": {
-      "category": "app_control",
-      "file": "AppTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "apps.cache_inspect": {
-      "category": "app_control",
-      "file": "AppTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "apps.open_and_input": {
-      "category": "app_control",
-      "file": "AppTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "artifact": {
       "category": "fs",
       "file": "Tools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "assistant.memory_delete": {
-      "category": "knowledge",
-      "file": "AssistantMemoryTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "assistant.memory_list": {
-      "category": "knowledge",
-      "file": "AssistantMemoryTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "assistant.memory_set": {
-      "category": "knowledge",
-      "file": "AssistantMemoryTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -383,54 +94,6 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "automation.jobs": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "automation.list": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "automation.run_now": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "automation.status": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "automation.stop": {
-      "category": "device",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "binary.symbols": {
-      "category": "analysis",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "bind_app": {
       "category": "filesystem",
       "file": "BindAppTool.swift",
@@ -447,54 +110,6 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "build.environment": {
-      "category": "build",
-      "file": "BuildTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "build.run": {
-      "category": "",
-      "file": "BuildTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "build.runner.token": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "calendar": {
-      "category": "system",
-      "file": "CalendarExecTool.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "calendar.create_event": {
-      "category": "system",
-      "file": "MissingTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "contacts.search": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "container": {
       "category": "fs",
       "file": "Tools.swift",
@@ -503,81 +118,9 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "container.delete": {
-      "category": "filesystem",
-      "file": "OriginalTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "container.resolve": {
-      "category": "fs",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "container.write_text": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
     "control": {
       "category": "ui_control",
       "file": "ControlTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "control.inject": {
-      "category": "ui_control",
-      "file": "ControlTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "control.screenshot": {
-      "category": "ui_control",
-      "file": "ControlTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "control.tap_text": {
-      "category": "ui_control",
-      "file": "ControlTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "control.type_text": {
-      "category": "ui_control",
-      "file": "ControlTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "crash.repro_template": {
-      "category": "diagnose",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "cron.fire": {
-      "category": "",
-      "file": "AllMCPTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -591,22 +134,6 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "debug.dump_conversation": {
-      "category": "debug",
-      "file": "DebugConversationsTool.swift",
-      "remote_only": true,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "debug.dump_conversations": {
-      "category": "debug",
-      "file": "DebugConversationsTool.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "device": {
       "category": "device",
       "file": "Tools.swift",
@@ -614,46 +141,6 @@
       "requires_jailbreak": false,
       "requires_trollstore": false,
       "verified": true
-    },
-    "device.info": {
-      "category": "device",
-      "file": "Tools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "device.keychain_wipe": {
-      "category": "",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "device.probe": {
-      "category": "device",
-      "file": "Tools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "device.refresh_container": {
-      "category": "",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "device.snapshot": {
-      "category": "",
-      "file": "MissingTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
     },
     "diagnose": {
       "category": "diagnose",
@@ -663,33 +150,9 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "diagnose.crash": {
-      "category": "diagnose",
-      "file": "DiagnoseAndServer.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "diagnose.startup": {
-      "category": "diagnose",
-      "file": "DiagnoseAndServer.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "disasm": {
       "category": "macho",
       "file": "DisasmTool.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "dylib.inspect": {
-      "category": "analysis",
-      "file": "QTTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -735,121 +198,9 @@
       "requires_trollstore": false,
       "verified": false
     },
-    "hook.apply": {
-      "category": "injection",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "inject": {
       "category": "injection",
       "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.diagnose": {
-      "category": "",
-      "file": "QTTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "injection.disable": {
-      "category": "injection",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.enable": {
-      "category": "injection",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.enable_persisted": {
-      "category": "injection",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.inspect": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.list": {
-      "category": "injection",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.mem": {
-      "category": "",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.remove": {
-      "category": "",
-      "file": "OriginalTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "injection.restore": {
-      "category": "",
-      "file": "RescueTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "injection.static": {
-      "category": "injection",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.status": {
-      "category": "injection",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "injection.verify": {
-      "category": "injection",
-      "file": "FailureDiagnoseTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "ipa.inspect": {
-      "category": "analysis",
-      "file": "QTTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -871,14 +222,6 @@
       "requires_trollstore": false,
       "verified": false
     },
-    "kb.query": {
-      "category": "knowledge",
-      "file": "KnowledgeBaseAndCleanup.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "knowledge": {
       "category": "knowledge",
       "file": "Tools.swift",
@@ -887,81 +230,9 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "knowledge.delete": {
-      "category": "",
-      "file": "MissingTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "knowledge.import_file": {
-      "category": "knowledge",
-      "file": "MissingTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "knowledge.import_text": {
-      "category": "knowledge",
-      "file": "MissingTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "knowledge.search": {
-      "category": "knowledge",
-      "file": "MissingTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "location": {
       "category": "device",
       "file": "Tools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "location.fake": {
-      "category": "device",
-      "file": "ControlLaunchTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "location.fake_clear": {
-      "category": "device",
-      "file": "ControlLaunchTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "location.fake_status": {
-      "category": "device",
-      "file": "ControlLaunchTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "location.get": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "log.collect": {
-      "category": "diagnose",
-      "file": "QTTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -983,54 +254,6 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "macro.delete": {
-      "category": "macro",
-      "file": "MacroTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "macro.export": {
-      "category": "macro",
-      "file": "MacroTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "macro.list": {
-      "category": "macro",
-      "file": "MacroTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "macro.record": {
-      "category": "macro",
-      "file": "MacroTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "macro.run": {
-      "category": "macro",
-      "file": "MacroTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "macro.stop": {
-      "category": "",
-      "file": "MacroTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
     "memory": {
       "category": "",
       "file": "Tools.swift",
@@ -1039,73 +262,9 @@
       "requires_trollstore": false,
       "verified": false
     },
-    "model": {
-      "category": "system",
-      "file": "Tools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "model.authentication": {
-      "category": "",
-      "file": "OriginalTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "model.config": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "model.list": {
-      "category": "debug",
-      "file": "DebugConversationsTool.swift",
-      "remote_only": true,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "model.selectedProfileID": {
-      "category": "system",
-      "file": "OriginalTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "model.switch": {
-      "category": "debug",
-      "file": "DebugConversationsTool.swift",
-      "remote_only": true,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "model.update": {
-      "category": "system",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "network.capture": {
       "category": "diagnose",
       "file": "QTTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "ocr.image": {
-      "category": "system",
-      "file": "OCRTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -1119,49 +278,9 @@
       "requires_trollstore": false,
       "verified": false
     },
-    "phone": {
-      "category": "system",
-      "file": "PhoneExecTool.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "plugin.list": {
-      "category": "analysis",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "probe.inspect": {
-      "category": "",
-      "file": "AdvancedTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "process.list": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
     "project": {
       "category": "build",
       "file": "ProjectAndTasks.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "project.generate_tweak": {
-      "category": "build",
-      "file": "AllMCPTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -1191,40 +310,8 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "reminder.schedule_recurring": {
-      "category": "system",
-      "file": "MissingTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "rescue": {
       "category": "cleanup",
-      "file": "RescueTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "rescue.cleanup": {
-      "category": "diagnose",
-      "file": "RescueTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "rescue.recover_all": {
-      "category": "",
-      "file": "RescueTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
-    "rescue.scan": {
-      "category": "diagnose",
       "file": "RescueTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
@@ -1235,51 +322,19 @@
       "category": "shell",
       "file": "RootdTool.swift",
       "remote_only": false,
-      "requires_jailbreak": false,
+      "requires_jailbreak": true,
       "requires_trollstore": false,
       "verified": false
     },
     "save": {
-      "category": "file",
+      "category": "",
       "file": "SaveDataTool.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
       "verified": true
     },
-    "scan.qr": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "server": {
-      "category": "system",
-      "file": "DiagnoseAndServer.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "server.start": {
-      "category": "diagnose",
-      "file": "DiagnoseAndServer.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "server.status": {
-      "category": "system",
-      "file": "DiagnoseAndServer.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "server.stop": {
       "category": "system",
       "file": "DiagnoseAndServer.swift",
       "remote_only": false,
@@ -1327,22 +382,6 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "ssh.exec": {
-      "category": "shell",
-      "file": "SSHTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "ssh.scp": {
-      "category": "shell",
-      "file": "SSHTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "subagent": {
       "category": "automation",
       "file": "SubagentTool.swift",
@@ -1359,22 +398,6 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "task.run": {
-      "category": "build",
-      "file": "ProjectAndTasks.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "test.run": {
-      "category": "",
-      "file": "ProcessTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "tool.install": {
       "category": "build",
       "file": "InstallTools.swift",
@@ -1383,16 +406,8 @@
       "requires_trollstore": false,
       "verified": true
     },
-    "tool.load_dylib": {
-      "category": "build",
-      "file": "ToolchainTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
-    },
     "tools.audit": {
-      "category": "system",
+      "category": "",
       "file": "AllMCPTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
@@ -1402,22 +417,6 @@
     "verify": {
       "category": "system",
       "file": "Tools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "verify.app_running": {
-      "category": "verify",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "verify.file": {
-      "category": "verify",
-      "file": "AllMCPTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,
@@ -1452,7 +451,7 @@
       "file": "WifiProxyTool.swift",
       "remote_only": false,
       "requires_jailbreak": false,
-      "requires_trollstore": true,
+      "requires_trollstore": false,
       "verified": false
     },
     "workspace": {
@@ -1462,22 +461,6 @@
       "requires_jailbreak": false,
       "requires_trollstore": false,
       "verified": true
-    },
-    "workspace.cleanup": {
-      "category": "cleanup",
-      "file": "KnowledgeBaseAndCleanup.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "workspace.info": {
-      "category": "",
-      "file": "AllMCPTools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": false
     }
   }
 }
