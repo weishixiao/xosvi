@@ -434,10 +434,11 @@ final class MCPGatewayServer {
         // v9.9：按剩余字节数精确读，读到 contentLength 就停——原实现循环读满缓冲，
         // 客户端已发完 body 但没关连接时会在 read 上一直等（实测 POST /pair 直接把网关挂死）。
         while body.count < contentLength {
-            let need = min(contentLength - body.count, tmp.count)
-            let n = read(fd, &tmp, need)
+            let need = min(contentLength - body.count, 4096)
+            var chunk = [UInt8](repeating: 0, count: need)
+            let n = read(fd, &chunk, need)
             if n <= 0 { break }
-            body.append(tmp, count: n)
+            body.append(chunk, count: n)
         }
         if body.count > contentLength { body = body.prefix(contentLength) }
         return Request(method: method, path: path, headers: headers, body: body)
