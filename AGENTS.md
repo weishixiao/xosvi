@@ -199,3 +199,19 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   空闲 900 秒退出时清掉；`RootdTool.daemonPID()` 先读它，再用 `kill(pid,0)` 校验（EPERM 也算活）。
   `statusReport()` 里 `daemon_alive = pid 有效 || 心跳新鲜 || XPC 可达`，
   `alive_source` 会写明是哪一条成立，排查时看它而不是看单个布尔值。
+- **看日志定位「卡在哪个工具」**：`/private/var/containers/Bundle/Application/.jbroot-*/var/log/xosvid.log`。
+  每次请求一行 `command=… name=… timeout=… args=[…]`（每参数截断 160 字），helper 结束一行
+  `done helper=… exit=… timed_out=… truncated=… bytes=… 耗时`。**排查方法**：把 `command=helper`
+  的行数与 `done helper` 的行数对比——只多不少说明有请求没跑完；再按 `start pid=` 分段，
+  看是哪一代守护里丢的。
+- **三条曾经的静默失败点（0.2.5 修，日志里已可见）**：
+  1. 并发槽满（上限 3）时回 `too many concurrent helpers` 却不打日志 → 现在有
+     `reject helper=… busy=1 running=N args=…`，回包也带 `running_helpers`。
+  2. 空闲计时器到点无条件 `exit(0)`，会把正在跑的 helper 连同客户端连接一起砍掉 →
+     现在有 helper 就记 `idle Ns but K helper(s) still running; stay alive` 并续一个周期。
+  3. `run_helper` 的 pipe/fork 失败返回 `exit_code=-1` 却被上层标成 `status=OK`
+     （App 当成「跑完没输出」）→ 现在打 FATAL 行并回明确 error。
+- **验证空闲分支的做法**：launchd 不会把 `launchctl setenv` 传给这个守护（实测 `environment` 里只有
+  `XPC_SERVICE_NAME`），所以要么临时把 `kIdleSecs` 编成 4 再装、要么在守护自己的环境里给
+  `XOSVID_IDLE_SECS`（0.2.5 起支持覆盖）；验证完记得改回 900 并重装。
+  已验证过一次：4 秒时空闲到点出现 `stay alive`，12 秒长任务返回 `exit_code: 0`。
