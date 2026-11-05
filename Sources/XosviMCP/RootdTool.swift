@@ -409,7 +409,8 @@ final class RootdTool: MCPTool {
             "client_entitled": XosviXPC.hasClientEntitlement()
         ]
         if let e = res["error"] as? String { out["error"] = e }
-        for k in ["status", "bootstrap", "resolved", "dash", "helper", "peer", "pid", "uid"] {
+        for k in ["status", "bootstrap", "resolved", "dash", "helper", "peer", "pid", "uid",
+                  "running_helpers"] {
             if let v = res[k] { out[k] = v }
         }
         return out

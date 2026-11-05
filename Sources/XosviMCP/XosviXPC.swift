@@ -61,7 +61,7 @@ enum XosviXPC {
         for key in ["status", "error", "bootstrap", "resolved", "dash", "helper", "peer"] {
             if let v = str(obj, key) { out[key] = v }
         }
-        for key in ["pid", "uid", "exit_code"] {
+        for key in ["pid", "uid", "exit_code", "running_helpers"] {
             if xpc_dictionary_get_value(obj, key) != nil {
                 out[key] = Int(xpc_dictionary_get_int64(obj, key))
             }
@@ -70,6 +70,8 @@ enum XosviXPC {
             out["elapsed_ms"] = xpc_dictionary_get_double(obj, "elapsed_ms")
         }
         if xpc_dictionary_get_bool(obj, "timed_out") { out["timed_out"] = true }
+        if xpc_dictionary_get_bool(obj, "truncated") { out["truncated"] = true }
+        if xpc_dictionary_get_bool(obj, "busy") { out["busy"] = true }
         var len = 0
         if let data = xpc_dictionary_get_data(obj, "stdout", &len), len > 0 {
             out["stdout"] = String(decoding: Data(bytes: data, count: len), as: UTF8.self)
