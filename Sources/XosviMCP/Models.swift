@@ -719,6 +719,10 @@ final class ConversationStore: ObservableObject {
     /// v2.9.127：执行轨迹 (实时）——当前请求的 思考→工具调用→工具结果 步骤流，
     /// 请求结束时随最后一条 assistant 消息持久化 (message.trail）。
     @Published var liveTrail: [TrailStep] = []
+    /// v9.8：上一次请求因密钥/额度被拒时的 HTTP 状态码（401/402/403）。
+    /// ChatView 据此在步骤区下面给一张「去检查密钥」引导卡，而不是让用户自己读原始报错。
+    /// 非 nil 时保持到用户发起下一次请求或手动关掉。
+    @Published var authRejectedStatus: Int? = nil
 
     // v3.0.3：保存当前请求的思考内容 (onThinking 流式累加），
     // toolCalls 时传到 tool 消息，前端在 toolBubble 顶部显示
@@ -1172,6 +1176,8 @@ final class ConversationStore: ObservableObject {
         }
         // v2.9.97：记住最近使用的模型，顶栏/下次启动立即恢复
         ModelStore.shared.markUsed(config.id.uuidString)
+        // v9.8：新请求开始，上一轮的密钥/额度提示作废
+        authRejectedStatus = nil
         // v7.15.2：换 run token——上一轮的熔断标记不能影响本轮
         runToken = UUID()
         refineInFlight = false
@@ -1804,6 +1810,12 @@ final class ConversationStore: ObservableObject {
                     self.runningTool = nil
                     self.thinkBuffer = "" // 重置缓冲区
                     self.liveProducedID = nil
+                    // v9.8：密钥/额度被拒 → 置状态，ChatView 显示「去检查密钥」引导卡
+                    if ModelErrorHint.isAuthError(error), let st = ModelErrorHint.httpStatus(error) {
+                        self.authRejectedStatus = st
+                    } else {
+                        self.authRejectedStatus = nil
+                    }
                     // v2.9.13：用户主动取消 (-999）不追加错误气泡
                     let nsErr = error as NSError
                     if nsErr.code == -999 {

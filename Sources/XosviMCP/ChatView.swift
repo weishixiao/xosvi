@@ -62,6 +62,8 @@ struct ChatView: View {
     // UIKit 方案真机稳定。标记位 + sheet onDismiss 触发，保证面板完全关闭后再 present（不再猜时间延迟）。
     @State private var pendingFilePick = false
     @State private var showModelPicker = false  // v2.9.36：聊天框切换上游模型
+    /// v9.8：密钥/额度被拒时的引导卡 → 半屏「服务商目录」（在这里就能改密钥，不必进设置）
+    @State private var showProviderFix = false
     // v9：搜索服务快捷切换半屏（临时换服务商，不改设置里的默认值以外的任何东西）
     @State private var showSearchQuickSheet = false
     // v6.6.11：右上角 + 号菜单入口
@@ -370,6 +372,28 @@ struct ChatView: View {
                 showSearchQuickSheet = false
             })
         }
+        // v9.8：密钥被拒 → 直接在这里打开服务商目录改密钥/换账号
+        .sheet(isPresented: $showProviderFix) {
+            NavigationView {
+                ProviderDirectoryView(
+                    onEdit: { cfg in
+                        showProviderFix = false
+                        var c = cfg ?? ModelConfig(name: "", provider: "custom",
+                                                   apiProtocol: "OpenAI Chat Completions",
+                                                   baseURL: "", apiKey: "", model: "")
+                        if cfg == nil { c.isDefault = modelStore.defaultConfig == nil }
+                        if modelStore.configs.contains(where: { $0.id == c.id }) {
+                            modelStore.update(c)
+                        } else {
+                            modelStore.add(c)
+                        }
+                    },
+                    onBrowseModels: { _ in showProviderFix = false }
+                )
+            }
+            .navigationViewStyle(.stack)
+            .sheetDetentsHeight(640)
+        }
         .sheet(isPresented: $showModelPicker) {
             // 老 MCP 半屏；presentationDetents 需 iOS16+
             if #available(iOS 16.0, *) {
@@ -600,6 +624,16 @@ struct ChatView: View {
                                 }
                             }
                         }
+                    }
+                    // v9.8：密钥/额度被拒 → 聊天区底部给一张可点的引导卡
+                    if let st = store.authRejectedStatus, !store.isLoading {
+                        AuthErrorCard(message: "当前模型：\(modelStore.defaultConfig?.name ?? "未选择")",
+                                      status: st,
+                                      onFix: {
+                                          store.authRejectedStatus = nil
+                                          showProviderFix = true
+                                      })
+                        .padding(.top, 4)
                     }
                 }
                 // v3.4.0：去掉整行水平 padding —— AI 气泡改为真正占满左右屏边缘；

@@ -6,8 +6,10 @@ struct ModelsView: View {
     @ObservedObject private var store = ModelStore.shared
     @State private var editing: ModelConfig?
     @State private var isNewModel = false
-    /// v9.7：顶部「快速添加服务商」折叠区是否展开
+    /// v9.7：顶部「快速添加服务商」折叠区是否展开（v9.8 起由服务商目录取代，保留字段兼容旧代码）
     @State private var showProviderPresets = false
+    /// v9.8：是否正在走「OpenAI 兼容 API」两输入框新增流程
+    @State private var showingCompatAdd = false
     /// v9.7：本机工具桥信息是否展开
     @State private var showBridgeInfo = false
     /// v9.7：工具桥运行状态（启动/停止后刷新 UI）
@@ -25,30 +27,52 @@ struct ModelsView: View {
             // RecommendCardArea()  ← 已移除
 
             List {
-                // v9.7：可见时总在最上面给一行「快速添加」，展开内置主流服务商预设，
-                // 点一下只填好 Base URL/协议/模型，再贴密钥即可。
+                // v9.8：顶部「服务商」入口——卡片目录 + 一键连接（只填密钥）。
+                // 旧的「快速添加服务商」折叠列表被它取代（同一批预设，功能更强）。
                 Section {
-                    DisclosureGroup(isExpanded: $showProviderPresets) {
-                        ForEach(Array(ModelConfig.providerPresets.enumerated()), id: \.offset) { _, p in
-                            Button(action: {
-                                isNewModel = true
-                                editing = ModelConfig(name: p.name, provider: p.provider,
-                                                      apiProtocol: p.protocol, baseURL: p.baseURL,
-                                                      apiKey: "", model: p.model)
-                            }) {
-                                HStack {
-                                    Text(p.name).foregroundColor(.primary)
-                                    Spacer()
-                                    Text(p.model).font(.caption).foregroundColor(.secondary)
-                                    Image(systemName: "chevron.right").font(.caption).foregroundColor(.secondary)
-                                }
+                    NavigationLink(destination: ProviderDirectoryView(
+                        onEdit: { cfg in
+                            isNewModel = (cfg == nil)
+                            editing = cfg ?? ModelConfig(name: "", provider: "custom",
+                                                         apiProtocol: "OpenAI Chat Completions",
+                                                         baseURL: "", apiKey: "", model: "")
+                        },
+                        onBrowseModels: { cfg in
+                            isNewModel = false
+                            editing = cfg
+                        })) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "square.grid.2x2")
+                                .foregroundColor(DoubaoTheme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("服务商目录")
+                                Text(store.configs.isEmpty
+                                     ? "点一家，只填密钥即可连接"
+                                     : "\(Set(store.configs.map { $0.provider }).count) 家已连接 · \(store.configs.count) 个账号")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
+                            Spacer()
                         }
-                    } label: {
-                        Label("快速添加服务商", systemImage: "bolt.horizontal")
                     }
                 }
                 // v9.7：本机工具桥——把任何 OpenAI 兼容的模型指到这里即可调用本机能力。
+                // v9.8：前面加一个「OpenAI 兼容 API」两输入框添加入口（密钥 + 基础 URL）。
+                Section {
+                    Button(action: { showingCompatAdd = true }) {
+                        HStack(spacing: 10) {
+                            Image(systemName: "link.badge.plus")
+                                .foregroundColor(DoubaoTheme.accent)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("添加 OpenAI 兼容 API").foregroundColor(.primary)
+                                Text("只填密钥和基础 URL，右上角取模型")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                            Spacer()
+                        }
+                    }
+                }
                 // 这样「登录即用」不再是逐家对接，而是所有家共用一套协议。
                 Section {
                     DisclosureGroup(isExpanded: $showBridgeInfo) {
@@ -153,6 +177,11 @@ struct ModelsView: View {
                 }
             }
             .id(cfg.id)
+        }
+        .sheet(isPresented: $showingCompatAdd) {
+            // v9.8：与截图一致的两输入框界面；选完模型即落库
+            CompatAPIAddSheet { _ in }
+                .sheetDetentsHeight(560)
         }
         .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json]) { result in
             switch result {
