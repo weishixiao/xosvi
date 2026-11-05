@@ -115,8 +115,10 @@ int main(int argc, char **argv) {
     });
 
     int rc = 0;
-    /* XPC 的回调在主队列上，主线程空转 sleep 永远等不到：必须跑 runloop。 */
-    CFTimeInterval deadline = CFAbsoluteTimeGetCurrent() + (timeout > 0 ? timeout : 30);
+    /* XPC 的回调在主队列上，主线程空转 sleep 永远等不到：必须跑 runloop。
+     * 客户端等待要比守护侧的超时更长 —— 守护到点杀进程组后还要收尸、组回包，
+     * 两边时限相同会让客户端先把结论说成「timeout waiting for xosvid」。 */
+    CFTimeInterval deadline = CFAbsoluteTimeGetCurrent() + (timeout > 0 ? timeout + 10 : 30);
     while (!g_done && CFAbsoluteTimeGetCurrent() < deadline) {
         CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
     }

@@ -157,7 +157,8 @@ cat > "$pkg/Library/LaunchDaemons/wiki.qaq.xosvid.plist" <<'PLIST'
 PLIST
 
 # ---- DEBIAN ------------------------------------------------------------------
-VERSION="0.2.3"   # 0.2.2 plist 加 RunAtLoad/KeepAlive；0.2.3 守护写 var/run/xosvid.pid，daemon_alive 与真实进程一致
+VERSION="0.2.4"   # 0.2.4 守护：参数/耗时/退出码入日志、helper 移出监听队列（并发 ≤3）、
+                  # run_helper 超时与 4MB 输出不再死锁、日志去重；App 侧 XPC 取消竞态修复
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: com.xosvi.daemon
 Version: ${VERSION}

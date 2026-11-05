@@ -154,6 +154,10 @@ static int find_bootstrap(char *prefix, size_t cap, char *how, size_t howcap) {
 /* ---------------- 日志（launchd 把 stderr 写进 <bootstrap>/var/log/xosvid.log） ---------------- */
 
 static int g_log_fd = -1;
+/* launchd 的 StandardErrorPath 与这里自己开的日志文件实测指向同一个 inode，
+ * 两边都写会让每条日志出现两遍（2026-11 排障时日志里每条都重复）。开日志时用
+ * fstat 比一下，相同就只写一次。 */
+static int g_log_same_as_stderr = 0;
 
 static void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void logmsg(const char *fmt, ...) {
@@ -169,8 +173,10 @@ static void logmsg(const char *fmt, ...) {
         ssize_t w = write(g_log_fd, line, (size_t)n + 1);
         (void)w;
     }
-    ssize_t w = write(STDERR_FILENO, line, (size_t)n + 1);
-    (void)w;
+    if (!g_log_same_as_stderr) {
+        ssize_t w = write(STDERR_FILENO, line, (size_t)n + 1);
+        (void)w;
+    }
 }
 
 /* ---------------- 请求模型 ---------------- */
@@ -194,6 +200,33 @@ static void request_free(request_t *r) {
     r->argc = 0;
 }
 
+/* 把请求参数压成一行可读文本：换行/制表等控制字符换空格，过长截断。
+ * 排查「App 卡在哪个工具」靠的就是这一行（旧日志只有 argc，定位不了）。 */
+static void log_args(const request_t *r, char *out, size_t cap) {
+    size_t off = 0;
+    if (!r->argc) { snprintf(out, cap, "[]"); return; }
+    int m = snprintf(out, cap, "[");
+    off = (m > 0 && (size_t)m < cap) ? (size_t)m : cap - 1;
+    for (int i = 0; i < r->argc && off + 4 < cap; i++) {
+        const char *a = r->args[i] ? r->args[i] : "";
+        m = snprintf(out + off, cap - off, "%s\"", i ? " " : "");
+        if (m < 0) break;
+        off += (size_t)m;
+        /* 每个参数最多 160 字符，多出来的用 ... 表示（一条 shell 脚本可能很长） */
+        size_t used = 0;
+        for (const char *p = a; *p && off + 4 < cap; p++) {
+            if (used >= 160) { memcpy(out + off, "...", 3); off += 3; break; }
+            char c = *p;
+            if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+            out[off++] = c;
+            used++;
+        }
+        out[off++] = '"';
+    }
+    if (off + 2 < cap) out[off++] = ']';
+    out[off] = '\0';
+}
+
 /* helper 白名单，与 deb 里 /usr/libexec/xosvi/ 下的可执行文件一一对应。 */
 static const char *kHelpers[] = { "xosvi-build", "xosvi-install", "xosvi-symbolicate", NULL };
 
@@ -215,17 +248,26 @@ static const char *normalize_helper(const char *name) {
 typedef struct {
     int exit_code;
     int timed_out;
+    int truncated;
     char *out;
     size_t outlen;
 } result_t;
 
 /* fork + 双管道跑 helper；到 timeout 仍在跑就 SIGKILL 整个进程组。
- * stdout/stderr 合并进 res->out（顺序按写出顺序，够用且便于排错）。 */
+ * stdout/stderr 合并进 res->out（顺序按写出顺序，够用且便于排错）。
+ *
+ * 三条实测踩过的坑（v0.2.4 修）：
+ *   1) 输出达到 MAX_STDOUT 就跳出循环会让子进程继续写满管道而永久阻塞，
+ *      紧接着的阻塞 waitpid 就是「4MB 死锁」——现在跳出来先杀掉整组。
+ *   2) 父进程 SIGPIPE 是 SIG_IGN，子进程 exec 后沿用，helper 写管道失败只会得到
+ *      EPIPE 不肯退出；子进程里恢复 SIG_DFL。
+ *   3) waitpid 一律带 WNOHANG + 超时，绝不做无上限的阻塞等待。 */
 static void run_helper(char *const argv[], int argc_unused, int timeout, result_t *res) {
     (void)argc_unused;
     int outp[2], errp[2];
     res->exit_code = -1;
     res->timed_out = 0;
+    res->truncated = 0;
     res->out = NULL;
     res->outlen = 0;
     if (pipe(outp) != 0) return;
@@ -238,6 +280,7 @@ static void run_helper(char *const argv[], int argc_unused, int timeout, result_
     }
     if (pid == 0) {
         setpgid(0, 0);
+        signal(SIGPIPE, SIG_DFL);
         dup2(outp[1], STDOUT_FILENO);
         dup2(errp[1], STDERR_FILENO);
         close(outp[0]); close(outp[1]); close(errp[0]); close(errp[1]);
@@ -256,10 +299,22 @@ static void run_helper(char *const argv[], int argc_unused, int timeout, result_
     char *buf = malloc(cap);
     int fds[2] = { outp[0], errp[0] };
     int open_fds = 2;
-    time_t deadline = time(NULL) + (timeout > 0 ? timeout : DEFAULT_TIMEOUT);
+    int limit = timeout > 0 ? timeout : DEFAULT_TIMEOUT;
+    time_t deadline = time(NULL) + limit;
     int killed = 0;
 
-    while (open_fds > 0 && len < MAX_STDOUT) {
+    while (open_fds > 0) {
+        if (len >= MAX_STDOUT) {                 /* 输出超上限：停收并杀掉，别再等它写完 */
+            res->truncated = 1;
+            if (!killed) { kill(-pid, SIGKILL); killed = 1; }
+            break;
+        }
+        if (!killed && time(NULL) > deadline) {
+            kill(-pid, SIGKILL);
+            res->timed_out = 1;
+            killed = 1;
+            break;
+        }
         fd_set rs;
         FD_ZERO(&rs);
         int mx = -1;
@@ -269,15 +324,11 @@ static void run_helper(char *const argv[], int argc_unused, int timeout, result_
         if (mx < 0) break;
         struct timeval tv = { 1, 0 };
         int sel = select(mx + 1, &rs, NULL, NULL, &tv);
-        if (!killed && time(NULL) > deadline) {
-            kill(-pid, SIGKILL);
-            res->timed_out = 1;
-            killed = 1;
+        if (sel < 0) {
+            if (errno == EINTR) continue;
+            break;
         }
-        if (sel <= 0) {
-            if (sel < 0 && errno == EINTR) continue;
-            continue;
-        }
+        if (sel == 0) continue;
         for (int i = 0; i < 2; i++) {
             if (fds[i] < 0 || !FD_ISSET(fds[i], &rs)) continue;
             char tmp[16384];
@@ -296,10 +347,20 @@ static void run_helper(char *const argv[], int argc_unused, int timeout, result_
             len += (size_t)n;
         }
     }
-    close(outp[0]);
-    close(errp[0]);
+    for (int i = 0; i < 2; i++) if (fds[i] >= 0) close(fds[i]);
+
+    /* 有上限地收尸：最多再等 5 秒，仍在就强杀整组；绝不死等在 waitpid 上。 */
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    int reaped = 0;
+    for (int i = 0; i < 50; i++) {
+        pid_t w = waitpid(pid, &status, WNOHANG);
+        if (w == pid) { reaped = 1; break; }
+        if (w < 0 && errno != EINTR) { reaped = 1; status = 0; break; }
+        struct timespec ts = { 0, 100 * 1000 * 1000 };
+        nanosleep(&ts, NULL);
+        if (i == 20 && !killed) { kill(-pid, SIGKILL); killed = 1; res->timed_out = 1; }
+    }
+    if (!reaped) { kill(-pid, SIGKILL); res->timed_out = 1; }
     if (WIFEXITED(status)) res->exit_code = WEXITSTATUS(status);
     else if (WIFSIGNALED(status)) res->exit_code = 128 + WTERMSIG(status);
     if (!buf) { buf = strdup(""); len = 0; }
@@ -327,6 +388,92 @@ static int peer_allowed(xpc_connection_t peer) {
 
 /* ---------------- 处理一条请求 ---------------- */
 
+/* helper 并发上限：客户端超时重试时会新建连接重发（老 App 每 ~40s 一次），
+ * 不设限会让一堆长任务同时压在守护里，反过来把 status/ping 也拖慢。 */
+#define MAX_CONCURRENT_HELPERS 3
+static int g_running_helpers = 0;
+
+static int helper_slot_acquire(void) {
+    int cur = __atomic_load_n(&g_running_helpers, __ATOMIC_RELAXED);
+    for (;;) {
+        if (cur >= MAX_CONCURRENT_HELPERS) return 0;
+        if (__atomic_compare_exchange_n(&g_running_helpers, &cur, cur + 1, 0,
+                                        __ATOMIC_ACQ_REL, __ATOMIC_RELAXED))
+            return 1;
+    }
+}
+
+static void helper_slot_release(void) {
+    __atomic_fetch_sub(&g_running_helpers, 1, __ATOMIC_ACQ_REL);
+}
+
+/* 慢路径：跑 helper 并填回复。在并发队列上执行，绝不占用监听队列。 */
+static void run_helper_request(const request_t *r, xpc_object_t reply) {
+    char prefix[PATH_MAX], how[128];
+    if (!find_bootstrap(prefix, sizeof prefix, how, sizeof how)) {
+        xpc_dictionary_set_string(reply, "error", "no bootstrap (dash not found)");
+        return;
+    }
+    const char *helper = normalize_helper(r->name);
+    if (!helper) {
+        xpc_dictionary_set_string(reply, "error",
+                                  "helper not allowed (xosvi-build/xosvi-install/xosvi-symbolicate)");
+        return;
+    }
+    char helper_path[PATH_MAX];
+    snprintf(helper_path, sizeof helper_path, "%s%s/%s", prefix, HELPER_DIR, helper);
+    if (access(helper_path, X_OK) != 0) {
+        xpc_dictionary_set_string(reply, "error", "helper missing");
+        xpc_dictionary_set_string(reply, "resolved", helper_path);
+        return;
+    }
+    if (!helper_slot_acquire()) {
+        xpc_dictionary_set_string(reply, "error",
+                                  "too many concurrent helpers (max 3); retry when the running one finishes");
+        xpc_dictionary_set_string(reply, "busy", "1");
+        return;
+    }
+
+    char *argv[MAX_ARGS + 8];
+    int n = 0;
+    argv[n++] = helper_path;
+    for (int i = 0; i < r->argc && n < MAX_ARGS; i++) argv[n++] = r->args[i];
+    char tbuf[16];
+    if (r->timeout > 0) {
+        snprintf(tbuf, sizeof tbuf, "%d", r->timeout);
+        argv[n++] = "--timeout";
+        argv[n++] = tbuf;
+    }
+    if (r->dryrun) argv[n++] = "--dry-run";
+    argv[n] = NULL;
+
+    result_t res;
+    struct timespec t0, t1;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    run_helper(argv, n - 1, r->timeout, &res);
+    clock_gettime(CLOCK_MONOTONIC, &t1);
+    helper_slot_release();
+
+    double ms = ((double)(t1.tv_sec - t0.tv_sec) * 1000.0) +
+                ((double)(t1.tv_nsec - t0.tv_nsec) / 1e6);
+    logmsg("xosvid: done helper=%s exit=%d timed_out=%d truncated=%d bytes=%zu %.0fms",
+           helper, res.exit_code, res.timed_out, res.truncated, res.outlen, ms);
+
+    xpc_dictionary_set_string(reply, "status", "OK");
+    xpc_dictionary_set_string(reply, "resolved", helper_path);
+    xpc_dictionary_set_int64(reply, "pid", (int64_t)getpid());
+    xpc_dictionary_set_int64(reply, "uid", (int64_t)getuid());
+    xpc_dictionary_set_int64(reply, "exit_code", res.exit_code);
+    if (res.timed_out) xpc_dictionary_set_bool(reply, "timed_out", true);
+    if (res.truncated) xpc_dictionary_set_bool(reply, "truncated", true);
+    xpc_dictionary_set_double(reply, "elapsed_ms", ms);
+    if (res.out) xpc_dictionary_set_data(reply, "stdout", res.out, res.outlen);
+    free(res.out);
+}
+
+/* 快路径：ping/status 立即回；helper 交给并发队列，监听队列不再被长任务堵住
+ * （v0.2.4 前 helper 在监听串行队列上同步跑，最长 300s，期间 status/ping 全部无响应，
+ *  客户端的「慢」与「超时重试」都是这么来的）。 */
 static void handle(request_t *r, xpc_object_t reply) {
     if (strcmp(r->command, "ping") == 0) {
         xpc_dictionary_set_string(reply, "status", "OK");
@@ -352,6 +499,8 @@ static void handle(request_t *r, xpc_object_t reply) {
         xpc_dictionary_set_string(reply, "helper",
                                   access(helper, X_OK) == 0 ? "ok" : "missing");
         xpc_dictionary_set_string(reply, "peer", r->peer);
+        xpc_dictionary_set_int64(reply, "running_helpers",
+                                 (int64_t)__atomic_load_n(&g_running_helpers, __ATOMIC_RELAXED));
         return;
     }
 
@@ -359,56 +508,11 @@ static void handle(request_t *r, xpc_object_t reply) {
         xpc_dictionary_set_string(reply, "error", "unknown command (ping/status/helper)");
         return;
     }
-
-    const char *helper = normalize_helper(r->name);
-    if (!helper) {
-        xpc_dictionary_set_string(reply, "error",
-                                  "helper not allowed (xosvi-build/xosvi-install/xosvi-symbolicate)");
-        return;
-    }
     if (r->argc < 1) {
         xpc_dictionary_set_string(reply, "error", "first argument must be the project dir");
         return;
     }
-
-    char helper_path[PATH_MAX];
-    snprintf(helper_path, sizeof helper_path, "%s%s/%s", prefix, HELPER_DIR, helper);
-    if (access(helper_path, X_OK) != 0) {
-        xpc_dictionary_set_string(reply, "error", "helper missing");
-        xpc_dictionary_set_string(reply, "resolved", helper_path);
-        return;
-    }
-
-    char *argv[MAX_ARGS + 8];
-    int n = 0;
-    argv[n++] = helper_path;
-    for (int i = 0; i < r->argc && n < MAX_ARGS; i++) argv[n++] = r->args[i];
-    char tbuf[16];
-    if (r->timeout > 0) {
-        snprintf(tbuf, sizeof tbuf, "%d", r->timeout);
-        argv[n++] = "--timeout";
-        argv[n++] = tbuf;
-    }
-    if (r->dryrun) argv[n++] = "--dry-run";
-    argv[n] = NULL;
-
-    result_t res;
-    struct timespec t0, t1;
-    clock_gettime(CLOCK_MONOTONIC, &t0);
-    run_helper(argv, n - 1, r->timeout, &res);
-    clock_gettime(CLOCK_MONOTONIC, &t1);
-
-    xpc_dictionary_set_string(reply, "status", "OK");
-    xpc_dictionary_set_string(reply, "resolved", helper_path);
-    xpc_dictionary_set_int64(reply, "pid", (int64_t)getpid());
-    xpc_dictionary_set_int64(reply, "uid", (int64_t)getuid());
-    xpc_dictionary_set_int64(reply, "exit_code", res.exit_code);
-    if (res.timed_out) xpc_dictionary_set_bool(reply, "timed_out", true);
-    xpc_dictionary_set_double(reply, "elapsed_ms",
-                              ((double)(t1.tv_sec - t0.tv_sec) * 1000.0) +
-                              ((double)(t1.tv_nsec - t0.tv_nsec) / 1e6));
-    if (res.out) xpc_dictionary_set_data(reply, "stdout", res.out, res.outlen);
-    free(res.out);
+    run_helper_request(r, reply);
 }
 
 /* ---------------- XPC ---------------- */
@@ -452,6 +556,12 @@ static request_t *request_from_xpc(xpc_object_t msg, const char *peer) {
     return r;
 }
 
+/* 一条连接上的请求：快路径同步回，helper 丢到并发队列，绝不占用监听队列。
+ * 连接的生命周期交给 libxpc 与客户端（客户端每回一条就 cancel）：这里既不 retain
+ * 也不 cancel —— 实测在 `send_message` 之后立刻 `cancel` 会把尚未投递的回复一起丢掉，
+ * 客户端只看到「Connection interrupted」。 */
+static dispatch_queue_t g_helper_queue;
+
 static void xpc_handle(xpc_connection_t peer) {
     xpc_connection_set_event_handler(peer, ^(xpc_object_t event) {
         if (xpc_get_type(event) != XPC_TYPE_DICTIONARY) return;
@@ -460,13 +570,29 @@ static void xpc_handle(xpc_connection_t peer) {
         request_t *r = request_from_xpc(event, peerdesc);
         if (!r) return;
         xpc_object_t reply = xpc_dictionary_create_reply(event);
-        if (reply) {
-            logmsg("xosvid: %s command=%s name=%s argc=%d", peerdesc, r->command,
-                   r->name, r->argc);
-            handle(r, reply);
-            xpc_connection_send_message(peer, reply);
-            xpc_release(reply);
+        if (!reply) { request_free(r); free(r); return; }
+
+        char argbuf[600];
+        log_args(r, argbuf, sizeof argbuf);
+        logmsg("xosvid: %s command=%s name=%s timeout=%d args=%s", peerdesc, r->command,
+               r->name[0] ? r->name : "-", r->timeout, argbuf);
+
+        if (strcmp(r->command, "helper") == 0) {
+            /* 长任务：同一连接上回包，但不占监听队列 */
+            request_t *rr = r;
+            dispatch_async(g_helper_queue, ^{
+                handle(rr, reply);
+                xpc_connection_send_message(peer, reply);
+                xpc_release(reply);
+                request_free(rr);
+                free(rr);
+            });
+            return;
         }
+
+        handle(r, reply);
+        xpc_connection_send_message(peer, reply);
+        xpc_release(reply);
         request_free(r);
         free(r);
     });
@@ -528,7 +654,19 @@ int main(int argc, char **argv) {
      * roothide 上落点随视图而定，自己再开一份才稳。 */
     char logpath[PATH_MAX];
     snprintf(logpath, sizeof logpath, "%s/var/log/xosvid.log", prefix);
+    if (prefix[0]) {
+        char logdir[PATH_MAX];
+        snprintf(logdir, sizeof logdir, "%s/var/log", prefix);
+        mkdir(logdir, 0755);
+    }
     g_log_fd = open(logpath, O_CREAT | O_WRONLY | O_APPEND, 0644);
+    if (g_log_fd >= 0) {
+        /* launchd 的 StandardErrorPath 往往就是同一个文件：只有一个 inode 时别再写第二遍 */
+        struct stat a, b;
+        if (fstat(g_log_fd, &a) == 0 && fstat(STDERR_FILENO, &b) == 0 &&
+            a.st_dev == b.st_dev && a.st_ino == b.st_ino)
+            g_log_same_as_stderr = 1;
+    }
     logmsg("xosvid: start pid=%d euid=%d bootstrap='%s' via=%s libroot=%s log=%s",
            (int)getpid(), (int)geteuid(), prefix, how,
            g_rootfs ? "present" : "missing", g_log_fd >= 0 ? logpath : "(stderr only)");
@@ -546,6 +684,8 @@ int main(int argc, char **argv) {
     }
 
     dispatch_queue_t q = dispatch_queue_create("wiki.qaq.xosvid", DISPATCH_QUEUE_SERIAL);
+    g_helper_queue = dispatch_queue_create("wiki.qaq.xosvid.helpers",
+                                           DISPATCH_QUEUE_CONCURRENT);
     dispatch_source_t idle = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, q);
     dispatch_source_set_event_handler(idle, ^{
         logmsg("xosvid: idle %ds, exiting", kIdleSecs);

@@ -57,6 +57,37 @@ static int run_shell(const char *sh, const char *cwd, const char *const *argv_wi
     return WIFEXITED(status) ? WEXITSTATUS(status) : 1;
 }
 
+/* 把 App 侧给的 cwd 折到本进程看得见的视图：
+ *   1. 原样可用就用原样（真根视图）；
+ *   2. 再加 <prefix> 前缀试一次（bootstrap 视图）；
+ *   3. 都不行就从尾部逐级去掉，取最后一个存在的目录（root 工具的 cwd 只是落脚点，
+ *      不存在时退到 / 比整体失败合理得多，失败会把整条命令丢掉）。
+ * 返回 1 = out 可用。 */
+static int resolve_cwd(const char *prefix, const char *want, char *out, size_t cap) {
+    struct stat st;
+    if (stat(want, &st) == 0 && S_ISDIR(st.st_mode)) { snprintf(out, cap, "%s", want); return 1; }
+    if (prefix[0]) {
+        char alt[PATH_MAX];
+        snprintf(alt, sizeof alt, "%s%s", prefix, want);
+        if (stat(alt, &st) == 0 && S_ISDIR(st.st_mode)) { snprintf(out, cap, "%s", alt); return 1; }
+    }
+    char probe[PATH_MAX];
+    snprintf(probe, sizeof probe, "%s", want);
+    for (;;) {
+        char *slash = strrchr(probe, '/');
+        if (!slash || slash == probe) break;
+        *slash = '\0';
+        if (stat(probe, &st) == 0 && S_ISDIR(st.st_mode)) {
+            fprintf(stderr, "warn: cwd %s missing, using %s\n", want, probe);
+            snprintf(out, cap, "%s", probe);
+            return 1;
+        }
+    }
+    fprintf(stderr, "warn: cwd %s missing, using /\n", want);
+    snprintf(out, cap, "/");
+    return 1;
+}
+
 int main(int argc, char **argv) {
     if (argc < 2) {
         fprintf(stderr, "usage: xosvi-build <project_dir> [script]\n"
@@ -81,15 +112,19 @@ int main(int argc, char **argv) {
             fprintf(stderr, "error: no shell (bootstrap=%s)\n", prefix);
             return 6;
         }
-        struct stat st;
-        if (stat(argv[2], &st) != 0 || !S_ISDIR(st.st_mode)) {
-            fprintf(stderr, "error: cwd %s is not a directory\n", argv[2]);
+        /* cwd 可能是 App 侧（真根）路径，而 helper 只看得见 bootstrap 视图：
+         * 先在两种视图里各试一次，再退到「最后一个存在的祖先目录」。
+         * 旧版直接 stat 原路径就把 App 默认的 /private/var/mobile/... 判成非目录，
+         * 于是 root 工具的每一次调用都以 exit 4 失败。 */
+        char cwd[PATH_MAX];
+        if (!resolve_cwd(prefix, argv[2], cwd, sizeof cwd)) {
+            fprintf(stderr, "error: cwd %s is not a directory (tried both views)\n", argv[2]);
             return 4;
         }
-        printf("bootstrap=%s\nshell=%s\nuid=%d\n", prefix, sh, (int)getuid());
+        printf("bootstrap=%s\nshell=%s\nuid=%d\ncwd=%s\n", prefix, sh, (int)getuid(), cwd);
         fflush(stdout);
         const char *ea[] = { sh, "-c", argv[3], NULL };
-        int rc = run_shell(sh, argv[2], ea, 1, prefix);
+        int rc = run_shell(sh, cwd, ea, 1, prefix);
         printf("\n[exit %d]\n", rc);
         return rc;
     }

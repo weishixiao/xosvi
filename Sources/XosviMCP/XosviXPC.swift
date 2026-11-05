@@ -88,6 +88,12 @@ enum XosviXPC {
     /// 发一条请求并等回复。
     /// - Returns: `ok:false` 时 `error` 是连接层的原因（创建失败 / 错误事件 / 超时），
     ///            `ok:true` 时其余键来自守护返回的字典（可能仍带守护侧的 `error` 字段）。
+    ///
+    /// v0.2.4：连接改为「一条请求一条连接，回完即 cancel」。
+    /// 旧实现超时后只在返回前 `cancel`，回调仍可能稍后到达并写 `box`（`box.done`
+    /// 与 `box.reply` 跨线程无同步），既泄漏 `xpc_object_t` 也会让同一个 box 被
+    /// 两个回调同时改；现在取消与读取都在锁里做。另外守护侧已把 helper 移出监听
+    /// 队列，超时主要只剩「命令真的跑太久」一种原因，提示也据此改了。
     static func request(_ message: [String: Any], timeout: Double) -> [String: Any] {
         guard let create = createMach() else {
             return ["ok": false, "error": "libxpc 缺 xpc_connection_create_mach_service"]
@@ -100,16 +106,22 @@ enum XosviXPC {
         }
 
         let box = Box()
+        let lock = NSLock()
         let sem = DispatchSemaphore(value: 0)
-        xpc_connection_set_event_handler(conn) { event in
-            guard !box.done else { return }
-            if let e = errorText(event) {
-                box.error = e
-            } else {
-                box.reply = event
-            }
+
+        /// 回调里交付结果：只有第一个到者生效；超时后到的直接丢掉并cancel。
+        func deliver(_ obj: xpc_object_t?, _ err: String?) {
+            lock.lock()
+            if box.done { lock.unlock(); return }
+            box.reply = obj
+            box.error = err
             box.done = true
+            lock.unlock()
             sem.signal()
+        }
+
+        xpc_connection_set_event_handler(conn) { event in
+            if let e = errorText(event) { deliver(nil, e) } else { deliver(event, nil) }
         }
         xpc_connection_resume(conn)
 
@@ -129,30 +141,30 @@ enum XosviXPC {
 
         // 发送也要走同一个连接；连接不可用时这里常常是**同步**回调错误事件。
         xpc_connection_send_message_with_reply(conn, msg, nil) { reply in
-            guard !box.done else { return }
-            if let e = errorText(reply) {
-                box.error = e
-            } else {
-                box.reply = reply
-            }
-            box.done = true
-            sem.signal()
+            if let e = errorText(reply) { deliver(nil, e) } else { deliver(reply, nil) }
         }
 
         let waited = sem.wait(timeout: .now() + timeout)
-        let reply: [String: Any]? = box.reply.map { replyDict($0) }
+
+        lock.lock()
+        let finished = box.done
+        if !box.done { box.done = true }           // 超时：先占位，之后到的回调一律丢弃
+        let replyObj = box.reply
         let err = box.error
+        lock.unlock()
+
+        // 无论成功、失败还是超时都取消连接：取消后 libxpc 会立刻停掉回调，不留悬挂引用。
         xpc_connection_cancel(conn)
 
-        if waited == .timedOut {
+        if waited == .timedOut && !finished {
             return ["ok": false, "error": "等待 xosvid 回复超时（\(Int(timeout))s）",
-                    "hint": "守护可能没在 system 域加载：看 root command:status"]
+                    "hint": "守护已把 helper 移出监听队列；长时间无回复通常是命令本身还在跑（例如安装/构建）。先看 root command:status 的 running_helpers，再等或缩短命令。"]
         }
-        if reply == nil, let e = err {
+        if replyObj == nil, let e = err {
             return ["ok": false, "error": "xosvid 不可达：\(e)",
                     "hint": "服务 \(serviceName) 未在 launchd 注册；Connection invalid 是本机对任何 MachService 都出现的返回，需要先让守护在 system 域加载"]
         }
-        guard var out = reply else {
+        guard var out = replyObj.map({ replyDict($0) }) else {
             return ["ok": false, "error": "xosvid 没有返回字典"]
         }
         out["ok"] = true
