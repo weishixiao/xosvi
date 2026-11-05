@@ -21,3 +21,6 @@ build_out/
 # python
 __pycache__/
 *.pyc
+
+# 本机改前备份（不含解析后的 jbroot 绝对路径，也不入库）
+.runtime/

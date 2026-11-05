@@ -870,6 +870,9 @@ final class ConversationStore: ObservableObject {
     /// v4.3.25：空回复纠正——工具结果回来、模型最终却输出空文本时，注入"请给结论"纠正
     /// 重跑一轮，不再静默结束（用户实测"空结果会卡死，AI 不进行下一步，必须重新发消息"）。
     private var pendingEmptyReplyCorrection: String? = nil
+    /// v9.2：预算耗尽后不再受理工具调用。软预算（maxToolRounds）之后模型若还发工具调用，
+    /// 统一回一条「必须收尾」的结果给它，而不是真的去执行——否则「预算」只是一句话。
+    private var budgetExhausted: Bool = false
     /// v4.3.25：空回复纠正连续次数——最多 2 次仍空就停止，避免无限重跑。
     private var emptyReplyCorrectionCount = 0
     /// v3.1.70：活动请求绑定的会话 ID——请求由哪个会话发起就写回哪个会话。
@@ -1201,6 +1204,11 @@ final class ConversationStore: ObservableObject {
         // v4.3.25：重置空回复纠正状态（跨任务不残留）
         emptyReplyCorrectionCount = 0
         pendingEmptyReplyCorrection = nil
+        // v9.2：新一轮 run 开始，清空循环守卫历史与闩状态——跨 run 的连击没有意义，
+        // 留着只会让下一个正常任务被上一个任务的残留记录误拦。
+        ToolLoopGuard.shared.reset()
+        ToolResultLatch.shared.reset()
+        budgetExhausted = false
         var msg = ChatMessage(role: "user", content: text)
         if let imgs = imageDataURLs, !imgs.isEmpty {
             msg.imageDataURLs = imgs
@@ -1305,11 +1313,44 @@ final class ConversationStore: ObservableObject {
             TaskNotify.shared.endBackground()
             activeConvId = nil
             self.liveTrail = []
+            self.budgetExhausted = false
             return
         }
         // v2.9.25：不再限制工具调用轮次 (用户可手动点「停止」）。
         // v4.3.71：移除 60 轮极端安全上限——长会话已由 LLM Compaction 控制上下文体积，
         // 不再需要轮次硬停（用户仍可随时点「停止」按钮中断；工具死循环仍由 _loop_hint 提示）。
+        // v9.2：恢复上限，但**改成预算式收尾**而不是硬停——旧代码的问题是"没有上限"，
+        // 模型可以在一次工具调用里绕几十轮，用户只能干等。到预算时不再调用工具，
+        // 而是逼模型拿现有信息给结论（这比直接中断对用户更有用）。
+        if depth >= Self.maxToolRounds {
+            let note = "[[RUN_BUDGET]] 本轮已连续请求模型 \(depth) 轮（上限 \(Self.maxToolRounds)），"
+                + "现在停止继续调用工具。请直接基于已获得的信息给出结论：说明已查证什么、"
+                + "还缺什么、下一步建议怎么做。不要再发起任何工具调用。"
+            self.pendingEmptyReplyCorrection = note
+            // 光靠提示不够：模型可能照样发工具调用。真正挡住执行，让它只能产出结论。
+            self.budgetExhausted = true
+            if depth >= Self.hardToolRounds {
+                // 硬上限：模型仍不肯收尾，就不再给它一轮机会
+                DispatchQueue.main.async {
+                    self.isLoading = false
+                    self.statusText = nil
+                    self.runningTool = nil
+                    self.currentClient?.cancel()
+                    self.currentClient = nil
+                    TaskNotify.shared.endBackground()
+                    let stopMsg = ChatMessage(role: "assistant",
+                        content: "[[RUN_TERMINATED]] 已停止：本次执行已进行 \(depth) 轮，超过安全上限 "
+                            + "\(Self.hardToolRounds) 轮。\n\n已经查到的东西都在上面的步骤里。"
+                            + "告诉我你想优先解决哪一部分，我换一种更短的路径重来。")
+                    self.appendToCurrent(stopMsg)
+                    self.liveProducedID = stopMsg.id
+                    self.activeConvId = nil
+                    self.liveTrail = []
+                    self.sortAndSave()
+                }
+                return
+            }
+        }
         // v2.9.34：请求过程可视化
         DispatchQueue.main.async {
             self.requestRound = depth + 1
@@ -1954,6 +1995,27 @@ final class ConversationStore: ObservableObject {
             }
             self.paramCorrectionCount = 0
         }
+        // v9.2：预算耗尽——不再执行任何工具，把「必须收尾」作为结果回给模型。
+        // 必须在 runningTool / 步骤卡之前拦，否则界面上会留一张永远 running 的卡。
+        if self.budgetExhausted {
+            let note = "[[RUN_BUDGET_EXCEEDED]] 本轮工具预算已用完，\(call.name) 没有被执行。"
+                + "不要再请求任何工具；直接基于已有信息给出结论：已查证什么、还缺什么、下一步建议。"
+            let res: [String: Any] = [
+                "ok": false,
+                "code": "RUN_BUDGET_EXCEEDED",
+                "message": note,
+                "data": ["tool": call.name, "budget_exhausted": true],
+                "_meta": ["next_step": "停止调用工具，用已有信息给出结论。"],
+            ]
+            DispatchQueue.main.async {
+                self.handleDispatchResult(.success(res), call: call, calls: calls, index: index,
+                                          toolMessages: toolMessages, newlyDisclosed: newlyDisclosed,
+                                          config: config, tools: tools,
+                                          disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel,
+                                          thinkText: thinkText, toolDuration: 0)
+            }
+            return
+        }
         // v2.9.34：展示"正在执行工具 xxx…"
         self.runningTool = call.name
         // v3.5.10：工具启动即上屏一张 running 步骤卡（机制保证每步可见，不依赖模型解说）。
@@ -1988,6 +2050,9 @@ final class ConversationStore: ObservableObject {
                     }
                 }
             }
+            // v9.2：先登记闩状态，再放异步执行——否则看门狗可能在 begin 之前到点，
+            // expire 读到 nil 直接放弃，超时就不生效了。
+            ToolResultLatch.shared.begin(callId: call.id)
             DispatchQueue.global().async {
                 // v7.15.2：把本轮 run token 带到工具执行的线程上——
                 // dispatch 里触发熔断（loopBlockedError）时才知道该终止哪一轮。
@@ -2001,13 +2066,48 @@ final class ConversationStore: ObservableObject {
                 }
                 if call.name == "subagent" { SubagentTool.progressHandler = nil }
                 let toolDuration = CFAbsoluteTimeGetCurrent() - toolStart
-                DispatchQueue.main.async {
-                    self.runningTool = nil
-                    self.handleDispatchResult(result, call: call, calls: calls, index: index,
-                                              toolMessages: toolMessages, newlyDisclosed: newlyDisclosed,
-                                              config: config, tools: tools,
-                                              disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel,
-                                              thinkText: thinkText, toolDuration: toolDuration)
+                // v9.2：执行超时兜底——dispatch 是同步阻塞调用（工具可能卡在 XPC / 子进程 /
+                // 网络里永不返回）。旧实现的「15s 看门狗」只把 timedOut 布尔置真，那次调用
+                // 照样挂着，handleDispatchResult 永远不回来 → 整轮 run 永久停住，用户看到的就是
+                // 「卡在调用工具上不动」。这里用 latch 做真正的超时收尾：先到的一方定局。
+                ToolResultLatch.shared.settle(callId: call.id) {
+                    DispatchQueue.main.async {
+                        self.runningTool = nil
+                        self.handleDispatchResult(result, call: call, calls: calls, index: index,
+                                                  toolMessages: toolMessages, newlyDisclosed: newlyDisclosed,
+                                                  config: config, tools: tools,
+                                                  disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel,
+                                                  thinkText: thinkText, toolDuration: toolDuration)
+                    }
+                }
+            }
+            // 看门狗：到点还没 settle 就由它收尾，把「超时」当成一次失败结果继续推进。
+            // 卡住的线程无法被 Swift 强行终止，但它已经不阻塞 run 了——这正是要的效果。
+            let watchdogCallId = call.id
+            let watchdogCall = call
+            let watchdogDelay: TimeInterval = call.name == "subagent"
+                ? Self.subagentTimeoutSeconds : Self.toolTimeoutSeconds
+            DispatchQueue.global().asyncAfter(deadline: .now() + watchdogDelay) { [weak self] in
+                guard let self = self else { return }
+                if ToolResultLatch.shared.expire(callId: watchdogCallId) {
+                    let timeoutMs = Int(watchdogDelay * 1000)
+                    let errText = "[TOOL_TIMEOUT] \(watchdogCall.name) 超过 \(timeoutMs)ms 仍未返回。"
+                        + "该工具可能阻塞在 XPC / 子进程 / 网络里。已中止等待，不把它当作空结果。"
+                    ToolLoopGuard.shared.record(tool: watchdogCall.name, params: params,
+                                                result: nil, error: errText)
+                    let err = MCPError.classified(errText, code: "TOOL_TIMEOUT", reason: "tool",
+                                                  nextStep: "换一种做法：缩小范围/换工具/先确认目标进程是否卡死，"
+                                                    + "必要时用 root 通道查 xosvid 日志。不要原样重试同一个调用。")
+                    let dur = CFAbsoluteTimeGetCurrent() - toolStart
+                    DispatchQueue.main.async {
+                        self.runningTool = nil
+                        self.handleDispatchResult(.failure(err), call: watchdogCall, calls: calls,
+                                                  index: index, toolMessages: toolMessages,
+                                                  newlyDisclosed: newlyDisclosed, config: config,
+                                                  tools: tools, disclosed: disclosed, depth: depth,
+                                                  reasoningLevel: reasoningLevel, thinkText: thinkText,
+                                                  toolDuration: dur)
+                    }
                 }
             }
         }
@@ -2408,6 +2508,17 @@ final class ConversationStore: ObservableObject {
         }
         return out
     }
+
+    /// v9.2：单个工具调用的执行超时（秒）。到点仍不返回就按超时收尾，让 run 继续。
+    /// 取值考虑：多数工具 <15s，但砸壳/LLM 分析/构建类可达分钟级，故给 180s；
+    /// 子代理是「一整轮 run」，必须单独放宽，否则会被自身超时误杀。
+    static let toolTimeoutSeconds: TimeInterval = 180
+    static let subagentTimeoutSeconds: TimeInterval = 1800
+
+    /// v9.2：一轮 run 的模型往返上限。到 maxToolRounds 注入「收尾」指令，到 hardToolRounds
+    /// 直接终止——两者都给足空间跑正常长任务（几十步的排查/构建），只拦真正的失控。
+    static let maxToolRounds = 60
+    static let hardToolRounds = 80
 
     private static func parseArgs(_ json: String) -> [String: Any] {
         guard let data = json.data(using: .utf8),

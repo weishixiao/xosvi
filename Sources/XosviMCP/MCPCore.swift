@@ -1356,7 +1356,21 @@ public final class ToolRegistry: ObservableObject {
             }
             return nil
         }
-        guard let r = resolved else { throw MCPError.unknownTool(name) }
+        guard let r = resolved else {
+            // v9.2：工具名不存在也计入循环守卫——模型拼错/照抄历史工具名时会反复撞同一面墙，
+            // 旧实现永远抛 unknownTool，模型就一直换着拼写重试，会话停在这里不动。
+            ToolLoopGuard.shared.recordUnknownTool(tool: name, params: params)
+            let outcome = ToolLoopGuard.shared.check(tool: name, params: params)
+            if outcome.blocked {
+                AuditLog.shared.logTool(name, status: .failure, elapsedMs: 0, dataBytes: 0,
+                                        permission: "—", detail: outcome.message, code: "LOOP_BLOCKED",
+                                        reason: "loop", nextStep: "用 system.overview / tools/list 确认真实工具名")
+                return ["ok": false, "code": "LOOP_BLOCKED", "message": outcome.message,
+                        "_meta": ["policy": outcome.policy,
+                                  "next_step": "用 system.overview 或 tools/list 确认工具名；子命令用 command:/action: 传，不是工具名。"]]
+            }
+            throw MCPError.unknownTool(name)
+        }
 
         var aliasInfo: [String: Any] = [:]
         if let a = r.alias { aliasInfo = ["resolved_from_alias": a, "resolved_to": r.name] }
@@ -1524,6 +1538,9 @@ public final class ToolRegistry: ObservableObject {
         // 下次启动 `diagnose lasttool` 就能知道是哪条调用把 App 带走的。
         ToolBlackBox.mark(tool: originalName, params: params, phase: "start")
         defer { ToolBlackBox.mark(tool: originalName, params: params, phase: "done") }
+        // v9.2：追加式面包屑——只留最后一条看不到「路径」，卡死时要能回放前几步
+        let crumbStart = CFAbsoluteTimeGetCurrent()
+        ToolBlackBox.breadcrumb(tool: originalName, params: params, phase: "start")
         // v2.9.34：放行 = 策略启用 或 会话已授权 或 常驻核心工具。
         // 修复 bug：coreToolNames 里的工具 (如 artifact.find）schema 已发给模型，
         // 但 defaultEnabledTools 未收录时 isEnabled 返回 false → 报"未加载"。
@@ -1532,6 +1549,40 @@ public final class ToolRegistry: ObservableObject {
             // v2.9.36：统一审计 (老 MCP 样式：OK/failed · 权限 · 耗时 · 数据量）
             let start = CFAbsoluteTimeGetCurrent()
             let perm = Self.permissionLabel(originalName)
+
+            // v9.2：循环守卫——执行前判定。命中阻断时**短路执行**，把 [LOOP BLOCKED] 当成该工具的结果
+            // 喂回模型（不抛异常）：抛异常会落到下面的失败熔断，而失败熔断只认「同参数同错误」，
+            // 对「反复成功但结果一样」和「工具根本不返回」完全无效，会话就停在那里不动。
+            let guardOutcome = ToolLoopGuard.shared.check(tool: originalName, params: params)
+            if guardOutcome.blocked {
+                AuditLog.shared.logTool(originalName, status: .failure, elapsedMs: 0, dataBytes: 0,
+                                        permission: perm, detail: guardOutcome.message,
+                                        code: "LOOP_BLOCKED", reason: "loop",
+                                        nextStep: "换参数或换工具；不要再重复同一次调用")
+                WorkflowManager.shared.updateStep(tool: originalName,
+                                                  detail: "⛔ 循环守卫阻断", success: false)
+                ToolBlackBox.mark(tool: originalName, params: params, phase: "loop-blocked")
+                ToolBlackBox.breadcrumb(tool: originalName, params: params, phase: "loop-blocked",
+                                        info: ["policy": guardOutcome.policy,
+                                               "ms": Int((CFAbsoluteTimeGetCurrent() - crumbStart) * 1000)])
+                let body: [String: Any] = [
+                    "ok": false,
+                    "code": "LOOP_BLOCKED",
+                    "message": guardOutcome.message,
+                    "data": ["tool": originalName, "policy": guardOutcome.policy],
+                    "_meta": [
+                        "policy": guardOutcome.policy,
+                        "next_step": "停止重复这一步：换参数、换工具，或基于已有结果直接给结论。",
+                    ],
+                ]
+                return body
+            }
+            // 警告不阻断，但要让模型看见（按桶节流，只在升档时提示一次）
+            if guardOutcome.level == .warn, !guardOutcome.message.isEmpty {
+                WorkflowManager.shared.updateStep(tool: originalName,
+                                                  detail: "⚠️ 循环警告", success: true)
+            }
+
             do {
                 // v3.0.90：记录调用次数，告诉 AI 它调了几次，让 AI 自己判断
                 let callCount = recordCall(name: originalName, params: params)
@@ -1558,6 +1609,9 @@ public final class ToolRegistry: ObservableObject {
                 }
                 if let cached = cached {
                     WorkflowManager.shared.updateStep(tool: originalName, detail: "cached", success: true)
+                    // v9.2：缓存命中也要记一条——模型在缓存窗口里反复调同一工具，是最典型的原地踏步，
+                    // 旧实现连这个信号都拿不到（缓存直接 return，绕过了所有计数）。
+                    ToolLoopGuard.shared.record(tool: originalName, params: params, result: cached, error: nil)
                     var cachedData = Self.compactResult(cached)
                     cachedData.removeValue(forKey: "message")
                     cachedData["_call_count"] = callCount
@@ -1661,6 +1715,13 @@ public final class ToolRegistry: ObservableObject {
                 let bytes = Self.resultBytes(result)
                 AuditLog.shared.logTool(originalName, status: .success,
                                         elapsedMs: elapsedMs, dataBytes: bytes, permission: perm)
+                // v9.2：循环守卫回填——成功也要记。旧实现成功路径完全不计数（v6.9.0 注释：
+                // "成功 2 次很常见，报警只会干扰"），于是"每次成功但结果一模一样"这种原地踏步
+                // 永远不会被拦，会话就一直转下去。
+                ToolLoopGuard.shared.record(tool: originalName, params: params, result: result, error: nil)
+                ToolBlackBox.breadcrumb(tool: originalName, params: params, phase: "done",
+                                        info: ["ms": elapsedMs,
+                                               "result_hash": ToolLoopGuard.resultHash(result)])
                 // v8.2：返回式 error 字典也算失败——很多工具失败走 return ["error":...] 而不是 throw，
                 // 旧 logTool 把它当成功记，审计页看不到失败原因。这里补结构化失败记录。
                 if let returnedErr = Self.extractReturnedError(result) {
@@ -1733,6 +1794,11 @@ public final class ToolRegistry: ObservableObject {
             } catch {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
                 var errDesc = (error as? MCPError)?.description ?? error.localizedDescription
+                // v9.2：失败也要进循环守卫——失败熔断只看「同参同错误」，这里补的是
+                // 「同参不同错误也可能在绕圈」（模型每次换一种错法，熔断永远不触发）。
+                ToolLoopGuard.shared.record(tool: originalName, params: params, result: nil, error: errDesc)
+                ToolBlackBox.breadcrumb(tool: originalName, params: params, phase: "failed",
+                                        info: ["ms": elapsedMs, "error": String(errDesc.prefix(200))])
 
                 // v6.9.0：参数类报错统一增强——工具层大多只写 "bundle_id required"，
                 // 模型看不出「自己传了什么、该换成什么工具」，于是原样重试。

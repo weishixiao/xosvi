@@ -1627,6 +1627,51 @@ private struct MessageTapModifier: ViewModifier {
     }
 }
 
+/// 打字机的节拍器（v9.1）。
+///
+/// 为什么不用 `@State var timer: Timer?`：SwiftUI 的 `View` 是值类型，每轮 `body`
+/// 都会复制一份；`@State` 的写入又**不同步**——同一个 runloop 里连着调两次 `start`，
+/// 两次都还读到 `nil`，于是留下两个 Timer。每个 Timer 每 0.02 秒回调一次并改
+/// `@State`，改完又触发重绘，重绘里 `.onAppear` / `.onChange` 再开会话……
+/// 实测卡住时 360 wakeups/s（系统上限 150/s），落盘 `Xosvi.wakeups_resource-*.ips`。
+///
+/// 这个类只有一个任务：保证**同一时刻最多一个** Timer。`start` 幂等，
+/// `tick` 返回 `false` 时自己停掉，不留悬挂。
+final class TypewriterDriver {
+    private var timer: Timer?
+    /// 当前已显示的字符数，由 tick 的返回值推进。
+    private var revealed = 0
+    /// 每 tick 做什么。参数是当前已显示字符数，返回下一次的字符数；
+    /// 返回 `nil` 表示打完了，driver 自动停止。
+    typealias Tick = (_ revealed: Int) -> Int?
+
+    func start(total: Int, tick: @escaping Tick) {
+        // 已经在跑就不重开——这是修复的关键：以前这个判断放在 @State 上不可靠。
+        guard timer == nil else { return }
+        revealed = 0
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.timer == nil else { return }
+            self.timer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { [weak self] _ in
+                guard let self else { return }
+                guard let next = tick(self.revealed) else { self.stop(); return }
+                self.revealed = min(next, total)
+                // 追平就收工，绝不多转一圈
+                if self.revealed >= total { self.stop() }
+            }
+            // 兜底：总长 0 时不必空转
+            if total <= 0 { self.stop() }
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        revealed = 0
+    }
+
+    deinit { timer?.invalidate() }
+}
+
 struct MessageBubble: View {
     let message: ChatMessage
     // v4.3.77：安装进度——工具"执行中"气泡渲染实时进度条（引用处位于本 struct）
@@ -1661,35 +1706,39 @@ struct MessageBubble: View {
     // 只要内容在增长就持续打字到完整，兼容"整段一次性到达"的中转
     // v3.5.4：用户反馈太慢 → 提速到 ~133 字/秒 (0.015s/tick × 2 字符），快但仍看得出打字感
     @State private var revealedCount = 0
-    @State private var typeTimer: Timer?
+    // v9.1：typeTimer 从 @State 改为引用类型持有。
+    // 旧实现把 Timer 存进 @State：每轮 body 重绘都会复制结构体，而 SwiftUI 的 @State
+    // 写入是异步生效的，`guard typeTimer == nil` 会在同一帧里放行多次 startTypeTimer，
+    // 于是多个 Timer 并存、互相叠加；每个 0.02s 的 Timer 又都在改 @State 触发重绘，
+    // 形成「重绘 → 再启动 → 再重绘」。实测卡住时 360 wakeups/s（系统上限 150），
+    // 落盘 Xosvi.wakeups_resource-*.ips。引用类型不受结构体复制影响，跨重绘唯一。
+    @State private var typer = TypewriterDriver()
     // v8.4：autoSpokenUpTo 已随 TTS 删除
 
     // v3.5.4：自适应打字机（业界：平时 ~50 字/秒舒适，积压多自动提速追平网络，标点/换行稍停顿更自然）。
     // 不像固定 133 字/秒那样一快到底；也不像 25 字/秒那样拖沓。
+    // v9.1：Timer 由 TypewriterDriver 持有（引用类型，跨重绘唯一），这里只负责喂数据。
     private func startTypeTimer() {
-        guard typeTimer == nil else { return }
-        // v3.5.4：MessageBubble 是 SwiftUI 结构体(值类型)，不能用 [weak self]；定时器 onDisappear 会 invalidate
-        typeTimer = Timer.scheduledTimer(withTimeInterval: 0.02, repeats: true) { _ in
-            DispatchQueue.main.async {
-                guard self.revealedCount < self.message.content.count else { self.stopTypeTimer(); return }
-                let total = self.message.content.count
-                let backlog = total - self.revealedCount
-                let idx = self.message.content.index(self.message.content.startIndex, offsetBy: self.revealedCount)
-                let ch = self.message.content[idx]
-                let isPause = ch == "\n" || "，。；：！？、,.。;:!?… ".contains(ch)
-                let step: Int
-                if backlog > 60 { step = 8 }        // 积压很多 → 大幅提速追平
-                else if backlog > 30 { step = 4 }   // 积压多 → 提速
-                else if backlog > 12 { step = 2 }   // 稍积压 → 中速
-                else if isPause { step = 1 }        // 标点/换行 → 慢速停顿(真人感)
-                else { step = 1 }                    // 常规 ~50 字/秒(0.02s/字)
-                self.revealedCount = min(total, self.revealedCount + step)
-            }
+        let content = message.content
+        typer.start(total: content.count) { [content] revealed in
+            guard revealed < content.count else { return nil }      // 追平 → 让 driver 自毁
+            let backlog = content.count - revealed
+            let idx = content.index(content.startIndex, offsetBy: revealed)
+            let ch = content[idx]
+            let isPause = ch == "\n" || "，。；：！？、,.。;:!?… ".contains(ch)
+            let step: Int
+            if backlog > 60 { step = 8 }        // 积压很多 → 大幅提速追平
+            else if backlog > 30 { step = 4 }   // 积压多 → 提速
+            else if backlog > 12 { step = 2 }   // 稍积压 → 中速
+            else if isPause { step = 1 }        // 标点/换行 → 慢速停顿(真人感)
+            else { step = 1 }                    // 常规 ~50 字/秒(0.02s/字)
+            let next = min(content.count, revealed + step)
+            revealedCount = next
+            return next
         }
     }
     private func stopTypeTimer() {
-        typeTimer?.invalidate()
-        typeTimer = nil
+        typer.stop()
     }
     // v8.4：autoSpeak 函数已随 TTS 功能删除
     // v3.5.4：思考黄泡——思考进行中(isStreaming)自动展开让用户看到模型在动；
