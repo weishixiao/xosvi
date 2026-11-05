@@ -215,3 +215,27 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   `XPC_SERVICE_NAME`），所以要么临时把 `kIdleSecs` 编成 4 再装、要么在守护自己的环境里给
   `XOSVID_IDLE_SECS`（0.2.5 起支持覆盖）；验证完记得改回 900 并重装。
   已验证过一次：4 秒时空闲到点出现 `stay alive`，12 秒长任务返回 `exit_code: 0`。
+
+## Xosvi 运行期日志桥（`watch.sh` + `wiki.qaq.xosvi.watch`）
+
+给排查“Xosvi 卡在某个工具”用，**不改 Xosvi 本身**。一个 launchd 常驻服务每 2 秒采样，把三层日志
+追加到 `timeline.log`：工具审计日志、用量日志、`xosvid.log` 增量，外加新崩溃报告的文件名。
+
+- 部署位置（真实宿主）：`/private/var/mobile/Library/XosviWatch/`，里面 `watch.sh`、`timeline.log`、
+  `crashes.seen`、`launch.out`/`launch.err`。项目根目录的 `watch.sh` 是同一份源文件。
+- plist 在 `Library/LaunchDaemons/wiki.qaq.xosvi.watch.plist`（jbroot 内），加载：
+  `launchctl bootstrap system <plist>`（root）。用 `icli svc bootstrap` 会被扔进 user/501 域。
+- **路径映射是本机最大的坑**：launchd 眼里宿主在 **`<jbroot>/rootfs/private/var/mobile/...`**，
+  而 `shell_run` 的 `/rootfs/...` 与之等价、`icli` 的 `/private/var/mobile/...` 也是同一处；
+  但 `shell_run` 里的 `/private/var/mobile/...` 是 **jbroot 自带的另一份**（Documents 只有 8 项），
+  不要把文件写进那里。找不准就先跑 `icli svc paths <plist> --human` 看它给出的 `suggested`。
+- **环境**：launchd 只给 `PATH=/usr/bin:/bin:...`，icli 不在其中；plist 必须自带
+  `EnvironmentVariables.PATH` 指向 `<jbroot>/usr/bin`。脚本开头还会用 `env -i` 自重启一次，
+  甩掉 launchd 注入的 `XPC_SERVICE_NAME`。
+- plist 与脚本都要 `chown 0:0`、`chmod 644/755`，否则 launchd 回 `code 122 bad ownership`。
+- 停用：`launchctl bootout system/wiki.qaq.xosvi.watch`（root）后删 plist。
+- **已验证**：服务 `state = running`、`never exited`；往 `tool_log.jsonl` 追加一行测试记录后
+  6 秒内出现在 `timeline.log` 的 `TOOL_APPEND` 段里。**未验证**：Xosvi 重开后的真实采集。
+- 已知噪音：僵尸任务在 `icli proc list` 里仍有 `executable`/`name`/`pid` 三行，
+  进程表判断不了死活；用 `sc_usage -l 1 <pid>`（root）看 `0 threads  0 context switches` 才是僵尸。
+
