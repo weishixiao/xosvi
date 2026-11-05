@@ -161,21 +161,36 @@ static int g_log_same_as_stderr = 0;
 
 static void logmsg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void logmsg(const char *fmt, ...) {
+    /* v0.2.5：每行前缀本地时间。此前日志无时间戳，无法与崩溃报告/用户反馈的时刻
+     * 对齐（排 07:55 那次卡死时只能靠世代顺序猜）。格式固定 24 字节，
+     * "%Y-%m-%d %H:%M:%S " —— 用 localtime_r 而不是 ctime，避免换行与静态缓冲。 */
+    char stamp[32];
+    struct timespec now;
+    clock_gettime(CLOCK_REALTIME, &now);
+    struct tm tmv;
+    localtime_r(&now.tv_sec, &tmv);
+    size_t sl = strftime(stamp, sizeof stamp, "%Y-%m-%d %H:%M:%S", &tmv);
+
     char line[1024];
     va_list ap;
     va_start(ap, fmt);
     int n = vsnprintf(line, sizeof line, fmt, ap);
     va_end(ap);
     if (n < 0) return;
-    if (n > (int)sizeof line - 2) n = (int)sizeof line - 2;
+    if (n > (int)sizeof line - 4) n = (int)sizeof line - 4;
     line[n] = '\n';
+    line[n + 1] = '\0';
     if (g_log_fd >= 0) {
-        ssize_t w = write(g_log_fd, line, (size_t)n + 1);
+        if (sl) { ssize_t w = write(g_log_fd, stamp, sl); (void)w; }
+        ssize_t w = write(g_log_fd, " ", 1); (void)w;
+        w = write(g_log_fd, line, (size_t)n + 1);
         (void)w;
     }
     if (!g_log_same_as_stderr) {
-        ssize_t w = write(STDERR_FILENO, line, (size_t)n + 1);
-        (void)w;
+        if (sl) { ssize_t w = write(STDERR_FILENO, stamp, sl); (void)w; }
+        ssize_t w = write(STDERR_FILENO, " ", 1); (void)w;
+        ssize_t w2 = write(STDERR_FILENO, line, (size_t)n + 1);
+        (void)w2;
     }
 }
 

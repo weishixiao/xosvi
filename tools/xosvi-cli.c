@@ -137,6 +137,24 @@ int main(int argc, char **argv) {
     if (xpc_dictionary_get_value(g_reply, "elapsed_ms"))
         printf("elapsed_ms: %.1f\n", xpc_dictionary_get_double(g_reply, "elapsed_ms"));
     if (xpc_dictionary_get_bool(g_reply, "timed_out")) printf("timed_out: true\n");
+    /* v0.2.5：并发槽满被拒时守护回 busy/running_helpers，不打印就等于
+     * 「跑完但没输出」—— 排查时根本看不出是被并发上限挡掉的。
+     * 注意守护写的是字符串 "1"（xpc_dictionary_set_string），按 bool 读只会得到
+     * false，所以这里接受字符串/整数/bool 三种写法。 */
+    int busy = 0;
+    {
+        const char *bs = xpc_dictionary_get_string(g_reply, "busy");
+        if (bs && (bs[0] == '1' || bs[0] == 'y' || bs[0] == 't' || bs[0] == 'T')) busy = 1;
+        else if (xpc_dictionary_get_value(g_reply, "busy") &&
+                 xpc_get_type(xpc_dictionary_get_value(g_reply, "busy")) == XPC_TYPE_INT64 &&
+                 xpc_dictionary_get_int64(g_reply, "busy") != 0) busy = 1;
+        else if (xpc_get_type(xpc_dictionary_get_value(g_reply, "busy")) == XPC_TYPE_BOOL &&
+                 xpc_dictionary_get_bool(g_reply, "busy")) busy = 1;
+    }
+    if (busy) printf("busy: true\n");
+    if (xpc_dictionary_get_value(g_reply, "running_helpers"))
+        printf("running_helpers: %lld\n", xpc_dictionary_get_int64(g_reply, "running_helpers"));
+    if (xpc_dictionary_get_bool(g_reply, "truncated")) printf("truncated: true\n");
     if (xpc_dictionary_get_value(g_reply, "exit_code")) {
         int64_t ec = xpc_dictionary_get_int64(g_reply, "exit_code");
         printf("exit_code: %lld\n", ec);
