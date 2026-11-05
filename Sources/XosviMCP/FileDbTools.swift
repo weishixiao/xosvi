@@ -58,21 +58,33 @@ final class FileExecTool: MCPTool {
     }
 
     /// v7.3.0：原生 ASCII 字符串提取（替代 Alpine 的 strings，不依赖引擎）
+    /// v9.9：改为对 Data 的连续切片做位图扫描（原实现逐字节 append 到 [UInt8]，
+    /// 27MB 的 App 二进制实测要 20s+，会把网关/工具线程拖到超时）。只扫前 8MB。
     static func extractStrings(_ data: Data, minLength: Int = 4, limit: Int = 200) -> [String] {
+        let scanCap = 8 * 1024 * 1024
+        let body = data.count > scanCap ? data.prefix(scanCap) : data
         var out: [String] = []
-        var cur = [UInt8]()
-        for b in data {
+        var start = -1
+        func flush(_ end: Int) {
+            guard start >= 0, end - start >= minLength else { return }
+            let lo = body.startIndex + start, hi = body.startIndex + end
+            if let s = String(data: body[lo..<hi], encoding: .ascii) { out.append(s) }
+        }
+        var idx = body.startIndex
+        var offset = 0
+        while idx < body.endIndex {
+            let b = body[idx]
             if b >= 0x20 && b < 0x7F {
-                cur.append(b)
+                if start < 0 { start = offset }
             } else {
-                if cur.count >= minLength, let s = String(bytes: cur, encoding: .ascii) { out.append(s) }
-                cur.removeAll(keepingCapacity: true)
-                if out.count >= limit { break }
+                flush(offset)
+                start = -1
+                if out.count >= limit { return out }
             }
+            idx = body.index(after: idx)
+            offset += 1
         }
-        if out.count < limit, cur.count >= minLength, let s = String(bytes: cur, encoding: .ascii) {
-            out.append(s)
-        }
+        flush(offset)
         return out
     }
 

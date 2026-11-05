@@ -391,6 +391,14 @@ final class MCPGatewayServer {
     }
 
     private func readRequest(_ fd: Int32) -> Request? {
+        // v9.9：连接是并发分发的，但半开/慢连接会一直卡在 read 上不返回，
+        // 把 handle 线程连同后续写操作一起拖死（实测一次长工具调用后连接不再被处理）。
+        // 给读写加超时：读 15s，写 30s；超时返回 nil，由调用方关 fd。
+        var rtv = timeval(tv_sec: 15, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &rtv, socklen_t(MemoryLayout<timeval>.size))
+        var wtv = timeval(tv_sec: 30, tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &wtv, socklen_t(MemoryLayout<timeval>.size))
+
         var buffer = Data()
         var tmp = [UInt8](repeating: 0, count: 4096)
         let headerEnd = Data("\r\n\r\n".utf8)
@@ -423,8 +431,11 @@ final class MCPGatewayServer {
         }
         let contentLength = Int(headers["content-length"] ?? "0") ?? 0
         var body = buffer.subdata(in: hr.upperBound..<buffer.count)
+        // v9.9：按剩余字节数精确读，读到 contentLength 就停——原实现循环读满缓冲，
+        // 客户端已发完 body 但没关连接时会在 read 上一直等（实测 POST /pair 直接把网关挂死）。
         while body.count < contentLength {
-            let n = read(fd, &tmp, tmp.count)
+            let need = min(contentLength - body.count, tmp.count)
+            let n = read(fd, &tmp, need)
             if n <= 0 { break }
             body.append(tmp, count: n)
         }

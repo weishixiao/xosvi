@@ -21,6 +21,15 @@
 - D-010：#26 破坏性写操作直接清空全表缓存（缓存外写入无法追踪）。
 - D-011：B5 统一走 `ExternalContent` 三种形态：`apply`（单字段包装+标记）、`wrapFields`（多字段包装，已带标签不重复包）、`flagRows`（行列表只标记不改写）。剪贴板无读取工具，`UIPasteboard` 仅 App 内 UI 使用，故本项 N/A。
 - D-012：本机无 `swiftc`，Swift 改动只有括号/结构 sanity（`tests/loopguard/swift_braces.c`）可本地验证，类型错误仅由 CI 暴露；`scripts/check_swift_braces.py` 本机跑不了（无 python3，且脚本本身有重复行），以 C 版本为准。
+- D-013（实测，2026-11-05）：真机跑 B5 端到端时发现两个网关级缺陷，均已改代码但**未编译验证**：
+  1. `GatewayServer.readRequest` 无任何超时，慢/半开连接会长期占住 handle 线程 → 已加 `SO_RCVTIMEO` 15s / `SO_SNDTIMEO` 30s。
+  2. `FileExecTool.extractStrings` 逐字节 append 到 `[UInt8]`，27MB App 二进制实测 20s+ 未返回，同一次请求后网关整体失去响应 → 已改为切片扫描 + 只扫前 8MB（C 等价实现验证 27MB 即时返回）。
+  另：`file` 工具对 `/usr/bin/true` 报 no such file —— App 沙盒看不到 jbroot 路径，属既有路径可见性问题，与 B5 无关。
+  `smoke_external.json` 因此改为模板变量，真机需用 App 容器内可见的路径。
+
+## 阻塞记录（补充）
+
+- B-005：App 的 MCP 网关开关**不持久化**，重启 App 后端口 8765 不再监听，需手进「MCP 服务」页重新开启。端到端用例因此依赖人工操作。
 
 ## 台账
 
