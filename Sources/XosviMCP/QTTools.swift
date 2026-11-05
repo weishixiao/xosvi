@@ -606,7 +606,9 @@ final class NetworkCaptureTool: MCPTool {
                     out["next_step"] = "confirm App restarted and actually generating network traffic; if still 0, need TLS hook or protocol-layer solution, not a capture tool fault"
                 }
             }
-            return out
+            // v9.9（PR-B5）：请求/响应的明文同样来自目标 App，任一行含注入指令就标记
+            return ExternalContent.flagRows(out, key: "requests",
+                                            fields: ["request_body", "response_body", "body", "url"])
 
         case "analyze":
             // Statistical analysis
@@ -644,7 +646,7 @@ final class NetworkCaptureTool: MCPTool {
                 "error_count": errorRequests.count,
                 "error_requests": Array(errorRequests.prefix(20))
             ]
-            // v8（PR-B5）：抓包明文属外部内容——响应体含注入指令时标记，不执行
+            // v9.9（PR-B5）：抓包明文属外部内容——响应体含注入指令时标记，不执行
             let dump = "\(allRequests.prefix(20))"
             if ExternalContent.looksInjected(dump) {
                 analyze["injection_suspected"] = true

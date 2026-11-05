@@ -378,7 +378,8 @@ final class WorkspaceExecTool: MCPTool {
         case "edit_file":  return try WorkspaceTools.editFile(p)
         case "list_dir":   return try WorkspaceTools.listDir(p)
         case "glob":       return try WorkspaceTools.glob(p)
-        case "grep":       return try WorkspaceTools.grep(p)
+        case "grep":
+            return ExternalContent.flagRows(try WorkspaceTools.grep(p), key: "matches", fields: ["text"])
         case "view_image": return try WorkspaceTools.viewImage(p)
         default:
             throw MCPError.invalidParams("未知子命令：\(cmd)")

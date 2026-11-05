@@ -47,7 +47,11 @@ final class FileExecTool: MCPTool {
             let strs = Self.extractStrings(data, minLength: 6, limit: 80)
             var out = "file type: \(type)\nsize: \(data.count) bytes\n--- strings (first \(strs.count)) ---\n"
             out += strs.joined(separator: "\n")
-            return ["env": "native", "exit_code": 0, "output": out]
+            // v9.9（PR-B5）：strings 是文件里的原始文字，属外部内容——只标记，不执行
+            var result: [String: Any] = ["env": "native", "exit_code": 0]
+            ExternalContent.apply(to: &result, key: "output", content: out,
+                                  source: "file:analyze:\(norm)")
+            return result
         default:
             throw MCPError.invalidParams("Unknown command: \(command). Available: inspect / analyze")
         }
@@ -162,6 +166,14 @@ final class DbExecTool: MCPTool {
             "sql": "SQL for query (required when command=query)"
         ], verified: true, category: "data", annotations: .destructiveLocal, cache: ToolCachePolicy.none)
 
+    /// v9.9（PR-B5）：库里的表名/CREATE 语句/查询结果都来自别人的 App，属外部内容——统一包装 + 注入标记
+    private func wrap(_ r: [String: Any]?, _ source: String) throws -> [String: Any] {
+        guard let r = r else {
+            throw MCPError.failed("db: 原生 SQLite 打不开该库（可能是加密库或权限不足）")
+        }
+        return ExternalContent.wrapFields(r, fields: ["output"], source: source, kind: "external")
+    }
+
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {
             throw MCPError.invalidParams("command required: list / schema / query")
@@ -175,10 +187,14 @@ final class DbExecTool: MCPTool {
         switch command {
         case "list":
             // v6.6.22：原生优先——iSH 坏掉时 db 依然可用（跨 App 读库是常用取证步骤）
-            if let r = nativeQuery(norm, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") { return r }
+            if let r = nativeQuery(norm, "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name") {
+                return try wrap(r, "db:list:\(norm)")
+            }
             throw MCPError.failed("db: 无法读取该数据库（原生 SQLite 打不开，可能是加密库或权限不足）：\(norm)")
         case "schema":
-            if let r = nativeQuery(norm, "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name") { return r }
+            if let r = nativeQuery(norm, "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL ORDER BY type, name") {
+                return try wrap(r, "db:schema:\(norm)")
+            }
             throw MCPError.failed("db: 无法读取该数据库结构（原生 SQLite 打不开）：\(norm)")
         case "query":
             guard let sql = params["sql"] as? String, !sql.isEmpty else {
@@ -187,7 +203,7 @@ final class DbExecTool: MCPTool {
             // v3.6.19h: 修复命令注入——原实现把 SQL 直接拼进 shell 双引号，单引号转义成 '"'"' 含双引号，
             // 在双引号上下文反破引号平衡，含 ;/$/` 等元字符的 SQL 可执行任意命令。改为 base64 编码 SQL
             // (仅 [A-Za-z0-9+/=] 安全字符)，Alpine 侧解码写临时文件，sqlite3 从 stdin 读，彻底绕开 shell 解析。
-            if let r = nativeQuery(norm, sql) { return r }
+            if let r = nativeQuery(norm, sql) { return try wrap(r, "db:query:\(norm)") }
             throw MCPError.failed("db: 查询失败（原生 SQLite 打不开或 SQL 有误）：\(norm)")
         default:
             throw MCPError.invalidParams("Unknown command: \(command). Available: list / schema / query")

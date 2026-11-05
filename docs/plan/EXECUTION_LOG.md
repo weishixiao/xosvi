@@ -19,6 +19,8 @@
 - D-008：#21 增加 `isAnnotated`，强制层只对显式标注的工具生效。
 - D-009：#25 用线程本地深度断言把锁重入从“静默死锁”变成 debug 断言。
 - D-010：#26 破坏性写操作直接清空全表缓存（缓存外写入无法追踪）。
+- D-011：B5 统一走 `ExternalContent` 三种形态：`apply`（单字段包装+标记）、`wrapFields`（多字段包装，已带标签不重复包）、`flagRows`（行列表只标记不改写）。剪贴板无读取工具，`UIPasteboard` 仅 App 内 UI 使用，故本项 N/A。
+- D-012：本机无 `swiftc`，Swift 改动只有括号/结构 sanity（`tests/loopguard/swift_braces.c`）可本地验证，类型错误仅由 CI 暴露；`scripts/check_swift_braces.py` 本机跑不了（无 python3，且脚本本身有重复行），以 C 版本为准。
 
 ## 台账
 
@@ -34,7 +36,7 @@
 | B2 | ToolDefinition v2 + 注解迁移 | DONE | feat/v8-ai-seamless | `dump_registry --check`；tools/list 含 annotations | isAnnotated 门控 + 归一 init + 36 个工具标注 |
 | B3 | 结果信封 + 结构化错误 | DONE | feat/v8-ai-seamless | 成功含 code + `_meta`；失败含 error.data | code+_meta（不覆盖工具自有 message/next_step） |
 | B4 | KB 自动挂载 + 前置预检 | DONE | feat/v8-ai-seamless | memory 未 attach 返回 unmet_prerequisites | 只挂 ENV/TOOL/TARGET 类；参数错不挂 |
-| B5 | 外部内容包装推广 | DOING | feat/v8-ai-seamless | 输出带 `<external_*>`；疑似注入 `injection_suspected` | ExternalContent.swift + 接入点 |
+| B5 | 外部内容包装推广 | DONE | feat/v8-ai-seamless | 输出带 `<external_*>`；疑似注入 `injection_suspected` | v9.9：web.fetch / shell.exec / file.analyze / db.* / ui_tree / network.capture / workspace.grep 全覆盖；剪贴板无读取工具，N/A；`tests/loopguard/external_test.c` 16 例通过（Swift 侧待 CI 编译） |
 | C1 | 并发收口 + 压测 | DONE | feat/v8-ai-seamless | withLock 重入断言；KB 串行锁 | 状态字典统一短临界区；压测脚本待补 |
 | C2 | 缓存字段化 + 精准失效 | DONE | feat/v8-ai-seamless | 写后读不再旧值；ttl==0 不计数 | policy 优先；别名归一；破坏性清全表；run 预算 |
 | C3 | VPN 抓包闭环 | DONE | feat/v8-ai-seamless | `vpn.capture command:verify` → TRUSTED/NOT_TRUSTED/PROXY_DOWN；start 失败返回 mode:fallen_back | cert_status / serve_profile / verify + Appex lan_excluded/uptime |
@@ -62,9 +64,10 @@
 
 ## 下一步
 
-1. B5 ExternalContent 接入（web.fetch / shell.exec / file / ui_tree / 剪贴板）。
-2. T1 测试体系三件套。
-3. C4 ish.doctor → C3 VPN → C5 技能 → D1 接入层。
+1. ~~B5 ExternalContent 接入（web.fetch / shell.exec / file / ui_tree / 剪贴板）~~ → DONE（v9.9，剪贴板 N/A）。
+2. ~~T1 测试体系三件套~~ → DONE；新增 `tests/device/cases/smoke_external.json`（B5 端到端，需真机跑）。
+3. 待办：把 v9.9 改动推上 CI 取一次 Swift 编译结论（本机无 swiftc，只有括号 sanity）。
+4. C4 ish.doctor → C3 VPN → C5 技能 → D1 接入层：台账均已 DONE，走一遍真机复验清单即可收尾。
 
 
 ## 构建记录
