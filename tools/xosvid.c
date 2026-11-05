@@ -270,11 +270,19 @@ static void run_helper(char *const argv[], int argc_unused, int timeout, result_
     res->truncated = 0;
     res->out = NULL;
     res->outlen = 0;
-    if (pipe(outp) != 0) return;
-    if (pipe(errp) != 0) { close(outp[0]); close(outp[1]); return; }
+    if (pipe(outp) != 0) {
+        logmsg("xosvid: FATAL pipe(stdout) failed: %s", strerror(errno));
+        return;
+    }
+    if (pipe(errp) != 0) {
+        logmsg("xosvid: FATAL pipe(stderr) failed: %s", strerror(errno));
+        close(outp[0]); close(outp[1]);
+        return;
+    }
 
     pid_t pid = fork();
     if (pid < 0) {
+        logmsg("xosvid: FATAL fork failed: %s", strerror(errno));
         close(outp[0]); close(outp[1]); close(errp[0]); close(errp[1]);
         return;
     }
@@ -428,9 +436,15 @@ static void run_helper_request(const request_t *r, xpc_object_t reply) {
         return;
     }
     if (!helper_slot_acquire()) {
+        /* v0.2.5：这一条以前完全不打日志，日志里表现为「请求数 > 完成数」却查不出原因
+         * （实测 4 个并发任务只出现 3 条 done）。被拒的请求也必须留下可定位的一行。 */
+        int running = (int)__atomic_load_n(&g_running_helpers, __ATOMIC_RELAXED);
+        logmsg("xosvid: reject helper=%s busy=1 running=%d args=%s", helper, running,
+               r->args && r->argc && r->args[0] ? r->args[0] : "-");
         xpc_dictionary_set_string(reply, "error",
                                   "too many concurrent helpers (max 3); retry when the running one finishes");
         xpc_dictionary_set_string(reply, "busy", "1");
+        xpc_dictionary_set_int64(reply, "running_helpers", (int64_t)running);
         return;
     }
 
@@ -453,6 +467,20 @@ static void run_helper_request(const request_t *r, xpc_object_t reply) {
     run_helper(argv, n - 1, r->timeout, &res);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     helper_slot_release();
+
+    if (res.exit_code < 0) {
+        /* 只有守护自身失败（pipe/fork/未收到退出状态）才会是负值：以前会回 exit_code=-1
+         * 却仍标 status=OK，App 侧当成「跑完但没输出」。改成明确错误。helper 真的退出
+         * （含 exec 失败的 127）不受影响，仍走正常回包。 */
+        logmsg("xosvid: helper=%s failed to start (exit_code=%d timed_out=%d)", helper,
+               res.exit_code, res.timed_out);
+        free(res.out);
+        xpc_dictionary_set_string(reply, "error", "helper failed to start (see xosvid.log)");
+        xpc_dictionary_set_bool(reply, "timed_out", res.timed_out ? true : false);
+        xpc_dictionary_set_int64(reply, "running_helpers",
+                                 (int64_t)__atomic_load_n(&g_running_helpers, __ATOMIC_RELAXED));
+        return;
+    }
 
     double ms = ((double)(t1.tv_sec - t0.tv_sec) * 1000.0) +
                 ((double)(t1.tv_nsec - t0.tv_nsec) / 1e6);
@@ -688,6 +716,14 @@ int main(int argc, char **argv) {
                                            DISPATCH_QUEUE_CONCURRENT);
     dispatch_source_t idle = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, q);
     dispatch_source_set_event_handler(idle, ^{
+        /* v0.2.5：还有 helper 在跑就绝不自退 —— exit(0) 会把正在执行的命令连同客户端
+         * 连接一起砍掉，App 侧只看到「连接中断」而不知道原因。续一个周期再检查。 */
+        int running = (int)__atomic_load_n(&g_running_helpers, __ATOMIC_RELAXED);
+        if (running > 0) {
+            logmsg("xosvid: idle %ds but %d helper(s) still running; stay alive", kIdleSecs, running);
+            arm_idle_timer(idle);
+            return;
+        }
         logmsg("xosvid: idle %ds, exiting", kIdleSecs);
         remove_pidfile();   /* dispatch_main 不走 atexit，这里手动清 */
         exit(0);
