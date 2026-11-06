@@ -388,7 +388,7 @@ final class ToolLoopGuard {
             return String(n)
         case is NSNull:
             return "null"
-        case .none:
+        case let o as Optional<Any> where o == nil:
             return "null"
         case let other:
             return quote("\(other)")
