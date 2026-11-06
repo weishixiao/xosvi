@@ -14,7 +14,7 @@ struct ModelsView: View {
     @State private var showBridgeInfo = false
     /// v9.7：工具桥运行状态（启动/停止后刷新 UI）
     @State private var bridgeRunning = ChatBridgeServer.shared.isRunning
-    // v2.9.107：用量统计 / 导入导出
+    // v9.9：导入导出入口已无按钮（下方导入/导出修饰器随右上角「+」一并删除）
     @State private var showingImporter = false
     @State private var showingExporter = false
     @State private var exportDoc: ConfigDoc?
@@ -73,7 +73,8 @@ struct ModelsView: View {
                         }
                     }
                 }
-                // 这样「登录即用」不再是逐家对接，而是所有家共用一套协议。
+                // v9.9：右上角「+」删除后，新增走「添加 OpenAI 兼容 API」卡片；
+                // 本机工具桥默认展开（不再藏在 DisclosureGroup 里）。
                 Section {
                     DisclosureGroup(isExpanded: $showBridgeInfo) {
                         let st = ChatBridgeServer.shared.status()
@@ -123,7 +124,7 @@ struct ModelsView: View {
                         }
                     }
                 } else {
-                    // v2.9.107：按分组展示（默认组优先，其余按字典序）
+                    // v9.9：按用户要求删除「默认」分组区块——模型列表按分组平铺（组名一律走数据里的分组）
                     let groups = groupedKeys()
                     ForEach(groups, id: \.self) { g in
                         Section(header: HStack {
@@ -151,17 +152,7 @@ struct ModelsView: View {
         .deepseekList()
         }
         .navigationTitle("模型 API")
-        .toolbar {
-            ToolbarItemGroup(placement: .navigationBarTrailing) {
-                // v7.13.1：右上角只留「+」——剪贴板导入与用量统计入口删掉（用户要求）
-                Button(action: {
-                    isNewModel = true
-                    editing = ModelConfig(name: "", provider: "custom", apiProtocol: "OpenAI Chat Completions", baseURL: "", apiKey: "", model: "")
-                }) {
-                    Image(systemName: "plus")
-                }
-            }
-        }
+        // v9.9：按用户要求删除右上角「+」添加模型入口（新增/编辑一律走「服务商目录」与「添加 OpenAI 兼容 API」）
         // v7.13.1：用量统计入口已按用户要求删除
         .sheet(item: $editing, onDismiss: { editing = nil }) { cfg in
             // v2.9.14：改用 .sheet(item:) 绑定。iOS14 的 .sheet(isPresented:)+闭包捕获
@@ -218,9 +209,8 @@ struct ModelsView: View {
         var seen: [String] = []
         for c in store.configs where !seen.contains(c.group) { seen.append(c.group) }
         return seen.sorted {
-            if $0 == "默认" { return true }
-            if $1 == "默认" { return false }
-            return $0 < $1
+            // v9.9：「默认」组不再置顶（按用户要求弱化默认分组），一律按字典序
+            $0 < $1
         }
     }
 

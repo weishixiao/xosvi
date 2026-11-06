@@ -75,7 +75,7 @@
 
 1. ~~B5 ExternalContent 接入（web.fetch / shell.exec / file / ui_tree / 剪贴板）~~ → DONE（v9.9，剪贴板 N/A）。
 2. ~~T1 测试体系三件套~~ → DONE；新增 `tests/device/cases/smoke_external.json`（B5 端到端，需真机跑）。
-3. 待办：把 v9.9 改动推上 CI 取一次 Swift 编译结论（本机无 swiftc，只有括号 sanity）。
+3. v9.9 UI 改版批次已在本地完成（ControlConsole / RemoteAccess / RemoteTerminal / ModelQuickSwitch / DeveloperInstructions / ModelsView / SettingsView / ShellTool 共 11 个文件），本地只过了括号 + 顶层重名 sanity；**Swift 类型编译结论仍需 CI**，等用户明确同意后再推远端触发 `swift-syntax` 作业。
 4. C4 ish.doctor → C3 VPN → C5 技能 → D1 接入层：台账均已 DONE，走一遍真机复验清单即可收尾。
 
 
@@ -85,3 +85,17 @@
 |---|---|---|---|---|
 | 2026-11-01 18:35 | feat/v8-ai-seamless | 41337388513 | FAILURE | 首批编译错误（多行字符串/GatewayServer 重名/参数顺序/ISHManager/MitmProxy） |
 | 2026-11-01 22:39 | feat/v8-ai-seamless | 41358256548 | SUCCESS | Xosvi artifact 100,188,049 bytes；发布步骤按设计仅 main 执行 |
+
+### 本地 sanity（无 swiftc，2026-11-06）
+
+| 检查 | 命令 | 结果 |
+|---|---|---|
+| 括号/结构 | `tests/loopguard/swift_braces.c` 编译后扫 `Sources/XosviMCP` | checked 182 files, mismatches=0 |
+| 顶层类型重名 | `$TMPDIR/decl_dup.c`（C 版，替代无 python3 的脚本）扫同目录 | checked 537 top-level type decls，无 DUP |
+
+v9.9 批次顺带修掉的编译期风险：
+- `RemoteTerminalView.swift`：`@State private var lanIP = Self.localIPAddress()` —— 存储属性初始化里不能用 `Self`，改为 `""` 并在 `onAppear` 取。
+- `DeveloperInstructionsView.swift`：`.toolbar { Button … }` 未包 `ToolbarItem`，补 `ToolbarItem(placement: .navigationBarTrailing)`。
+- `ModelQuickSwitch.swift` / `RemoteTerminalView.swift`：`autocapitalization` 已弃用，改回 `textInputAutocapitalization`（SDK 里 iOS 15.0 起可用）。
+- `RemoteAccessView.swift` / `SettingsView.swift`：`ssh.host` → `ssh_host`，与 `SSHSettingsView` 写入的键一致（否则卡片永远显示「未配置」）。
+

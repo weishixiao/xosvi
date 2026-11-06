@@ -147,21 +147,8 @@ struct ChatView: View {
                             .fontWeight(.semibold)
                             .lineLimit(1)
                         if !selectionMode {
-                            Button(action: { showModelPicker = true }) {
-                                HStack(spacing: 3) {
-                                    Image(systemName: "circle.fill")
-                                        .font(.system(size: 5))
-                                        .foregroundColor(MonoChat.subtext)
-                                    Text(modelStore.defaultConfig?.name ?? "未选择模型")
-                                        .font(.system(size: 10))
-                                        .foregroundColor(.secondary)
-                                        .lineLimit(1)
-                                    Image(systemName: "chevron.down")
-                                        .font(.system(size: 8, weight: .semibold))
-                                        .foregroundColor(.secondary)
-                                }
-                            }
-                            .buttonStyle(PlainButtonStyle())
+                            // v9.9：换成真胶囊（ModelQuickSwitch.swift），状态点 + 模型名 + 服务商
+                            ModelQuickChipLive { showModelPicker = true }
                         }
                     }
                 }
@@ -405,7 +392,8 @@ struct ChatView: View {
                     showModelPicker = false
                     showToast("已切换：\(cfg.name)")
                 }
-                .sheetDetentsHeight(360)
+                // v9.9：新面板有「当前模型卡 + 已保存/上游切换 + 列表」，360pt 太矮，改成 560pt
+                .sheetDetentsHeight(560)
             } else {
                 ChatModelPickerSheet { cfg in
                     var c = cfg
@@ -1207,22 +1195,8 @@ struct DeepSeekTopBar: View {
                     .frame(maxWidth: 200)
 
                 if showModelChip {
-                    Button(action: { showPicker = true }) {
-                        HStack(spacing: 3) {
-                            Image(systemName: "circle.fill")
-                                .font(.system(size: 5))
-                                .foregroundColor(MonoChat.subtext)
-                            Text(modelStore.defaultConfig?.name ?? "未选择模型")
-                                .font(.system(size: 11))
-                                .foregroundColor(DoubaoTheme.subText)
-                                .lineLimit(1)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 8, weight: .bold))
-                                .foregroundColor(DoubaoTheme.subText)
-                        }
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
+                    // v9.9：iOS16+ 自绘顶栏同样用胶囊（与系统导航栏那份保持一致）
+                    ModelQuickChipLive { showPicker = true }
                 }
             }
             .frame(maxWidth: .infinity)
@@ -1355,115 +1329,6 @@ struct QuickTabButton: View {
             .cornerRadius(16)
         }
         .buttonStyle(PlainButtonStyle())
-    }
-}
-
-// v2.9.36：聊天框"当前模型"点击弹出的上游模型选择（老 MCP 风格半屏）
-struct ChatModelPickerSheet: View {
-    @ObservedObject private var modelStore = ModelStore.shared
-    @Environment(\.dismiss) private var dismissSheet
-    let onSelect: (ModelConfig) -> Void
-
-    // v6.3.2：按用户思路重构——"选择模型"面板列出已保存模型，点进去即进入该站详情页，
-    // 详情页自动获取该中转站的上游模型列表，点选某个模型就切换到它。
-    @State private var search = ""
-
-    private var filteredConfigs: [ModelConfig] {
-        guard !search.isEmpty else { return modelStore.configs }
-        return modelStore.configs.filter {
-            ($0.name + " " + $0.model + " " + $0.provider).localizedCaseInsensitiveContains(search)
-        }
-    }
-
-    var body: some View {
-        NavigationView {
-            List {
-                Section {
-                    HStack(spacing: 8) {
-                        Image(systemName: "magnifyingglass")
-                            .font(.system(size: 14))
-                            .foregroundColor(.secondary)
-                        TextField("搜索模型", text: $search)
-                            .font(.subheadline)
-                            .autocorrectionDisabled()
-                            .textInputAutocapitalization(.never)
-                        if !search.isEmpty {
-                            Button { search = "" } label: {
-                                Image(systemName: "xmark.circle.fill").foregroundColor(.secondary)
-                            }
-                        }
-                    }
-                }
-                Section(header: Text("已保存的模型"),
-                        footer: Text("点某个模型 → 进入该站点，自动获取其上游模型列表，可直接切换")) {
-                    ForEach(filteredConfigs) { cfg in
-                        NavigationLink {
-                            UpstreamModelsView(config: cfg) { picked, model in
-                                switchTo(picked, model: model)
-                            }
-                        } label: {
-                            HStack(spacing: 10) {
-                                Image(systemName: cfg.isDefault ? "checkmark.circle.fill" : "circle")
-                                    .font(.system(size: 20))
-                                    .foregroundColor(cfg.isDefault ? .primary : Color(UIColor.tertiaryLabel))
-                                VStack(alignment: .leading, spacing: 3) {
-                                    Text(cfg.name)
-                                        .font(.body)
-                                        .foregroundColor(.primary)
-                                        .lineLimit(1)
-                                    HStack(spacing: 4) {
-                                        Text("\(cfg.provider) · \(cfg.model)")
-                                            .font(.caption)
-                                            .foregroundColor(.secondary)
-                                            .lineLimit(1)
-                                        ForEach(ModelTags.tags(for: cfg.model), id: \.self) { t in
-                                            Text(t)
-                                                .font(.system(size: 10, weight: .medium))
-                                                .padding(.horizontal, 5)
-                                                .padding(.vertical, 1)
-                                                .background(Color(UIColor.secondarySystemFill))
-                                                .foregroundColor(.secondary)
-                                                .cornerRadius(4)
-                                        }
-                                    }
-                                }
-                                Spacer()
-                            }
-                        }
-                    }
-                }
-                Section {
-                    Button(action: {
-                        dismissSheet()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
-                            AppUIState.shared.settingsJumpToModels = true
-                            AppUIState.shared.settingsPresented = true
-                        }
-                    }) {
-                        Label("在设置中管理模型", systemImage: "gearshape.fill")
-                            .font(.footnote)
-                    }
-                }
-            }
-            .listStyle(.insetGrouped)
-            .navigationTitle("选择模型")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("完成") { dismissSheet() }
-                }
-            }
-        }
-        .navigationViewStyle(.stack)
-    }
-
-    private func switchTo(_ cfg: ModelConfig, model: String?) {
-        var c = cfg
-        if let m = model { c.model = m }
-        c.isDefault = true
-        modelStore.update(c)
-        onSelect(c)
-        dismissSheet()
     }
 }
 

@@ -144,23 +144,8 @@ struct SettingsView: View {
 
         // v7.6.5：线上编译 / GitHub 账号 / 下载管理已按用户要求整体移除
 
-        // 环境（v6.6.19：环境变量）
-        groups.append(SettingsGroup(header: "环境", items: [
-            // v7.16.2：shell.exec 是否把需要完整 Linux 的命令交给 iSH 引擎。
-            // 关闭后只跑原生命令（ls/find/plutil/sqlite3/bsdtar），apk/git 之类会明确报错。
-            SettingsItem(title: "使用 iSH 引擎",
-                         subtitle: "apk / git / 完整 Linux 工具链（关闭则仅原生）",
-                         icon: "terminal", color: .gray,
-                         isOn: {
-                             UserDefaults.standard.object(forKey: "shell_use_ish") == nil
-                                 ? true : UserDefaults.standard.bool(forKey: "shell_use_ish")
-                         },
-                         onToggle: { UserDefaults.standard.set($0, forKey: "shell_use_ish") }),
-            SettingsItem(title: "环境变量",
-                         subtitle: "注入子进程与进程内 Python · \(EnvVars.current().count) 项",
-                         icon: "key.fill", color: .gray,
-                         destination: AnyView(EnvVarsView()))
-        ]))
+        // v9.9：环境变量与 iSH 引擎开关已删——环境功能（设置 → 环境）里本来就管环境变量；
+        // iSH 引擎改为内置默认开启（ShellTool 恒走引擎，不再读 shell_use_ish）。
 
         // v7.10.0：远程控制 + AI 控制中心已按用户要求整块删除（含源码）
         // 开发者（v6.0.28：默认开启，去掉开关）
@@ -172,10 +157,10 @@ struct SettingsView: View {
                 // 对用户没有任何可操作项，属纯信息噪音。
                 // v8.4：「会话记录」入口已删（ConversationTranscriptView 整个移除——
                 // 聊天页本身可见全部历史，独立存档页冗余）
-                SettingsItem(title: "远程访问",
-                             subtitle: "SSH 连接远程服务器 · 远程终端被控制",
-                             icon: "terminal.fill", color: .teal,
-                             destination: AnyView(RemoteAccessView())),
+            SettingsItem(title: "远程访问",
+                         subtitle: "SSH 主动连接 · 本机 HTTP API 被远程调用",
+                         icon: "terminal.fill", color: .teal,
+                         destination: AnyView(RemoteAccessView())),
                 // v7.16.11：按用户要求删除「构建与注入」入口（JBPlotSettingsView 一并删除）
                 // v7.5.0：内置浏览器已删除；改为「联网搜索」（多服务商 + 全文读取）
                 SettingsItem(title: "联网搜索",
@@ -189,9 +174,9 @@ struct SettingsView: View {
                              destination: AnyView(KnowledgeSettingsView())),
                 // v7.11.0：控制台——把 control 的 10 个子命令做成可点操作
                 SettingsItem(title: "控制台",
-                             subtitle: "注入 · UI 树 · 截图 · 点按 · 滑动 · 输入 · 按键",
-                             icon: "slider.horizontal.3", color: .gray,
-                             destination: AnyView(ControlConsoleView())),
+                         subtitle: "注入目标 · 界面元素 · 点按滑动 · 键入按键",
+                         icon: "slider.horizontal.3", color: .gray,
+                         destination: AnyView(ControlConsoleView())),
                 // v9.4：MCP 服务入口（原有 MCPGatewayServer 一直没有界面，用户以为本机没有 MCP）
                 SettingsItem(title: "MCP 服务",
                              subtitle: "外部客户端连本机工具 · JSON-RPC · 令牌",
@@ -387,7 +372,7 @@ struct SettingsView: View {
     }
 
     private func sshConfigSubtitle() -> String {
-        let host = UserDefaults.standard.string(forKey: "ssh.host") ?? ""
+        let host = UserDefaults.standard.string(forKey: "ssh_host") ?? ""
         return host.isEmpty ? "未配置" : host
     }
 

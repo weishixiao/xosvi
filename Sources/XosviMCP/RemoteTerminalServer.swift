@@ -38,6 +38,15 @@ final class RemoteTerminalServer {
         set { UserDefaults.standard.set(newValue, forKey: "remote_terminal_allow_dangerous") }
     }
 
+    /// v9.9：首启时替用户生成一个随机令牌（32 位十六进制），界面可一键重置
+    static func makeToken() -> String {
+        var t = ""
+        for _ in 0..<8 {
+            t += String(format: "%04x", UInt16.random(in: 0...UInt16.max))
+        }
+        return t
+    }
+
     /// 危险工具：默认拒绝 (前缀模糊匹配也生效）
     private let dangerousPrefixes = [
         "injection.", "hook.", "cleanup.execute", "workspace.cleanup", "system.cleanup_execute",

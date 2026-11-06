@@ -232,44 +232,36 @@ final class ShellExecTool: MCPTool {
             // 环境预设安装（EnvironmentCore → ISH.run）一直在用这条引擎。
             // 所以这里不再直接劝退，而是真的把命令交给引擎；引擎起不来才退回原生建议。
             //
-            // 是否走引擎由设置项控制（默认开），出问题可一键关掉回到纯原生。
-            let ishEnabled = UserDefaults.standard.object(forKey: "shell_use_ish") == nil
-                ? true : UserDefaults.standard.bool(forKey: "shell_use_ish")
-            if ishEnabled {
-                let bootRC = ISH.boot()
-                if bootRC == 0 {
-                    // apk/pip/git 这类可能要跑几分钟，给足时间
-                    let ishTimeout = max(timeout, 120)
-                    let r = ISH.run(trimmed, timeout: ishTimeout, cwd: "/root")
-                    AuditLog.shared.log("shell.exec (ish)", detail: String(trimmed.prefix(100)))
-                    var out = ["command": trimmed,
-                               "exit_code": Int(r.exitCode),
-                               "ios_native": false,
-                               "runtime_actual": "ish",
-                               "timed_out": r.timedOut] as [String: Any]
-                    out["stdout"] = String(r.output.prefix(outLimit))
-                    if r.output.count > outLimit {
-                        out["truncated"] = true
-                        out["full_length"] = r.output.count
-                    }
-                    return out
+            // v9.9：iSH 引擎已内置并默认开启（设置里的开关已删除），此处恒为走引擎；
+            // 旧版本存下的 shell_use_ish=false 不再生效，boot 失败按下面的错误块如实报出。
+            let bootRC = ISH.boot()
+            if bootRC == 0 {
+                // apk/pip/git 这类可能要跑几分钟，给足时间
+                let ishTimeout = max(timeout, 120)
+                let r = ISH.run(trimmed, timeout: ishTimeout, cwd: "/root")
+                AuditLog.shared.log("shell.exec (ish)", detail: String(trimmed.prefix(100)))
+                var out = ["command": trimmed,
+                           "exit_code": Int(r.exitCode),
+                           "ios_native": false,
+                           "runtime_actual": "ish",
+                           "timed_out": r.timedOut] as [String: Any]
+                out["stdout"] = String(r.output.prefix(outLimit))
+                if r.output.count > outLimit {
+                    out["truncated"] = true
+                    out["full_length"] = r.output.count
                 }
-                // 引擎起不来：把真实错误带出去，而不是一句"已移除"
-                let why = ISH.lastError ?? "boot 返回 rc=\(bootRC)"
-                return ["command": trimmed, "exit_code": 127, "ios_native": false,
-                        "runtime_actual": "ish_boot_failed",
-                        "stdout": "iSH 引擎启动失败：\(why)\n\n"
-                            + "排查顺序：\n"
-                            + "1) 设置 → 环境 看沙盒状态 / 重装 rootfs\n"
-                            + "2) shell.exec 跑 diagnose {command:\"engine\"} 取完整诊断\n"
-                            + "3) 仍不行可在 设置 里关闭「使用 iSH」，改用原生命令（ls/find/plutil/sqlite3/bsdtar）",
-                        "hint": "引擎未就绪，见 stdout"]
+                return out
             }
+            // 引擎起不来：把真实错误带出去，而不是一句"已移除"
+            let why = ISH.lastError ?? "boot 返回 rc=\(bootRC)"
             return ["command": trimmed, "exit_code": 127, "ios_native": false,
-                    "runtime_actual": "alpine_disabled",
-                    "stdout": "iSH 已被手动关闭（设置 → 使用 iSH）。需要 apk/git/完整 Linux 工具链时请打开它。\n"
-                        + "当前可用原生命令：ls / cat / stat / find / du / grep / sed / wc / plutil / sqlite3 / strings / nm / hexdump / objdump / python3 / bsdtar",
-                    "hint": "设置里打开「使用 iSH」后重试"]
+                    "runtime_actual": "ish_boot_failed",
+                    "stdout": "iSH 引擎启动失败：\(why)\n\n"
+                        + "排查顺序：\n"
+                        + "1) 设置 → 环境 看沙盒状态 / 重装 rootfs\n"
+                        + "2) shell.exec 跑 diagnose {command:\"engine\"} 取完整诊断\n"
+                        + "3) 引擎不可用时改用原生命令：ls / find / plutil / sqlite3 / bsdtar",
+                    "hint": "引擎未就绪，见 stdout"]
         }
         
         // v3.1.33: shell 语法识别——含管道/分号/重定向/逻辑符的命令不再裸前缀匹配 (iOS 原生朴素分词会把 | ; 当参数），
