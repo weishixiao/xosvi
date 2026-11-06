@@ -33,7 +33,9 @@ enum XDirs {
 
     static func ensure() {
         let fm = FileManager.default
-        for d in [dataRoot, workspace, rootd, logs, work] {
+        // workspace/logs 也要提前建：appex 的 appex.log / hev.log 是 fopen 直写，
+        // 目录不存在就静默丢弃（旧路径能写是因为上游早把那个目录建好了）。
+        for d in [dataRoot, workspace, workspace + "/logs", rootd, logs, work] {
             try? fm.createDirectory(atPath: d, withIntermediateDirectories: true)
         }
     }
@@ -59,14 +61,13 @@ enum XDirs {
         copyContents(from: "/var/mobile/Documents/Workspace", into: workspace)
         copyContents(from: "/var/mobile/Documents/Rootd", into: rootd)
 
-        // 旧散落日志收进 logs/（同样只复制，上游可能还在写它自己的）
-        for name in ["hud.log", "kfd_helper.log", "appex.log"] {
-            let src = "/var/mobile/Documents/" + name
-            let dst = logs + "/" + name
-            if fm.fileExists(atPath: src) && !fm.fileExists(atPath: dst) {
-                try? fm.copyItem(atPath: src, toPath: dst)
-            }
-        }
+        // 旧散落日志收进新位置（同样只复制，上游可能还在写它自己的）。
+        // appex.log 要跟着它的真实写入点走：Sources/VpnTunnel/main.swift 写的是
+        // <root>/Workspace/logs/appex.log（scripts/build-ipa.sh 的 C 空壳诊断亦然），
+        // 挪到 <root>/logs 就成了没人再写的孤本。
+        copyLog("/var/mobile/Documents/hud.log", to: logs + "/hud.log")
+        copyLog("/var/mobile/Documents/kfd_helper.log", to: logs + "/kfd_helper.log")
+        copyLog("/var/mobile/Documents/appex.log", to: workspace + "/logs/appex.log")
 
         try? "1".write(toFile: dirsMarker, atomically: true, encoding: .utf8)
     }
@@ -106,6 +107,13 @@ enum XDirs {
         if let rest = try? fm.contentsOfDirectory(atPath: src), rest.isEmpty {
             try? fm.removeItem(atPath: src)
         }
+    }
+
+    /// 单个文件复制：源不存在或目标已存在就跳过
+    private static func copyLog(_ src: String, to dst: String) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: src), !fm.fileExists(atPath: dst) else { return }
+        try? fm.copyItem(atPath: src, toPath: dst)
     }
 
     /// 顶层条目逐个复制：目标已有同名就跳过，源目录原封不动

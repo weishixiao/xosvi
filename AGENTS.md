@@ -249,7 +249,8 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   |---|---|---|
   | `Workspace/` | 工作区（artifact、shell 落盘、抓包库、证书、项目） | `Workspace.root`（`MCPCore.swift` 的 `public enum Workspace`） |
   | `Rootd/` | root 通道落盘 | `Support/rootd/rootd.sh` |
-  | `logs/` | App 级日志 `hud.log` / `kfd_helper.log` / `appex.log` | App 与 appex |
+  | `logs/` | App 级日志 `hud.log` / `kfd_helper.log` | App 与 `kfd_helper` |
+  | `Workspace/logs/` | appex 日志 `appex.log` / `hev.log`（appex 用字面量直写，`ensure()` 会先建好目录） | appex |
   | `work/` | 守护 helper 工作区 | `Support/xosvi/*.c` |
 
 - **多处字面量要一起改**：`MitmCore`、`VpnTunnel`（appex）、`Support/xosvi/*.c`、`Support/rootd/rootd.sh`、
