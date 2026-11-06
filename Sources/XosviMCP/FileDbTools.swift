@@ -62,7 +62,7 @@ final class FileExecTool: MCPTool {
     /// 27MB 的 App 二进制实测要 20s+，会把网关/工具线程拖到超时）。只扫前 8MB。
     static func extractStrings(_ data: Data, minLength: Int = 4, limit: Int = 200) -> [String] {
         let scanCap = 8 * 1024 * 1024
-        let body = data.count > scanCap ? data.prefix(scanCap) : data
+        let body: Data = data.count > scanCap ? Data(data.prefix(scanCap)) : data
         var out: [String] = []
         var start = -1
         func flush(_ end: Int) {
