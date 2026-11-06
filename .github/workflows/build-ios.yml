@@ -767,7 +767,26 @@ jobs:
           # ldid-procursus 签名 + entitlements 校验后进包）。C 空壳诊断(MINIMAL_C)已结束，
           # 不再强制覆盖；本轮验证点 = NE 能否拉起 Xcode 标准扩展形态的 appex。
           export XCODE_APPEX=1
-          bash scripts/build-ipa.sh
+          # CI 诊断：完整日志落盘，失败时把最后 200 行 + 所有 error: 行进 job summary，
+          # 这样不登录 GitHub 也能看到真正的失败原因（日志归档需要登录）。
+          set +e
+          bash scripts/build-ipa.sh 2>&1 | tee /tmp/build-ipa.log
+          RC=${PIPESTATUS[0]}
+          set -e
+          if [ "$RC" -ne 0 ]; then
+            {
+              echo "## build-ipa.sh exit $RC"
+              echo '```'
+              tail -200 /tmp/build-ipa.log
+              echo '```'
+              echo "## error: lines"
+              echo '```'
+              grep -n -E "error:|!!!|FAILED|失败" /tmp/build-ipa.log | tail -100 || echo "(none)"
+              echo '```'
+            } > /tmp/summary.md
+            cat /tmp/summary.md >> "$GITHUB_STEP_SUMMARY"
+            exit "$RC"
+          fi
 
       # v4.4.8-fix3x: 进包断言——实测发现 job 绿但工具缺失（缓存劫持/吞错），
       # 这里逐项列出实际进包情况，build 日志可查、可审计。
