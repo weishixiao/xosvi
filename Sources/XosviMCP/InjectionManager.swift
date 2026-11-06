@@ -531,7 +531,7 @@ final class InjectionManager {
     /// ③系统 /usr/bin/codesign adhoc ④不重签直接injected (对照）。返回最优结果 + 全链路诊断。
     @discardableResult
     func injectDylib(pid: Int, dylib: String, timeout: Double = 25) -> (Int32, String) {
-        let workDir = "/var/mobile/Documents/Workspace"
+        let workDir = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace"
         let entPath = workDir + "/inject-ent.plist"
         let entXML = """
         <?xml version="1.0" encoding="UTF-8"?>

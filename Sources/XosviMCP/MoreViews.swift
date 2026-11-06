@@ -150,7 +150,7 @@ struct DataManagementView: View {
                     }
                     SettingRowButton(
                         title: "清空工作区",
-                        subtitle: "删除 Documents/Workspace 下所有文件",
+                        subtitle: "删除 Documents/wiki.qaq.xosvi/Workspace 下所有文件",
                         icon: "trash",
                         color: .red
                     ) {

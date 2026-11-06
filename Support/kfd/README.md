@@ -81,7 +81,7 @@ CI 的 macOS runner 会自动跑 `tools/build_kfd_helper.sh` 把 `kfd_helper`（
 ## 验证方法（改完后真机）
 
 1. `bash tools/build_kfd_helper.sh` 编译通过，`file Resources/bin/kfd_helper` 显示 arm64；`file Resources/bin/fuck_helper` 显示 arm64
-2. 装 Xosvi → 起 VPN → 看日志 `/var/mobile/Documents/kfd_helper.log`：
+2. 装 Xosvi → 起 VPN → 看日志 `/var/mobile/Documents/wiki.qaq.xosvi/logs/kfd_helper.log`：
    - 应有 `extracted cdhash=...`、`invoking .../fuck_helper ...`、`fuck_helper exit=0`
    - FuckKfdHelper 自身日志（NSLog/printf）也会进同一文件
 3. **硬标准**：设置→VPN 出现"Xosvi 抓包 VPN"、能开、状态栏出现**钥匙图标**

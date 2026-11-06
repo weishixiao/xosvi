@@ -2600,7 +2600,7 @@ final class ConversationStore: ObservableObject {
     // v4.3.66：会话存储从 UserDefaults 全量迁移到独立文件（对齐微信/WCDB：大对象不进
     // UserDefaults 同步 IO；文件原子写 + 备份轮换，编码/写盘放后台串行队列，不阻塞主线程）
     private var storeDir: String {
-        let p = NSHomeDirectory().appending("/Documents/Workspace/store")
+        let p = XDirs.workspace + "/store"
         try? FileManager.default.createDirectory(atPath: p, withIntermediateDirectories: true)
         return p
     }

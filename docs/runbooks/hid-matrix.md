@@ -31,7 +31,7 @@
 1. TrollStore 已开启「编辑 Entitlements」，且**卸载重装**过本 App（`com.apple.private.hid.client.event-dispatch` 随安装写入）。
 2. 目标 App 已安装并置于前台；已用 `control command:inject` 注入 ControlAgent（对照组需要）。
 3. `control command:status` 返回 `connected: true`（该调用内部最多重试 4 次、每次间隔 0.6s）。
-4. 工作区可写：`Workspace` 默认在 App 沙盒 `Documents/Workspace`，若在设置里绑定过工作区根，以 `file command:inspect path:<...>` 实际解析为准。
+4. 工作区可写：`Workspace` 固定在 `/var/mobile/Documents/wiki.qaq.xosvi/Workspace`（v9.12 起的独立数据根，不再在 App 沙盒里）。
 
 ## 3. 校准流程（每个环境做一次）
 
@@ -58,7 +58,7 @@ control command:ui_tree
 # 把两次 ui_tree 结果分别存文件后比对结构差异（推荐）
 control command:ui_tree        # 结果存 ui_tree_before.json
 control command:ui_tree        # 结果存 ui_tree_after.json
-shell.exec command:"shasum -a 256 /var/mobile/Documents/Workspace/ui_tree_before.json /var/mobile/Documents/Workspace/ui_tree_after.json"
+shell.exec command:"shasum -a 256 /var/mobile/Documents/wiki.qaq.xosvi/Workspace/ui_tree_before.json /var/mobile/Documents/wiki.qaq.xosvi/Workspace/ui_tree_after.json"
 ```
 
 - 哈希不同 + 目标界面出现预期变化 → ✅
@@ -116,7 +116,7 @@ HID 用例失败（对应环境）
       → 明确报错并说明原因（不静默降级），引导用户检查：
          1) TrollStore「编辑 Entitlements」→ com.apple.private.hid.client.event-dispatch
          2) control command:status 是否为 connected:true
-         3) control_agent.log 尾部（/var/mobile/Documents/Workspace/control_agent.log）
+         3) control_agent.log 尾部（/var/mobile/Documents/wiki.qaq.xosvi/Workspace/control_agent.log）
 ```
 
 ## 6. 证据采集与归档
@@ -124,7 +124,7 @@ HID 用例失败（对应环境）
 每个环境各留一份：
 
 1. 录屏（系统录屏或外部拍摄，覆盖用例 2/4/6/8）；
-2. `control_agent.log` 尾部：`shell.exec command:"tail -n 200 /var/mobile/Documents/Workspace/control_agent.log"`；
+2. `control_agent.log` 尾部：`shell.exec command:"tail -n 200 /var/mobile/Documents/wiki.qaq.xosvi/Workspace/control_agent.log"`；
 3. 矩阵表截图/CSV（本文件的表 + 填写结果）；
 4. `device command:info` 与 `system.overview` 输出（版本/机型/iOS）。
 

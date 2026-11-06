@@ -1,8 +1,8 @@
 // ConfigHook v2.0 - 配置化 Hook 引擎（合并版）
 // 合并自：ConfigHook v1.0（UI颜色/弹窗/方法日志）+ FakeDevice v1.1（设备伪装）
 // 功能：导航栏颜色 / 弹窗 / 方法日志 / 设备伪装（UIDevice名称/型号/系统版本）
-// 配置文件：/var/mobile/Documents/Workspace/hook_config.json
-// 设备伪装配置：/var/mobile/Documents/Workspace/fake_device.json
+// 配置文件：/var/mobile/Documents/wiki.qaq.xosvi/Workspace/hook_config.json
+// 设备伪装配置：/var/mobile/Documents/wiki.qaq.xosvi/Workspace/fake_device.json
 // 设计原则：纯 runtime + Foundation/UIKit，零 substrate 依赖；配置缺失时静默跳过
 //
 // 配置格式：
@@ -22,7 +22,7 @@
 #import <UIKit/UIKit.h>
 #import <objc/runtime.h>
 
-#define kConfigPath @"/var/mobile/Documents/Workspace/hook_config.json"
+#define kConfigPath @"/var/mobile/Documents/wiki.qaq.xosvi/Workspace/hook_config.json"
 
 #pragma mark - v2.0：FakeDevice 设备伪装（合并自 FakeDevice v1.1）
 
@@ -197,7 +197,7 @@ static void chInit(void) {
             }
         }
         // v2.0：加载 FakeDevice 配置（合并自 FakeDevice v1.1）
-        NSData *fdData = [NSData dataWithContentsOfFile:@"/var/mobile/Documents/Workspace/fake_device.json"];
+        NSData *fdData = [NSData dataWithContentsOfFile:@"/var/mobile/Documents/wiki.qaq.xosvi/Workspace/fake_device.json"];
         if (fdData) {
             NSError *err = nil;
             id fdObj = [NSJSONSerialization JSONObjectWithData:fdData options:0 error:&err];

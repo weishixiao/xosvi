@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- v9.12：上游 Fuck 1.8.5 成品 appex 兜底专用（scripts/build-ipa.sh 的 fallback 分支）。
+	     该 appex 的二进制把 group.com.ai.iosxcode 写死，只带自己的组就读不到容器，
+	     所以这里两个组都给；自研引擎走 Support/VpnTunnel.entitlements，只有自己的组。 -->
+	<key>com.apple.developer.networking.networkextension</key>
+	<array>
+		<string>packet-tunnel-provider</string>
+	</array>
+	<key>com.apple.developer.networking.vpn.api</key>
+	<array>
+		<string>allow-vpn</string>
+	</array>
+	<key>com.apple.private.security.container-required</key>
+	<string>com.xosvi.app.VpnTunnel</string>
+	<key>com.apple.security.application-groups</key>
+	<array>
+		<string>group.wiki.qaq.xosvi</string>
+		<string>group.com.ai.iosxcode</string>
+	</array>
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
+</dict>
+</plist>

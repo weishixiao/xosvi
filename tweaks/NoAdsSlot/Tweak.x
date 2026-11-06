@@ -14,12 +14,15 @@
 //  4. 任何一步失败都不影响游戏本体：拦截失败最坏就是照常显示广告。
 //
 // 开关（root 或 mobile 都能建）：
-//   mkdir -p /var/mobile/Library/NoAdsSlot
-//   touch /var/mobile/Library/NoAdsSlot/no_reward    → 只拦不奖
-//   touch /var/mobile/Library/NoAdsSlot/no_block     → 完全停用拦截（调试）
+//   mkdir -p /var/mobile/Documents/wiki.qaq.xosvi/Workspace/noads
+//   touch /var/mobile/Documents/wiki.qaq.xosvi/Workspace/noads/no_reward    → 只拦不奖
+//   touch /var/mobile/Documents/wiki.qaq.xosvi/Workspace/noads/no_block     → 完全停用拦截（调试）
+// v9.12：开关目录跟着 App 数据根走（/var/mobile/Library/NoAdsSlot 是上游共用位置，
+//   二改版与上游并存时会被两边互相影响）；旧路径仍然认，免得用户已建的开关失效。
 // ============================================================
 
-static NSString *const kNoadsDir = @"/var/mobile/Library/NoAdsSlot";
+static NSString *const kNoadsDir = @"/var/mobile/Documents/wiki.qaq.xosvi/Workspace/noads";
+static NSString *const kNoadsLegacyDir = @"/var/mobile/Library/NoAdsSlot";
 
 static void noads_log(NSString *fmt, ...) {
     va_list ap;
@@ -38,7 +41,9 @@ static BOOL noadsFlag(NSString *name, BOOL defaultValue) {
         NSNumber *hit = cache[name];
         if (hit) return hit.boolValue;
         BOOL v = [[NSFileManager defaultManager] fileExistsAtPath:
-                  [kNoadsDir stringByAppendingPathComponent:name]];
+                  [kNoadsDir stringByAppendingPathComponent:name]]
+              || [[NSFileManager defaultManager] fileExistsAtPath:
+                  [kNoadsLegacyDir stringByAppendingPathComponent:name]];
         cache[name] = @(v);
         return v;
     }

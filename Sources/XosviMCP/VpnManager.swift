@@ -13,11 +13,18 @@ import CMitm
 final class VpnManager {
     static let shared = VpnManager()
 
+    /// v9.12：只有打包了上游 Fuck 1.8.5 appex 兜底时（scripts/build-ipa.sh 会在该 appex 里放
+    /// .legacy-engine 标记），才往上游偏好域 com.ai.iosxcode 写 start-state——那是上游的数据，
+    /// 二改版平时一律不碰，免得与同机安装的 TrollAgent 互相干扰。
+    private static var usesLegacyEngine: Bool {
+        FileManager.default.fileExists(atPath: Bundle.main.bundlePath + "/PlugIns/VpnTunnel.appex/.legacy-engine")
+    }
+
     /// v4.4.11-dbg: VPN 链路诊断日志（写 Workspace/logs/vpn.log，远程可读，替代盲测）。
     /// 记录 save/load/start/stop 每次关键回调的真实错误与状态，定位"连不上"根因。
     static func vpnlog(_ msg: String) {
         let fm = FileManager.default
-        let dir = "/var/mobile/Documents/Workspace/logs"
+        let dir = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/logs"
         try? fm.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let line = "[\(Date().timeIntervalSince1970)] \(msg)\n"
         if let fh = FileHandle(forWritingAtPath: dir + "/vpn.log") {
@@ -184,10 +191,10 @@ final class VpnManager {
             "wifiStarted": false,
             "wifiState": 0,
             // 存储 / 证书 / DB
-            "storeFolder": "/var/mobile/Documents/Workspace/mitm",
-            "fileFolder": "/var/mobile/Documents/Workspace/mitm",
+            "storeFolder": "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/mitm",
+            "fileFolder": "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/mitm",
             "dbName": "xosvi.db",
-            "getCertPath": "/var/mobile/Documents/Workspace/certs/ca.pem",
+            "getCertPath": "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/certs/ca.pem",
             // 抓包任务元数据（task 表记录用；taskID 由引擎生成，这里给个初始标识）
             "taskID": "xosvi-capture",
             "ruleName": "默认抓包",
@@ -202,18 +209,23 @@ final class VpnManager {
                                   "com.xosvi.app.VpnTunnel" as CFString,
                                   kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
             // 域 2：Fuck 原始 bundle（appex 若硬编码读 com.ai.iosxcode suite 命中）
-            CFPreferencesSetValue(key, data as CFData,
-                                  "com.ai.iosxcode" as CFString,
-                                  kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
+            //   上游的域，只有打包了上游 appex 兜底时才写，平时不碰
+            if VpnManager.usesLegacyEngine {
+                CFPreferencesSetValue(key, data as CFData,
+                                      "com.ai.iosxcode" as CFString,
+                                      kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
+            }
             // 域 3：AppGroup 域（appex 若经 group 共享容器读命中）
             CFPreferencesSetValue(key, data as CFData,
-                                  "group.com.ai.iosxcode" as CFString,
+                                  "group.wiki.qaq.xosvi" as CFString,
                                   kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
             CFPreferencesSynchronize("com.xosvi.app.VpnTunnel" as CFString,
                                      kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
-            CFPreferencesSynchronize("com.ai.iosxcode" as CFString,
-                                     kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
-            CFPreferencesSynchronize("group.com.ai.iosxcode" as CFString,
+            if VpnManager.usesLegacyEngine {
+                CFPreferencesSynchronize("com.ai.iosxcode" as CFString,
+                                         kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
+            }
+            CFPreferencesSynchronize("group.wiki.qaq.xosvi" as CFString,
                                      kCFPreferencesCurrentUser, kCFPreferencesCurrentHost)
             VpnManager.vpnlog("start-state written to 3 domains (keys: \(startState.keys))")
         }

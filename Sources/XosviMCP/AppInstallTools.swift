@@ -13,7 +13,7 @@ final class AppInstallTool: MCPTool {
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let path = params["ipa_path"] as? String, !path.isEmpty else {
             // v3.2.0：英文报错 + 用法示例 + 自动列出工作区现有 .ipa (AI 拿路径直接填，不再瞎试参数名）
-            let ws = NSHomeDirectory() + "/Documents/Workspace"
+            let ws = XDirs.workspace
             let found = (try? FileManager.default.contentsOfDirectory(atPath: ws))?
                 .filter { $0.hasSuffix(".ipa") }
                 .map { "\(ws)/\($0)" } ?? []
@@ -25,7 +25,7 @@ final class AppInstallTool: MCPTool {
         }
         guard FileManager.default.fileExists(atPath: path) else {
             // v3.2.0：英文报错——文件不存在时给出排查方向
-            return ["ok": false, "error": "file not found: \(path). Check path with shell.exec ls first; list workspace with shell.exec ls \(NSHomeDirectory())/Documents/Workspace"]
+            return ["ok": false, "error": "file not found: \(path). Check path with shell.exec ls first; list workspace with shell.exec ls \(XDirs.workspace)"]
         }
         let im = InjectionManager.shared
         // v2.9.273：trollstorehelper 在 TrollStore.app bundle 内 (TrollStore 源码 TSUtil.m

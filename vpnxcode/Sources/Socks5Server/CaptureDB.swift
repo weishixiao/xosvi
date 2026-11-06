@@ -19,7 +19,7 @@ final class CaptureDB {
     private var db: OpaquePointer?
     private let dbQueue = DispatchQueue(label: "capture.db", qos: .utility)
     private var currentTaskId: Int64 = -1
-    private let groupId = "group.com.ai.iosxcode"
+    private let groupId = "group.wiki.qaq.xosvi"
 
     private init() {
         guard let g = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: groupId) else { return }

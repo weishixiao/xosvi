@@ -403,7 +403,7 @@ final class TestRunTool: MCPTool {
 
         // 5. Collect logs
         if steps.contains("logs") {
-            let workspace = NSHomeDirectory().appending("/Documents/Workspace/logs")
+            let workspace = XDirs.workspace + "/logs"
             try? FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
             let logPath = workspace.appending("/\(reportName)_\(runId).log")
             let (_, logOutput) = InjectionManager.shared.spawnRoot("/usr/bin/log", args: ["show", "--last", "\(wait + statsDuration + 10)s", "--predicate", "process == '\(bundleId)'"])
@@ -422,7 +422,7 @@ final class TestRunTool: MCPTool {
 
         // 7. 生成报告
         if steps.contains("report") {
-            let workspace = NSHomeDirectory().appending("/Documents/Workspace/reports")
+            let workspace = XDirs.workspace + "/reports"
             try? FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
             let reportPath = workspace.appending("/\(reportName)_\(runId).json")
             let report: [String: Any] = [

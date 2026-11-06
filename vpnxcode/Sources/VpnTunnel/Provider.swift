@@ -11,9 +11,9 @@ import Foundation
 import Darwin
 import NetworkExtension
 
-// Step B: 日志写 AppGroup 共享容器 (group.com.ai.iosxcode)——appex 无 no-sandbox，
-//   主 App 容器 /var/mobile/Documents/Workspace 写不进；AppGroup 主 App 与 appex 都能读。
-private let appGroupID = "group.com.ai.iosxcode"
+// Step B: 日志写 AppGroup 共享容器 (group.wiki.qaq.xosvi)——appex 无 no-sandbox，
+//   主 App 容器 /var/mobile/Documents/wiki.qaq.xosvi/Workspace 写不进；AppGroup 主 App 与 appex 都能读。
+private let appGroupID = "group.wiki.qaq.xosvi"
 func appGroupContainer() -> String? {
     FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID)?.path
 }

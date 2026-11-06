@@ -260,7 +260,7 @@ enum L10n {
     "ui_163": ["zh": "可用 %@ / 总 %@", "en": "Free %@ / total %@"],
     "ui_164": ["zh": "%d 个", "en": "%d apps"],
     "ui_165": ["zh": "级别 %d", "en": "Level %d"],
-    "ui_166": ["zh": "线上编译产物会保存在\nDocuments/Workspace/downloads/", "en": "Online build artifacts are saved in\nDocuments/Workspace/downloads/"],
+    "ui_166": ["zh": "线上编译产物会保存在\nDocuments/wiki.qaq.xosvi/Workspace/downloads/", "en": "Online build artifacts are saved in\nDocuments/wiki.qaq.xosvi/Workspace/downloads/"],
     "ui_167": ["zh": "文件过大（%@），仅显示前 64KB", "en": "File too large (%@), showing first 64KB only"],
     "ui_168": ["zh": "%d 元素", "en": "%d elements"],
     "ui_169": ["zh": "✅ 已切换到「%@」，主屏幕图标稍后更新", "en": "✅ Switched to “%@”, home icon updates shortly"],

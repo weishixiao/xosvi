@@ -76,7 +76,7 @@ final class AppWriteFileTool: MCPTool {
     /// 写前备份目标文件到 Workspace/backups/<app>_<ts>/<relPath>
     private func backupFile(_ host: String, app: String) -> String? {
         let fm = FileManager.default
-        let backupRoot = "/var/mobile/Documents/Workspace/backups"
+        let backupRoot = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/backups"
         let ts = Int(Date().timeIntervalSince1970)
         let dest = "\(backupRoot)/\(app)_\(ts)"
         guard (try? fm.createDirectory(atPath: dest, withIntermediateDirectories: true)) != nil else { return nil }

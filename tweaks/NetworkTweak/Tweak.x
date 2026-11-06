@@ -4,9 +4,9 @@
 // NetworkTweak v1.2 — HTTP/HTTPS 抓包 dylib（零依赖版）
 // v1.0 用 Logos %hook → 链接 CydiaSubstrate → TrollStore 无 substrate → 注入必闪退。
 // v1.1 改为 method swizzling（method_setImplementation），纯 ObjC runtime，零外部依赖，
-// 注入任何 App 都不会因缺依赖闪退。功能不变：记录到 /var/mobile/Documents/Workspace/network_capture/。
+// 注入任何 App 都不会因缺依赖闪退。功能不变：记录到 /var/mobile/Documents/wiki.qaq.xosvi/Workspace/network_capture/。
 
-static NSString *kCaptureDir = @"/var/mobile/Documents/Workspace/network_capture";
+static NSString *kCaptureDir = @"/var/mobile/Documents/wiki.qaq.xosvi/Workspace/network_capture";
 static NSMutableArray *g_requests = nil;
 static NSInteger g_maxRecords = 500;
 

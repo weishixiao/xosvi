@@ -38,15 +38,15 @@ final class RootdTool: MCPTool {
     /// v7.16.8：Library 在真机上对 App 不可见（写入探针会报 ENOENT/EACCES），Documents 侧才是通的。
     static let candidateDirs: [String] = {
         // v7.16.10：App 自己的沙箱 Documents 才是它**一定能写**的地方。
-        // 现场：App 能看到 /var/mobile/Documents/Workspace（可能是容器映射），
+        // 现场：App 能看到 /var/mobile/Documents/wiki.qaq.xosvi/Workspace（可能是容器映射），
         // 却看不到 /var/mobile/Library/Rootd；于是把 NSHomeDirectory() 也加进候选，
         // rootd 1.3.3 起会 glob 每个 App 容器的 Documents/Rootd。
         var dirs: [String] = []
         let home = NSHomeDirectory()
         dirs.append(home + "/Documents/Rootd")
-        dirs.append("/var/mobile/Documents/Rootd")
+        dirs.append("/var/mobile/Documents/wiki.qaq.xosvi/Rootd")
         dirs.append("/var/mobile/Library/Rootd")
-        dirs.append("/var/mobile/Documents/Workspace")
+        dirs.append("/var/mobile/Documents/wiki.qaq.xosvi/Workspace")
         dirs.append("/rootfs/var/mobile/Library/Rootd")
         return dirs
     }()
@@ -309,7 +309,7 @@ final class RootdTool: MCPTool {
         } else if !states.contains(where: { $0.shared }) {
             out["hint"] = "daemon 活着但没有任何目录收到心跳（.alive 不新鲜）：App 与本机文件系统是两个视图。dirs[].inode 与终端 ls -di 对比可确认"
         } else if !states.contains(where: { $0.writable }) {
-            out["hint"] = "daemon 活着但所有目录都写不进去：让用户 chmod 1777 对应目录（deb ≥1.5.0 会自动建 /var/mobile/Documents/Rootd）"
+            out["hint"] = "daemon 活着但所有目录都写不进去：让用户 chmod 1777 对应目录（deb ≥1.5.0 会自动建 /var/mobile/Documents/wiki.qaq.xosvi/Rootd）"
         }
         return out
     }

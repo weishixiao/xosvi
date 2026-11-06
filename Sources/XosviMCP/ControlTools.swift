@@ -141,7 +141,7 @@ final class ControlAgentTools {
         let dylibPath = Bundle.main.path(forResource: "ControlAgent", ofType: "dylib", inDirectory: "tweaks")
         guard dylibPath != nil else {
             // 尝试工作区路径
-            let workspacePath = "\(FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].path)/Workspace/tweaks/ControlAgent.dylib"
+            let workspacePath = Workspace.root.appendingPathComponent("tweaks/ControlAgent.dylib").path
             guard FileManager.default.fileExists(atPath: workspacePath) else {
                 return ["error": "ControlAgent.dylib not bundled, compile it into Resources/tweaks/ first", "hint": "use the build-tweak workflow to compile online"]
             }
@@ -277,8 +277,8 @@ final class ControlAgentTools {
         let (code, data, error) = request(path: "/screenshot")
         if code == 200, let data = data {
             // 保存到工作区
-            let workspace = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            let dir = workspace.appendingPathComponent("Workspace/screenshots", isDirectory: true)
+            let workspace = Workspace.root
+            let dir = workspace.appendingPathComponent("screenshots", isDirectory: true)
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             let filename = "control_\(Int(Date().timeIntervalSince1970)).png"
             let path = dir.appendingPathComponent(filename)

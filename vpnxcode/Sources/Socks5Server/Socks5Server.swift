@@ -27,7 +27,7 @@ public final class Socks5Server {
     private let logQ = DispatchQueue(label: "socks5.log", qos: .utility)
     private func s5log(_ msg: String) {
         logQ.sync {
-            let g = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ai.iosxcode")
+            let g = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.wiki.qaq.xosvi")
             guard let base = g?.path else { return }
             let p = base + "/socks5_debug.log"
             try? FileManager.default.createDirectory(atPath: (p as NSString).deletingLastPathComponent,
@@ -40,15 +40,15 @@ public final class Socks5Server {
         }
     }
 
-    // Step B: appex 无 no-sandbox，日志写不进主 App 容器(/var/mobile/Documents/Workspace)。
-    //   改写入 AppGroup 共享容器 (group.com.ai.iosxcode)——主 App 与 appex 都能读。
+    // Step B: appex 无 no-sandbox，日志写不进主 App 容器(/var/mobile/Documents/wiki.qaq.xosvi/Workspace)。
+    //   改写入 AppGroup 共享容器 (group.wiki.qaq.xosvi)——主 App 与 appex 都能读。
     public init(workspace: String? = nil) {
         if let ws = workspace {
             logDir = ws + "/network_capture/socks5"
-        } else if let g = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ai.iosxcode") {
+        } else if let g = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.wiki.qaq.xosvi") {
             logDir = g.path + "/network_capture/socks5"
         } else {
-            logDir = "/var/mobile/Documents/Workspace/network_capture/socks5"
+            logDir = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/network_capture/socks5"
         }
         pthread_mutex_init(&logLock, nil)
     }
@@ -61,7 +61,7 @@ public final class Socks5Server {
         try? fm.createDirectory(atPath: logDir, withIntermediateDirectories: true)
 
         // fix3cy40: MITM 引擎初始化——加载 AppGroup/Cert 的 CA(证书+私钥) 用于为域名签发 MITM 证书
-        if let g = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.com.ai.iosxcode") {
+        if let g = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: "group.wiki.qaq.xosvi") {
             let certDir = g.path + "/Cert"
             let rc = mitm_init(certDir + "/cacert.pem", certDir + "/cakey.pem")
             s5log("mitm_init rc=\(rc)")

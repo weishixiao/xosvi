@@ -15,7 +15,7 @@ final class FailureKnowledgeBase {
     private let kbLock = NSRecursiveLock()
 
     init() {
-        let docs = NSHomeDirectory().appending("/Documents/Workspace")
+        let docs = XDirs.workspace
         try? FileManager.default.createDirectory(atPath: docs, withIntermediateDirectories: true)
         dbPath = docs.appending("/failure_kb.db")
         openDB()
@@ -262,7 +262,7 @@ final class WorkspaceCleanupTool: MCPTool {
         let maxAge = (params["max_age_days"] as? Int) ?? 7
         let targets = (params["targets"] as? String) ?? "all"
 
-        let workspace = NSHomeDirectory().appending("/Documents/Workspace")
+        let workspace = XDirs.workspace
         let cutoff = Date().addingTimeInterval(-TimeInterval(maxAge * 86400))
         var cleaned: [String: Int] = [:]
         var totalFreed: Int64 = 0

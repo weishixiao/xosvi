@@ -57,7 +57,7 @@ final class ProjectContext: ObservableObject {
     private let historyFile: String
 
     init() {
-        let workspace = NSHomeDirectory().appending("/Documents/Workspace")
+        let workspace = XDirs.workspace
         try? FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
         projectsFile = workspace.appending("/projects.json")
         historyFile = workspace.appending("/run_history.json")
@@ -553,7 +553,7 @@ final class TaskTemplateRunner {
         }
 
         // 生成报告
-        let workspace = NSHomeDirectory().appending("/Documents/Workspace/reports")
+        let workspace = XDirs.workspace + "/reports"
         try? FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
         let reportId = UUID().uuidString.prefix(8).description
         let report: [String: Any] = [

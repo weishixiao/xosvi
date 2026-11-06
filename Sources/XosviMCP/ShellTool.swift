@@ -4,12 +4,11 @@ import Darwin
 import CommonCrypto
 import SQLite3
 
-/// v3.0.36：shell 诊断日志 (Documents/Workspace/shell-diag.log），追查超时/卡死真相
+/// v3.0.36：shell 诊断日志 (Documents/wiki.qaq.xosvi/Workspace/shell-diag.log），追查超时/卡死真相
 enum ShellDiag {
     private static let lock = NSLock()
     private static var path: String = {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Workspace/shell-diag.log").path
+        Workspace.root.appendingPathComponent("shell-diag.log").path
     }()
     static func log(_ s: String) {
         lock.lock()
@@ -163,7 +162,7 @@ final class ShellExecTool: MCPTool {
                     "Documents: \(docs)",
                     "cwd: \(FileManager.default.currentDirectoryPath)",
                     "iOS 系统路径可见(/var/containers): \(iosContainers)",
-                    "Alpine 后端: iSH 引擎 (/workspace 映射 iOS Documents/Workspace)",
+                    "Alpine 后端: iSH 引擎 (/workspace 映射 iOS Documents/wiki.qaq.xosvi/Workspace)",
                     "提示: 含 | ; && > 的复合命令走 iOS 原生管道执行器；非 iOS 命令段走 Alpine"
                 ].joined(separator: "\n"),
                 "ios_native": true,
@@ -1040,7 +1039,7 @@ final class ShellExecTool: MCPTool {
         let maxBytes = 2 * 1024 * 1024
         // v6.0.28: 原生侧路径映射范围（Alpine autoBind 已随引擎移除）
         let bindableRoots = [
-            "/var/mobile/Documents/Workspace",
+            "/var/mobile/Documents/wiki.qaq.xosvi/Workspace",
             "/var/containers",
             "/System"
         ]
@@ -1080,7 +1079,7 @@ final class ShellExecTool: MCPTool {
         }
         guard !blocked.isEmpty else { return nil }
         return "该命令将走 Alpine，但引用了 Alpine 读不到的 iOS 文件（v6.0.28 新增检查，防止假零结果）：\n" + blocked.joined(separator: "\n") +
-               "\n解决方法：① 确认路径在自动绑定范围内（/var/mobile/Documents/Workspace、/var/containers、/System）；② App 数据容器路径（/var/mobile/Containers/...）不要用 Alpine，直接用 iOS 原生命令（ls/cat/du/df）；③ 其他路径先 cp 到 Workspace 再走 Alpine 分析。"
+               "\n解决方法：① 确认路径在自动绑定范围内（/var/mobile/Documents/wiki.qaq.xosvi/Workspace、/var/containers、/System）；② App 数据容器路径（/var/mobile/Containers/...）不要用 Alpine，直接用 iOS 原生命令（ls/cat/du/df）；③ 其他路径先 cp 到 Workspace 再走 Alpine 分析。"
     }
     
     /// 按管道/分号/逻辑符拆分命令 (尊重引号），返回 [(命令段, 连接符)]，连接符: | ; && ||
@@ -1210,13 +1209,13 @@ final class ShellExecTool: MCPTool {
     /// v4.3.9: 反向路径翻译——iOS 原生命令收到 Alpine 挂载路径时翻译回 iOS 真实路径。
     /// 原生侧路径映射（原来正向 iOS→Alpine 由引擎的 autoBind 完成，已移除）; 曾缺反向, 导致 grep/cat/ls
     /// 收到 /ios_workspace 等挂载路径时找不到文件(AI 被迫手动换"真实 iOS 路径")。
-    /// 这里统一反向: /ios_workspace→/var/mobile/Documents/Workspace, /ios_containers→/var/containers,
+    /// 这里统一反向: /ios_workspace→/var/mobile/Documents/wiki.qaq.xosvi/Workspace, /ios_containers→/var/containers,
     /// /ios_system→/System。原生命令处理前调用, 让 AI 任意写挂载路径都能被原生读到。
     static func alpineToIOSPath(_ command: String) -> String {
         var result = command
         let reverse: [(String, String)] = [
-            ("/ios_workspace/", "/var/mobile/Documents/Workspace/"),
-            ("/ios_workspace", "/var/mobile/Documents/Workspace"),
+            ("/ios_workspace/", "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/"),
+            ("/ios_workspace", "/var/mobile/Documents/wiki.qaq.xosvi/Workspace"),
             ("/ios_containers/", "/var/containers/"),
             ("/ios_containers", "/var/containers"),
             ("/ios_system/", "/System/"),
@@ -2533,7 +2532,7 @@ final class ShellExecTool: MCPTool {
         let tmo: TimeInterval = (name == "r2") ? 300 : 90
         // fix3ck/fix3cl3: r2 输出写 TROLL_R2_OUT 文件（r_core 静态库构造器重定向 stdout，fputs 全丢）——
         // Workspace 绝对路径 + mkdir 保障（子进程 fopen 依赖父目录存在）
-        let wsBase = "/var/mobile/Documents/Workspace"
+        let wsBase = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace"
         try? FileManager.default.createDirectory(atPath: wsBase, withIntermediateDirectories: true)
         let r2OutPath = wsBase + "/troll_r2_out.txt"
         var benv = ["PYTHONIOENCODING": "utf-8", "TMPDIR": NSTemporaryDirectory()]

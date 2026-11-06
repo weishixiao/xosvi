@@ -16,7 +16,7 @@ public final class Socks5Server {
     public private(set) var port: UInt16 = 19080
     public let logDir: String
 
-    public init(workspace: String = "/var/mobile/Documents/Workspace") {
+    public init(workspace: String = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace") {
         logDir = workspace + "/network_capture/socks5"
     }
 

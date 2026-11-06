@@ -234,7 +234,7 @@ final class RemoteTerminalServer {
             handleCrash(client, req)
         case ("GET", "/api/file"):
             // v2.9.258: 文件下载端点——AI 远程调试拉取截图/日志/ipa/文本
-            // 白名单目录：工作区(Documents/Workspace)、文档(Documents)、临时
+            // 白名单目录：工作区(Documents/wiki.qaq.xosvi/Workspace)、文档(Documents)、临时
             handleFile(client, req)
         case ("GET", "/api/conversations"):
             // v3.1.77：远程终端专用会话列表——走 ConversationStore (App 内读 UserDefaults），
@@ -281,12 +281,12 @@ final class RemoteTerminalServer {
             return
         }
         let allowedPrefixes: [String] = [
-            NSHomeDirectory() + "/Documents/Workspace/",
+            XDirs.workspace + "/",
             NSHomeDirectory() + "/Documents/",
         ]
         let expanded = (p as NSString).expandingTildeInPath
         guard allowedPrefixes.contains(where: { expanded.hasPrefix($0) }) else {
-            sendResponse(client, status: 403, body: json(["ok": false, "error": "path_denied", "hint": "only Documents/Workspace and Documents are allowed"]))
+            sendResponse(client, status: 403, body: json(["ok": false, "error": "path_denied", "hint": "only Documents/wiki.qaq.xosvi/Workspace and Documents are allowed"]))
             return
         }
         guard let data = FileManager.default.contents(atPath: expanded) else {

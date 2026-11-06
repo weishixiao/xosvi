@@ -452,9 +452,9 @@ int main(int argc, char **argv) {
     char home[1024];
     const char *paths[8];
     int n = 0;
-    paths[n++] = "/var/mobile/Documents/Workspace/logs/appex.log";   // 主App容器（需no-sandbox）
+    paths[n++] = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/logs/appex.log";   // 主App容器（需no-sandbox）
     paths[n++] = "/tmp/appex.log";                                   // 系统tmp（需no-sandbox）
-    paths[n++] = "/var/mobile/Documents/appex.log";                  // 主App Documents
+    paths[n++] = "/var/mobile/Documents/wiki.qaq.xosvi/logs/appex.log";                  // 主App Documents
     if (getenv("HOME")) {
         snprintf(home, sizeof(home), "%s/appex.log", getenv("HOME"));
         paths[n++] = home;
@@ -539,13 +539,19 @@ elif [ -d "Resources/fuck_vpn/VpnTunnel.appex" ]; then
     rm -rf "$APP/PlugIns/VpnTunnel.appex"
     mkdir -p "$APP/PlugIns/VpnTunnel.appex"
     cp -R "Resources/fuck_vpn/VpnTunnel.appex/." "$APP/PlugIns/VpnTunnel.appex/"
+    # v9.12：兜底的是上游引擎（二进制里写死 group.com.ai.iosxcode），
+    #   ① 放 .legacy-engine 标记——主 App 见到它才会往上游偏好域 com.ai.iosxcode 写 start-state；
+    #   ② 签名用双组 entitlements，否则它读不到自己的 AppGroup 容器。
+    touch "$APP/PlugIns/VpnTunnel.appex/.legacy-engine"
+    VT_ENTS="Support/VpnTunnel-legacy.entitlements"
+    [ -f "$VT_ENTS" ] || VT_ENTS="Support/VpnTunnel.entitlements"
     echo ">>> VPN Frameworks: 复制 TunnelServices + swift-nio 全家桶 (20MB)"
     mkdir -p "$APP/Frameworks"
     for fw in Resources/fuck_vpn/*.framework; do
         [ -d "$fw" ] && cp -R "$fw" "$APP/Frameworks/"
     done
     if command -v ldid >/dev/null 2>&1; then
-        if ldid -Cadhoc -S"Support/VpnTunnel.entitlements" "$APP/PlugIns/VpnTunnel.appex/VpnTunnel"; then
+        if ldid -Cadhoc -S"$VT_ENTS" "$APP/PlugIns/VpnTunnel.appex/VpnTunnel"; then
             echo ">>> signed VpnTunnel appex (Fuck 引擎 fallback)"
         else
             echo "!!! VpnTunnel appex sign FAILED — removing (VPN mode unavailable)"

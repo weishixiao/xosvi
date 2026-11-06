@@ -326,7 +326,7 @@ final class PluginManager {
 
     func scan() {
 
-        let pluginDir = NSHomeDirectory().appending("/Documents/Workspace/plugins")
+        let pluginDir = XDirs.workspace + "/plugins"
 
         try? FileManager.default.createDirectory(atPath: pluginDir, withIntermediateDirectories: true)
 
@@ -564,7 +564,7 @@ final class CrashReproTool: MCPTool {
 
 
 
-        static NSString *kCrashLog = @"/var/mobile/Documents/Workspace/crash_repro_\(bundleId).log";
+        static NSString *kCrashLog = @"/var/mobile/Documents/wiki.qaq.xosvi/Workspace/crash_repro_\(bundleId).log";
 
 
 
@@ -654,7 +654,7 @@ final class CrashReproTool: MCPTool {
 
         // 输出到工作区
 
-        let outputPath = NSHomeDirectory().appending("/Documents/Workspace/crash_repro_\(bundleId).x")
+        let outputPath = XDirs.workspace + "/crash_repro_\(bundleId).x"
 
         try? template.write(toFile: outputPath, atomically: true, encoding: .utf8)
 
@@ -766,12 +766,12 @@ enum ProcessHelper {
 
     /// 启动 App：优先 SBSLaunchApplicationWithIdentifier (需 frontboard/springboard entitlements），
     /// failed 回退 LSApplicationWorkspace（主 App 有 backboardd.launchapplications），再回退 openURL，
-    /// 再 failed 返回提示。v6.1.5-14f：加 LSWorkspace 兜底 + 代开日志（/var/mobile/Documents/hud.log）
+    /// 再 failed 返回提示。v6.1.5-14f：加 LSWorkspace 兜底 + 代开日志（/var/mobile/Documents/wiki.qaq.xosvi/logs/hud.log）
     @discardableResult
     static func launchApp(bundleId: String) -> (Bool, String) {
         // v6.1.5-14f：代开日志——HUD 点菜单→主 App 代开的目标/结果，供真机诊断
         let logLine = "\(Date()): main-open bid=\(bundleId)\n"
-        let logURL = URL(fileURLWithPath: "/var/mobile/Documents/hud.log")
+        let logURL = URL(fileURLWithPath: "/var/mobile/Documents/wiki.qaq.xosvi/logs/hud.log")
         if let h = try? FileHandle(forWritingTo: logURL) { h.seekToEndOfFile(); h.write(logLine.data(using: .utf8)!); try? h.close() }
         else { try? logLine.data(using: .utf8)?.write(to: logURL, options: .atomic) }
 
@@ -833,7 +833,7 @@ enum ProcessHelper {
 
     /// 写 JSON 配置文件到工作区
     static func writeWorkspaceConfig(_ fileName: String, dict: [String: Any]) -> Bool {
-        let dir = "/var/mobile/Documents/Workspace"
+        let dir = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace"
         if !FileManager.default.fileExists(atPath: dir) {
             try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         }
@@ -848,7 +848,7 @@ enum ProcessHelper {
     }
 
     static func removeWorkspaceConfig(_ fileName: String) -> Bool {
-        let path = "/var/mobile/Documents/Workspace/" + fileName
+        let path = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/" + fileName
         guard FileManager.default.fileExists(atPath: path) else { return true }
         do {
             try FileManager.default.removeItem(atPath: path)
@@ -1154,7 +1154,7 @@ final class HookApplyTool: MCPTool {
             "status": "applied",
             "bundle_id": bundleId,
             "app": app.name,
-            "config_path": "/var/mobile/Documents/Workspace/hook_config.json",
+            "config_path": "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/hook_config.json",
             "config": config,
             "injected": true,
             "note": relaunchNote + "; restart App after changing config (no re-injection needed)"

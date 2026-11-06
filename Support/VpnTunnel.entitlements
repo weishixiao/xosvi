@@ -18,7 +18,7 @@
 	<string>com.xosvi.app.VpnTunnel</string>
 	<key>com.apple.security.application-groups</key>
 	<array>
-		<string>group.com.ai.iosxcode</string>
+		<string>group.wiki.qaq.xosvi</string>
 	</array>
 	<key>com.apple.security.network.client</key>
 	<true/>

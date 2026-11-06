@@ -19,7 +19,7 @@ public final class MitmProxy {
     public let certDir: String
     public let logDir: String
 
-    public init(workspace: String = "/var/mobile/Documents/Workspace") {
+    public init(workspace: String = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace") {
         certDir = workspace + "/certs"
         logDir = workspace + "/network_capture/mitm"
     }

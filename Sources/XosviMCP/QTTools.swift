@@ -439,7 +439,7 @@ final class LogCollectTool: MCPTool {
         let type = (params["type"] as? String) ?? "all"
         let lines = (params["lines"] as? Int) ?? 200
 
-        let workspace = NSHomeDirectory().appending("/Documents/Workspace/logs")
+        let workspace = XDirs.workspace + "/logs"
         try? FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
         let timestamp = ISO8601DateFormatter().string(from: Date())
         var collected: [String: String] = [:]
@@ -468,7 +468,7 @@ final class LogCollectTool: MCPTool {
 
         // 注入日志
         if type == "all" || type == "injection" {
-            let injectionLog = NSHomeDirectory().appending("/Documents/Workspace/injection.log")
+            let injectionLog = XDirs.workspace + "/injection.log"
             if FileManager.default.fileExists(atPath: injectionLog) {
                 if let content = try? String(contentsOfFile: injectionLog) {
                     let tail = String(content.components(separatedBy: .newlines).suffix(lines).joined(separator: "\n"))
@@ -514,7 +514,7 @@ final class NetworkCaptureTool: MCPTool {
         let bundleId = params["bundle_id"] as? String ?? ""
         let limit = (params["limit"] as? Int) ?? 50
 
-        let captureDir = NSHomeDirectory().appending("/Documents/Workspace/network_capture")
+        let captureDir = XDirs.workspace + "/network_capture"
         try? FileManager.default.createDirectory(atPath: captureDir, withIntermediateDirectories: true)
         // v3.1.71：抓包会话标记——start OK写入、stop 删除，用于区分"没开抓包"vs"开了没流量"
         let activeMarker = captureDir.appending("/active_session.txt")

@@ -30,9 +30,9 @@
 - (UIView *)_firstResponder;
 @end
 
-// v2.9.259: 文件日志——远程 fs.read 可直接读 /var/mobile/Documents/Workspace/control_agent.log，
+// v2.9.259: 文件日志——远程 fs.read 可直接读 /var/mobile/Documents/wiki.qaq.xosvi/Workspace/control_agent.log，
 // 定位 dylib 是否加载/keepalive hook 是否成功/4789 bind 是否失败
-#define CA_LOG_PATH "/var/mobile/Documents/Workspace/control_agent.log"
+#define CA_LOG_PATH "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/control_agent.log"
 static void caLog(NSString *msg) {
     NSLog(@"[ControlAgent] %@", msg);
     @try {

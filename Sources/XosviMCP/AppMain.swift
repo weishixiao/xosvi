@@ -42,6 +42,9 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
         // 判定：沙盒标记消失但 Keychain 见证还在 = 卸载后重装 → 清空全部数据。
         FreshInstallReset.runIfNeeded()
 
+        // v9.12：数据目录独立化——建 <Documents>/wiki.qaq.xosvi 全套目录并迁移旧数据（只跑一次）。
+        //   必须在 Workspace.ensure() / 各 Store 首次落盘之前。
+        XDirs.bootstrap()
         Workspace.ensure()
         Workspace.ensureBundledTweaks()  // v2.9.62：把内置 dylib（MemoryTweak 等）复制到工作区，AI 可直接 artifact.find 定位
         ConfigMigration.migrateIfNeeded()  // v2.9.126：配置 schema 迁移（防模块脱节：升级后旧配置结构自动搬运）

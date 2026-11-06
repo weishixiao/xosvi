@@ -106,7 +106,7 @@ enum TrustEnabler {
                     detail = "注入成功（耗时 \(cost)s）——现在可以连接 VPN 了"
                 } else {
                     injectState = .failed("exit 非 0（耗时 \(cost)s）")
-                    detail = "注入失败（耗时 \(cost)s）——详情看 /var/mobile/Documents/kfd_helper.log；保持手机空闲 30s 后再试一次"
+                    detail = "注入失败（耗时 \(cost)s）——详情看 /var/mobile/Documents/wiki.qaq.xosvi/logs/kfd_helper.log；保持手机空闲 30s 后再试一次"
                 }
                 DispatchQueue.main.async { completion(ok, detail) }
             }
@@ -211,7 +211,7 @@ enum TrustEnabler {
 
     /// 用 posix_spawn 启动一个 helper（kfd_helper 免 root，漏洞自提权）。
     /// kfd_helper 自身在 main 里 freopen 把 stderr 重定向到
-    /// /var/mobile/Documents/kfd_helper.log —— 每步诊断(kopen/patchfind/kalloc)都在这。
+    /// /var/mobile/Documents/wiki.qaq.xosvi/logs/kfd_helper.log —— 每步诊断(kopen/patchfind/kalloc)都在这。
     /// 带 90s 超时（kfd kopen 提权可能 10–60s；超时杀掉避免 UI 永久卡死）。
     private static func spawn(_ path: String, args: [String]) -> Bool {
         var pid: pid_t = 0
@@ -243,7 +243,7 @@ enum TrustEnabler {
             if r == pid { break }
             if DispatchTime.now() > deadline {
                 kill(pid, SIGKILL); waitpid(pid, &status, 0)
-                NSLog("TrustEnabler: kfd_helper 超时被终止 — 看 /var/mobile/Documents/kfd_helper.log 定位卡点")
+                NSLog("TrustEnabler: kfd_helper 超时被终止 — 看 /var/mobile/Documents/wiki.qaq.xosvi/logs/kfd_helper.log 定位卡点")
                 return false
             }
             usleep(200_000)

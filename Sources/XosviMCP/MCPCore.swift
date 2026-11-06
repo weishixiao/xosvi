@@ -2301,9 +2301,10 @@ final class PromptModeTool: MCPTool {
 // MARK: - 工作区
 
 public enum Workspace {
+    /// v9.12：工作区固定到 App 自己的数据根下（XDirs），不再落在沙盒容器的 Documents/Workspace，
+    /// 免得二改版与上游 TrollAgent 装在同一台设备时共用同一份工作区。
     public static var root: URL {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appendingPathComponent("Workspace", isDirectory: true)
+        URL(fileURLWithPath: XDirs.workspace, isDirectory: true)
     }
 
     public static func ensure() {

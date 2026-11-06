@@ -122,7 +122,7 @@ final class SystemPrompts {
               verified:true tools are tested and safe.
             - Self-evolution: can load external dylibs via inject load_dylib (names start custom. / user.); cannot write
               shell/root/inject/delete dangerous operations.
-            - Workspace: /var/mobile/Documents/Workspace — see ENVIRONMENT prompt for artifact / shell conventions.
+            - Workspace: /var/mobile/Documents/wiki.qaq.xosvi/Workspace — see ENVIRONMENT prompt for artifact / shell conventions.
             """,
             extraCoreTools: []),
         Prompt(
@@ -492,7 +492,7 @@ final class SystemPrompts {
       (swift-inspect/sysdiagnose 等)，常用命令(chmod/ls/cp/launchctl)不会出现在目录列表里——但【直接路径访问正常】。
       确认某命令是否存在，用 `command -v <名>` 或 `ls -la /usr/bin/<名>` / `/usr/sbin/<名>`；【不要】用 `ls <目录>` 枚举
       判断系统缺命令——那会误判。launchctl 在此环境位于 /usr/bin/launchctl。
-    - iOS↔Alpine AUTO-BIND (v4.1.0): Alpine commands auto-mount iOS paths /var/mobile/Documents/Workspace→/ios_workspace,
+    - iOS↔Alpine AUTO-BIND (v4.1.0): Alpine commands auto-mount iOS paths /var/mobile/Documents/wiki.qaq.xosvi/Workspace→/ios_workspace,
       /var/containers→/ios_containers, /System→/ios_system(只读); Alpine reads/writes them directly, no 2MB limit.
       /var/mobile 整棵【不】自动绑定(自引用→内核污染→崩溃); 读 App 数据容器用 bind_app bundle_id:<id>→/ios_data_<app>
       (只读), 写用 bind_app_write(先自动备份 Documents+Library 到工作区 backups/)。auto-bind 只改命令行不改脚本内
@@ -525,7 +525,7 @@ final class SystemPrompts {
       (receipt / validate / IAPReceipt / transactionReceipt) — the literal "StoreKit" rarely appears in the binary.
       Work on the binary via the auto-bound bundle (/ios_containers/.../xxx.app binary) or a bind_app'd data container
       (/ios_data_<app>); decrypt (cryptid=0) only the encrypted main binary when needed.
-    - Workspace = /var/mobile/Documents/Workspace (artifact list/read). Fetch web/GitHub via web.fetch (falls back provider reader → Jina → local).
+    - Workspace = /var/mobile/Documents/wiki.qaq.xosvi/Workspace (artifact list/read). Fetch web/GitHub via web.fetch (falls back provider reader → Jina → local).
 
     === REVERSE / BINARY ANALYSIS METHODOLOGY (v4.3.31 knowledge base) ===
     执行方式(v4.3.66): 遇"分析二进制/插件安不安全/逆向"类问题——【先自己搜】1) `knowledge` command=search 查内置知识库(关键词: 逆向分析 / 插件安全, 已预置方法论+风险判定条目); 2) `web.search` + `web.fetch` 查资料与已知结论(如 "Mach-O 逆向 分析方法"、"iOS 二进制 后门 检测")。拿到方法后【组合基础工具自主分析】(inject binary_symbols / shell / package / app encrypt_info), 不依赖封装好的组合工具。

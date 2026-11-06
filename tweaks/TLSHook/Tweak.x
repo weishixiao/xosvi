@@ -1,6 +1,6 @@
 // TLSHook v0.1 — TLS 明文探针（抓自研网络栈 App 的加密流量）
 // 原理：fishhook 重绑 BoringSSL 的 SSL_read / SSL_write，把解密后的明文
-// 按连接(SSL* 指针)落盘到 /var/mobile/Documents/Workspace/network_capture/tls/
+// 按连接(SSL* 指针)落盘到 /var/mobile/Documents/wiki.qaq.xosvi/Workspace/network_capture/tls/
 // 用途：NetworkTweak 只 hook NSURLSession，抓不到自研栈（小红书/抖音等）。
 //       本探针在 TLS 层拿明文，先验证"能不能拿到数据"，再迭代做 HTTP 解析。
 
@@ -8,7 +8,7 @@
 #import <time.h>
 #import "fishhook.h"
 
-static NSString *kTlsDir = @"/var/mobile/Documents/Workspace/network_capture/tls";
+static NSString *kTlsDir = @"/var/mobile/Documents/wiki.qaq.xosvi/Workspace/network_capture/tls";
 static dispatch_queue_t g_tlsQueue = NULL;
 static NSMutableDictionary *g_connFiles = nil;   // @(sslPtr) -> NSFileHandle
 static NSMutableDictionary *g_connSizes = nil;   // @(sslPtr) -> NSNumber(bytes)

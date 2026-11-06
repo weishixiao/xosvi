@@ -97,7 +97,7 @@ static void cap_dump(void) {
 
 // 从 argv[0] 推导 App bundle 路径：<bundle>/bin/python3 → <bundle>
 static void derive_bundle(const char *argv0, char *buf, size_t size) {
-    snprintf(buf, size, "%s", (argv0 && argv0[0]) ? argv0 : "/var/mobile/Documents/Workspace/Xosvi.app");
+    snprintf(buf, size, "%s", (argv0 && argv0[0]) ? argv0 : "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/Xosvi.app");
     char *p = strrchr(buf, '/'); if (p) *p = '\0';  // .../Xosvi.app/bin
     p = strrchr(buf, '/'); if (p) *p = '\0';        // .../Xosvi.app
 }

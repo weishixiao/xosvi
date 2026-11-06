@@ -42,7 +42,7 @@ add_dir() {
 }
 add_dir "$ROOTD_PRIMARY_DIR"
 for d in $ROOTD_EXTRA_DIRS; do add_dir "$d"; done
-add_dir /var/mobile/Documents/Rootd
+add_dir /var/mobile/Documents/wiki.qaq.xosvi/Rootd
 add_dir /var/mobile/Library/Rootd
 
 LIVE=""
@@ -50,7 +50,7 @@ for d in $DIRS; do
 	[ -d "$d" ] && LIVE="$LIVE $d"
 done
 if [ -z "$LIVE" ]; then
-	mkdir -p /var/mobile/Documents/Rootd 2>/dev/null && LIVE=" /var/mobile/Documents/Rootd"
+	mkdir -p /var/mobile/Documents/wiki.qaq.xosvi/Rootd 2>/dev/null && LIVE=" /var/mobile/Documents/wiki.qaq.xosvi/Rootd"
 fi
 [ -z "$LIVE" ] && exit 1
 

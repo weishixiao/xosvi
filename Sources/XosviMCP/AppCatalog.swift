@@ -320,7 +320,7 @@ final class AppCatalog {
         let fm = FileManager.default
         let tempDirs = [
             NSHomeDirectory() + "/tmp",
-            NSHomeDirectory() + "/Documents/Workspace"
+            XDirs.workspace
         ]
         let cutoff = Date().addingTimeInterval(-3*24*3600) // 3天前
         for dir in tempDirs {

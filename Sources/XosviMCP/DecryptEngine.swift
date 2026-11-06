@@ -603,7 +603,7 @@ enum DecryptEngine {
         basicDiag["task_dyld_variants"] = dyldDiag
 
         // —— 准备输出目录 ——
-        let workspace = NSHomeDirectory().appending("/Documents/Workspace/decrypted")
+        let workspace = XDirs.workspace + "/decrypted"
         try? FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
         let plist = NSDictionary(contentsOfFile: app.path + "/Info.plist")
         let execName = (plist?["CFBundleExecutable"] as? String) ?? "App"
@@ -772,7 +772,7 @@ enum DecryptEngine {
     private static func decryptViaControlAgent(app: AppCatalog.AppEntry, bundleId: String,
                                                pid: pid_t, launchErrors: [[String: Any]]) -> DecryptResult {
         // 0. 准备输出目录 + 复制 bundle (同主流程）
-        let workspace = NSHomeDirectory().appending("/Documents/Workspace/decrypted")
+        let workspace = XDirs.workspace + "/decrypted"
         try? FileManager.default.createDirectory(atPath: workspace, withIntermediateDirectories: true)
         let plist = NSDictionary(contentsOfFile: app.path + "/Info.plist")
         let execName = (plist?["CFBundleExecutable"] as? String) ?? "App"
@@ -945,13 +945,13 @@ enum ZipStorer {
             // v2.9.270：系统 zip 结果写盘诊断 (Xosvi 内 NSLog 不可达，写文件可远程读）
             let zipSize = (try? FileManager.default.attributesOfItem(atPath: zipPath)[.size] as? Int) ?? -1
             let diag = "zip_exists=1 zcode=\(zcode) zout=\(String(zout.prefix(300))) zipSize=\(zipSize)"
-            try? diag.write(toFile: "/var/mobile/Documents/Workspace/zip_diag.log", atomically: true, encoding: .utf8)
+            try? diag.write(toFile: "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/zip_diag.log", atomically: true, encoding: .utf8)
             if zcode == 0, FileManager.default.fileExists(atPath: zipPath) {
                 return true
             }
             NSLog("[ZipStorer] 系统 zip failed(\(zcode)): \(zout) 回退 ZipStorer")
         } else {
-            try? "zip_exists=0".write(toFile: "/var/mobile/Documents/Workspace/zip_diag.log", atomically: true, encoding: .utf8)
+            try? "zip_exists=0".write(toFile: "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/zip_diag.log", atomically: true, encoding: .utf8)
         }
 
         var files: [(rel: String, abs: String)] = []

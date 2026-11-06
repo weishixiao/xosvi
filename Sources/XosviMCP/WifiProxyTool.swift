@@ -28,7 +28,7 @@ final class WifiProxyExecTool: MCPTool {
     )
 
     private let plistPath = "/var/preferences/SystemConfiguration/preferences.plist"
-    private let backupDir = "/var/mobile/Documents/Workspace/wifi_proxy_backup"
+    private let backupDir = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/wifi_proxy_backup"
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
         guard let command = params["command"] as? String else {

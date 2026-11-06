@@ -5,12 +5,12 @@ import UIKit
 //
 // 在 Xosvi 内原生实现"设备端编译桥" (此前是独立injected dylib 的 TMBuildAgent 方案）。
 // 工具链约定 (用户手动放置到工作区，符合"编译依赖可手动下载/删除"）：
-//   Documents/Workspace/toolchain/
+//   Documents/wiki.qaq.xosvi/Workspace/toolchain/
 //     bin/clang, bin/ld, bin/make, bin/perl, bin/ldid
 //     theos/                 —— 完整 Theos (makefiles、lib、bin）
 //     sdk/iPhoneOS*.sdk      —— iOS SDK 头文件
 // 工程约定 (与 project.generate_tweak 一致）：
-//   Documents/Workspace/projects/<name>/  (Makefile + Tweak.x + <name>.plist)
+//   Documents/wiki.qaq.xosvi/Workspace/projects/<name>/  (Makefile + Tweak.x + <name>.plist)
 
 /// 进程执行结果
 struct BuildProcessResult {

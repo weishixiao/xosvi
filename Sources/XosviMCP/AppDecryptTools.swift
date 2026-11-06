@@ -22,7 +22,7 @@ final class AppReplaceDecryptedTool: MCPTool {
             throw MCPError.failed("app not found: \(bundleId)")
         }
         let im = InjectionManager.shared
-        let workspace = "/var/mobile/Documents/Workspace"
+        let workspace = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace"
 
         // 1. 定位砸壳 ipa
         var ipaPath = params["ipa_path"] as? String ?? ""
@@ -388,7 +388,7 @@ final class AppEncryptInfoTool: MCPTool {
 final class AppInjectPackageTool: MCPTool {
     let definition = ToolDefinition(
         name: "app.inject_package",
-        summary: "改包名+注入 dylib+打包+TrollStore 静默安装成独立新 App(不碰原 App)。用于 App Store 原装 App(就地替换无效)。流程: 解压砸壳 ipa → 改 CFBundleIdentifier→new_bundle_id → insert_dylib 给主二进制加 dylib load command → 拷 dylib → 打包 ipa → trollstorehelper 安装。参数: ipa_path(源砸壳 ipa), dylib_path(你的 dylib 绝对路径, 如 MyHook.dylib), new_bundle_id(新包名, 如 com.xosvi.mypatched), new_name(显示名, 可选), auto_install(默认 true)。Example: app inject_package ipa_path:/var/mobile/Documents/Workspace/decrypted/xxx.ipa dylib_path:/var/mobile/Documents/Workspace/MyHook.dylib new_bundle_id:com.xosvi.mypatched",
+        summary: "改包名+注入 dylib+打包+TrollStore 静默安装成独立新 App(不碰原 App)。用于 App Store 原装 App(就地替换无效)。流程: 解压砸壳 ipa → 改 CFBundleIdentifier→new_bundle_id → insert_dylib 给主二进制加 dylib load command → 拷 dylib → 打包 ipa → trollstorehelper 安装。参数: ipa_path(源砸壳 ipa), dylib_path(你的 dylib 绝对路径, 如 MyHook.dylib), new_bundle_id(新包名, 如 com.xosvi.mypatched), new_name(显示名, 可选), auto_install(默认 true)。Example: app inject_package ipa_path:/var/mobile/Documents/wiki.qaq.xosvi/Workspace/decrypted/xxx.ipa dylib_path:/var/mobile/Documents/wiki.qaq.xosvi/Workspace/MyHook.dylib new_bundle_id:com.xosvi.mypatched",
         parameters: [
             "ipa_path": "源砸壳 ipa 绝对路径 (required)",
             "dylib_path": "要注入的 dylib 绝对路径 (required)",
@@ -406,7 +406,7 @@ final class AppInjectPackageTool: MCPTool {
         let newName = params["new_name"] as? String
         let autoInstall = (params["auto_install"] as? Bool) ?? true
         let im = InjectionManager.shared
-        let ws = "/var/mobile/Documents/Workspace"
+        let ws = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace"
         var workDir = ws + "/inject_pkg_" + String(Int(Date().timeIntervalSince1970))
 
         // 1. 解压砸壳 ipa (优先 App 内置 python3 真解压大 ipa, 失败回退 ZipExtractor)

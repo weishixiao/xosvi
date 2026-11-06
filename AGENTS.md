@@ -239,3 +239,41 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
 - 已知噪音：僵尸任务在 `icli proc list` 里仍有 `executable`/`name`/`pid` 三行，
   进程表判断不了死活；用 `sc_usage -l 1 <pid>`（root）看 `0 threads  0 context switches` 才是僵尸。
 
+## 数据根与目录独立化（v9.12）
+
+二改版与上游 TrollAgent 可能同机共存，所以「安装目录」「可写数据」「App Group」全部与上游分开。
+
+- **数据根：`/var/mobile/Documents/wiki.qaq.xosvi`**（Swift 侧唯一来源是 `Sources/XosviMCP/XDirs.swift`）：
+
+  | 子目录 | 内容 | 谁会写 |
+  |---|---|---|
+  | `Workspace/` | 工作区（artifact、shell 落盘、抓包库、证书、项目） | `Workspace.root`（`MCPCore.swift` 的 `public enum Workspace`） |
+  | `Rootd/` | root 通道落盘 | `Support/rootd/rootd.sh` |
+  | `logs/` | App 级日志 `hud.log` / `kfd_helper.log` / `appex.log` | App 与 appex |
+  | `work/` | 守护 helper 工作区 | `Support/xosvi/*.c` |
+
+- **多处字面量要一起改**：`MitmCore`、`VpnTunnel`（appex）、`Support/xosvi/*.c`、`Support/rootd/rootd.sh`、
+  `tools/kfd_helper.c`、`tweaks/*/Tweak.x`、`scripts/build-ipa.sh`（C 空壳 appex 日志）里都是写死的字符串，
+  它们各自是独立 target/进程，读不到 `XDirs`。改数据根时用
+  `grep -rn "Documents/Workspace\|Documents/Rootd" Sources Support tools scripts tweaks` 复核，别只改 Swift。
+- **App Group：`group.wiki.qaq.xosvi`**（上游是 `group.com.ai.iosxcode`）。三处 entitlements 必须一致：
+  `Support/Xosvi.entitlements`、`Support/VpnTunnel.entitlements`、`vpnxcode/entitlements/VpnTunnel.entitlements`。
+  vpnxcode 的 `project.yml` 里 `PRODUCT_BUNDLE_IDENTIFIER` 若也带组，同样要对齐。
+- **上游 appex 兜底专用**：`scripts/build-ipa.sh` 的 Fuck 1.8.5 分支会用 `Support/VpnTunnel-legacy.entitlements`
+  （两个组都给，因为那个成品二进制把旧组写死）签名，并在 appex 里放 `.legacy-engine` 标记；
+  `VpnManager` 只在见到该标记时才往上游偏好域 `com.ai.iosxcode` 写 `packet-tunnel.start-state`，平时不碰。
+- **首启一次性迁移**（`XDirs.bootstrap()`，`AppMain` 里在建 `Workspace` 之前调用）：
+  1. 本 App 沙盒容器的 `Documents/Workspace` → 新 `Workspace/`（**搬走**，这个目录只可能是我们的）；
+  2. `/var/mobile/Documents/Workspace`、`/var/mobile/Documents/Rootd`、散落的 `hud.log` 等 →
+     新目录（**只复制，绝不搬走上游的文件**，同名跳过）；
+  3. 旧 App Group 容器（按 `Shared/AppGroup/*/.com.apple.mobile_container_manager.metadata.plist` 里的
+     `MCMMetadataIdentifier` 找）→ 新组容器（新容器已有内容就不动）。
+  标记文件 `.migrated-v2` / `.migrated-appgroup` 保证只做一次；新组容器拿不到时不落标记，下次再试。
+- **改了 entitlements 必须重新签名并重装 App**（含 appex），否则新组容器 `containerURL` 返回 nil，
+  抓包库/证书全落在取不到的位置。装完自检：
+  `ls -la /var/mobile/Containers/Shared/AppGroup/ | grep -c xosvi`（应有新组容器）、
+  `ls /var/mobile/Documents/wiki.qaq.xosvi/Workspace`（应是工作区内容）。
+- **打包不走 Apelin 的 tweak 模板**：`apelin/build.sh` 出的是 `com.xosvi.daemon` deb；App 本体是
+  `scripts/build-ipa.sh` 出的 TrollStore IPA，两者互不影响，别混用。
+
+

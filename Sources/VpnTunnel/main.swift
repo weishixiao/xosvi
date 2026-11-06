@@ -21,7 +21,7 @@ import CHev
 // fix3cy25i：启动全链路写日志（appex 沙盒 no-sandbox，直接写主 App Workspace 日志目录），
 //   用于真机诊断 NE 拉起失败的确切环节。
 func appexLog(_ msg: String) {
-    let path = "/var/mobile/Documents/Workspace/logs/appex.log"
+    let path = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/logs/appex.log"
     let ts = String(Int(Date().timeIntervalSince1970))
     let line = "[\(ts)] \(msg)\n"
     if let h = fopen(path, "a") {
@@ -111,7 +111,7 @@ if rc != 0 { exit(rc) }
                 }
                 NSLog("[VpnTunnel] utun fd \(fd ?? -1)")
                 let yaml = Self.makeConfig(port: Int(self.socks5Port),
-                                           logPath: "/var/mobile/Documents/Workspace/logs/hev.log")
+                                           logPath: "/var/mobile/Documents/wiki.qaq.xosvi/Workspace/logs/hev.log")
                 self.stopping = false
                 // 直接调 hev 内核（CHev 桥接；config 用字符串内存版，避免写文件）
                 let bytes = Array(yaml.utf8)

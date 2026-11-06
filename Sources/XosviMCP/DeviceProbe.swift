@@ -405,7 +405,7 @@ final class DeviceProbe: ObservableObject {
     }
 
     static func workspaceSize() -> String {
-        let workspacePath = NSHomeDirectory().appending("/Documents/Workspace")
+        let workspacePath = XDirs.workspace
         guard let enumerator = FileManager.default.enumerator(atPath: workspacePath) else { return "0 B" }
         var total: Int64 = 0
         while let file = enumerator.nextObject() as? String {
