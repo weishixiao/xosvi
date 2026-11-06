@@ -1354,20 +1354,61 @@ final class InjectionManager {
                 skipProbe: Bool = false, allowMain: Bool = false,
                 smartFallback: Bool = true) throws -> [String: Any] {
         _ = dylibName
-        guard let app = AppCatalog.find(bundleId) else {
-            throw MCPError.failed("app not found: \(bundleId)")
-        }
-
         // v3.0.89：iOS 17+ 自动切换到静态injected (ct_bypass 已失效）
         let majorVer = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
+        let builtinDylib = dylibSourcePath ?? Bundle.main.path(forResource: "ControlAgent", ofType: "dylib") ?? ""
+
         if majorVer >= 17 {
-            // iOS 17+：用静态injected (insert_dylib + trollstorehelper 重装）
-            let dylibPath = dylibSourcePath ?? Bundle.main.path(forResource: "ControlAgent", ofType: "dylib") ?? ""
-            if dylibPath.isEmpty {
+            // v9.10：iOS 17+ 上 ct_bypass 失效，仍按原路先走「静态重打包 IPA + 重装 App」。
+            // 但那条链在越狱环境里常拿不到安装器（appinst 在、trollstorehelper 不一定），
+            // 失败时 injectStatic 返回 false —— 而调用方 doInject 以前无条件写 injected=true，
+            // 于是控制台显示"注入成功"，App 其实一点没改，完全用不了。
+            // 现在：静态重打包失败且处于越狱环境时，再用原地写入（直接改目标 Mach-O，不重装）
+            // 兜一次；两条都不成如实返回 injected=false，把两边的原因都带出来。
+            guard !builtinDylib.isEmpty else {
                 throw MCPError.failed("iOS 17+ requires dylib_path parameter (no built-in dylib found)")
             }
-            let (ok, msg) = injectStatic(bundleId: bundleId, dylibPath: dylibPath)
-            return ["injected": ok, "method": "static", "message": msg, "ios_version": majorVer]
+            let (ok, msg) = injectStatic(bundleId: bundleId, dylibPath: builtinDylib)
+            if ok {
+                return ["injected": true, "method": "static", "message": msg, "ios_version": majorVer]
+            }
+            var out: [String: Any] = ["injected": false, "method": "static",
+                                      "message": msg, "ios_version": majorVer]
+            if JBEnvironment.isJailbroken {
+                do {
+                    let r = try inPlaceEnable(bundleId: bundleId, dylibSourcePath: builtinDylib,
+                                              weakReference: weakReference, injectStrategy: injectStrategy,
+                                              preferredTarget: preferredTarget, skipProbe: skipProbe,
+                                              smartFallback: smartFallback)
+                    if r["injected"] as? Bool == true {
+                        var okResult = r
+                        okResult["method"] = "inplace"
+                        okResult["ios_version"] = majorVer
+                        okResult["static_error"] = msg
+                        return okResult
+                    }
+                    out["inplace_attempt"] = r
+                } catch {
+                    out["inplace_error"] = "\(error)"
+                }
+            }
+            return out
+        }
+
+        return try inPlaceEnable(bundleId: bundleId, dylibSourcePath: dylibSourcePath,
+                                 weakReference: weakReference, injectStrategy: injectStrategy,
+                                 preferredTarget: preferredTarget, skipProbe: skipProbe,
+                                 smartFallback: smartFallback)
+    }
+
+    /// 原地注入：直接改目标 App 的 Mach-O 加 LC_LOAD_DYLIB，不重打 IPA、不重装 App。
+    /// iOS 16 及以下一直是这条路；v9.10 起 iOS 17+ 越狱环境也先用它。
+    private func inPlaceEnable(bundleId: String, dylibSourcePath: String?,
+                               weakReference: Bool, injectStrategy: String,
+                               preferredTarget: String?, skipProbe: Bool,
+                               smartFallback: Bool) throws -> [String: Any] {
+        guard let app = AppCatalog.find(bundleId) else {
+            throw MCPError.failed("app not found: \(bundleId)")
         }
 
         guard binaryPath("insert_dylib") != nil,

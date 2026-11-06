@@ -205,6 +205,8 @@ struct ProviderDirectoryView: View {
     @State private var connecting: ProviderCardModel?
     /// 编辑已有账号的菜单（多个账号时先选哪个）
     @State private var managingAccounts: ProviderCardModel?
+    /// v9.10：账号删除的二次确认（模型列表整块下线后，删除入口挪到服务商菜单）
+    @State private var deletingConfig: ModelConfig?
 
     private let columns = [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
 
@@ -278,6 +280,13 @@ struct ProviderDirectoryView: View {
             ActionSheet(title: Text(card.title),
                         message: Text("这家有 \(card.configuredCount) 个账号"),
                         buttons: actionButtons(for: card))
+        }
+        // v9.10：删账号的二次确认。等 action sheet 收完再弹，避免同一帧里两个弹层抢present。
+        .alert(item: $deletingConfig) { cfg in
+            Alert(title: Text("删除账号"),
+                  message: Text("将删除「\(cfg.name)」（\(cfg.model)），删除后不可恢复。"),
+                  primaryButton: .destructive(Text("删除")) { store.delete(id: cfg.id) },
+                  secondaryButton: .cancel(Text("取消")))
         }
     }
     // MARK: 头部
@@ -445,6 +454,14 @@ struct ProviderDirectoryView: View {
         }
         for cfg in card.configs {
             buttons.append(.default(Text("编辑：\(cfg.name)")) { onEdit(cfg) })
+        }
+        // v9.10：模型列表整块从「模型 API」页删除后，删除入口挪到这里，否则只能加不能删。
+        // 一个账号一个删除项（不是一删一整家），删除前二次确认。
+        for cfg in card.configs {
+            buttons.append(.destructive(Text("删除：\(cfg.name)")) {
+                // 等 action sheet 收起再弹确认：同一帧里两个弹层会互相顶掉，确认框不出现
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { deletingConfig = cfg }
+            })
         }
         buttons.append(.cancel(Text("取消")))
         return buttons

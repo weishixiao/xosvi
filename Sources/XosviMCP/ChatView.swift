@@ -689,11 +689,8 @@ struct ChatView: View {
                 withAnimation { pendingAttachments.removeAll { $0.id == att.id } }
             }
 
-            // v9：输入框上方状态条——模型胶囊 + 余额胶囊（文档第三节「挂到输入框」）
-            // 形态 A/B 是独立一行；形态 C 由 BalanceChipBar 自己缩成右下角小字（仍是这一行，只是右对齐）
-            // 数据源是当前默认模型；点胶囊强制刷新，长按看详情/复制/隐藏。
-            BalanceChipBar(config: modelStore.defaultConfig)
-
+            // v9.10：按用户要求删除输入框上方的 API 余额查询模块（BalanceChipBar 整行移除）。
+            // 余额组件源码仍然保留（BalanceChipBar.swift / BalanceChecker.swift），只是不再挂到会话页。
             VStack(spacing: 6) {
                 ChatInputTextView(text: $inputText, onSend: { send() }, height: $inputHeight)
                     .frame(maxWidth: .infinity)
@@ -778,10 +775,7 @@ struct ChatView: View {
                 RoundedRectangle(cornerRadius: 22, style: .continuous)
                     .stroke(MonoChat.stroke, lineWidth: 0.8)
             )
-            // v9：余额形态 C（最轻）——小字挂在输入卡内右下角，不额外占一行
-            .overlay(alignment: .bottomTrailing) {
-                BalanceCornerOverlay(config: modelStore.defaultConfig)
-            }
+            // v9.10：按用户要求删除输入卡右下角的余额小字（BalanceCornerOverlay）
             .padding(.horizontal, 12)
             .padding(.top, 8)
 

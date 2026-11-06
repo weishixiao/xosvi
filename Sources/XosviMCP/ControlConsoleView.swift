@@ -23,6 +23,11 @@ struct ControlConsoleView: View {
     @State private var statusText = "未连接"
     @State private var controlPath = ""
     @State private var busy = false
+    /// v9.10：注入成功到 ControlAgent 应答之间有窗口期（App 启动 + 4789 监听约 1.5s）。
+    /// 这段里状态行显示"等待连接"并自动复查 3 次（2s / 3.5s / 5.5s），
+    /// 全都没应答才落回"未连接"——避免刚注入完就被判成没注入。
+    @State private var awaitingAgent = false
+    @State private var autoChecksLeft = 0
 
     // 应用选择
     @State private var showAppPicker = false
@@ -81,6 +86,8 @@ struct ControlConsoleView: View {
                 appName = app.name
                 UserDefaults.standard.set(app.bundleId, forKey: Self.bundleKey)
                 connected = false
+                awaitingAgent = false
+                autoChecksLeft = 0
                 statusText = "未注入（点「注入并打开」）"
             }
         }
@@ -480,10 +487,52 @@ struct ControlConsoleView: View {
 
     // MARK: - 动作
 
+    /// v9.10：所有 control 调用统一走这里。
+    /// dispatch 抛错时旧实现用 `try?` 吞成 [:]——控制台既看不到失败原因，又因为拿不到
+    /// "error" 键而把失败当成功（"注入成功、实际没注入"就是这条路径）。现在把抛错、
+    /// 顶层 ok=false 信封、嵌套 error 字典三种失败形态都折叠成同一个 "error" 字符串。
+    private static func callControl(_ params: [String: Any]) -> [String: Any] {
+        let raw: [String: Any]
+        do {
+            raw = try ToolRegistry.shared.dispatch(name: "control", params: params)
+        } catch {
+            return ["error": readable(error)]
+        }
+        return normalize(raw)
+    }
+
+    private static func readable(_ error: Error) -> String {
+        if let e = error as? MCPError { return e.description }
+        return "\(error)"
+    }
+
+    private static func normalize(_ raw: [String: Any]) -> [String: Any] {
+        var out: [String: Any] = (raw["data"] as? [String: Any]) ?? raw
+        if (raw["ok"] as? Bool) == false {
+            out["error"] = (raw["message"] as? String)
+                ?? (raw["code"] as? String)
+                ?? "调用失败"
+            if let code = raw["code"] { out["code"] = code }
+        }
+        // error 可能是字符串，也可能是 {code, reason, next_step} 字典
+        if let e = out["error"] as? String {
+            if e.isEmpty { out.removeValue(forKey: "error") }
+        } else if let e = out["error"] as? [String: Any] {
+            out["error"] = (e["reason"] as? String) ?? (e["message"] as? String)
+                ?? (e["code"] as? String) ?? "调用失败"
+        } else if out["error"] != nil {
+            out["error"] = String(describing: out["error"]!)
+        }
+        if out["error"] == nil, (out["ok"] as? Bool) == false {
+            out["error"] = "调用失败"
+        }
+        return out
+    }
+
     private func run(_ params: [String: Any], _ label: String, then: (([String: Any]) -> Void)? = nil) {
         busy = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = (try? ToolRegistry.shared.dispatch(name: "control", params: params)) ?? [:]
+            let r = Self.callControl(params)
             DispatchQueue.main.async {
                 busy = false
                 record(label, r)
@@ -516,15 +565,25 @@ struct ControlConsoleView: View {
         injecting = true
         statusText = "正在注入…"
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = (try? ToolRegistry.shared.dispatch(name: "control", params: ["command": "inject", "bundle_id": bundleId])) ?? [:]
+            let r = Self.callControl(["command": "inject", "bundle_id": bundleId])
             DispatchQueue.main.async {
                 record("注入 \(bundleId)", r)
                 if let err = r["error"] as? String {
                     injecting = false
+                    statusText = "未连接"
                     toast = "注入失败：\(err)"
                     return
                 }
+                // v9.10：注入接口如实返回 injected —— 没成功就不打开 App、不报"完成"
+                if let injected = r["injected"] as? Bool, injected == false {
+                    injecting = false
+                    statusText = "未连接"
+                    toast = "注入未生效，App 未改动"
+                    return
+                }
                 toast = "注入完成，正在打开 \(appName.isEmpty ? bundleId : appName)"
+                awaitingAgent = true
+                autoChecksLeft = 3
                 DispatchQueue.global(qos: .userInitiated).async {
                     let res = ProcessHelper.launchApp(bundleId: bundleId)
                     DispatchQueue.main.async {
@@ -543,7 +602,7 @@ struct ControlConsoleView: View {
     private func checkStatus() {
         busy = true
         DispatchQueue.global(qos: .userInitiated).async {
-            let r = (try? ToolRegistry.shared.dispatch(name: "control", params: ["command": "status"])) ?? [:]
+            let r = Self.callControl(["command": "status"])
             DispatchQueue.main.async {
                 busy = false
                 connected = (r["connected"] as? Bool) ?? false
@@ -554,9 +613,27 @@ struct ControlConsoleView: View {
                     controlPath = path
                 }
                 if connected {
+                    awaitingAgent = false
+                    autoChecksLeft = 0
                     let bid = (r["bundle_id"] as? String) ?? (r["app"] as? String) ?? ""
                     statusText = bid.isEmpty ? "已连接 ControlAgent" : "已连接 · \(bid)"
+                } else if awaitingAgent && autoChecksLeft > 0 {
+                    // 刚注入完的窗口期：ControlAgent 还没监听，等下一轮复查，不判定失败
+                    autoChecksLeft -= 1
+                    let waitReason = (r["error"] as? String) ?? ""
+                    statusText = waitReason.isEmpty
+                        ? "等待 ControlAgent 连接…"
+                        : "等待 ControlAgent 连接…（\(waitReason)）"
+                    if autoChecksLeft > 0 {
+                        let delay: Double = autoChecksLeft == 2 ? 1.5 : 2.0
+                        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { checkStatus() }
+                    } else {
+                        awaitingAgent = false
+                        statusText = "已注入但未连上：确认目标 App 已打开（或 App 启动即崩溃），再点一次状态"
+                    }
                 } else {
+                    awaitingAgent = false
+                    // v9.10：未连接是"未连接"，不是失败 toast——只是把原因写进状态行
                     statusText = (r["error"] as? String) ?? "未连接（先注入并打开目标 App）"
                 }
             }
@@ -568,7 +645,7 @@ struct ControlConsoleView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             var params: [String: Any] = ["command": "ui_tree"]
             if !bundleId.isEmpty { params["bundle_id"] = bundleId }
-            let r = (try? ToolRegistry.shared.dispatch(name: "control", params: params)) ?? [:]
+            let r = Self.callControl(params)
             let items = GhostRunner.tappables(r)
             let sig = GhostRunner.screenSignature(r)
             DispatchQueue.main.async {
@@ -596,7 +673,7 @@ struct ControlConsoleView: View {
         DispatchQueue.global(qos: .userInitiated).async {
             var params: [String: Any] = ["command": "screenshot"]
             if !bundleId.isEmpty { params["bundle_id"] = bundleId }
-            let r = (try? ToolRegistry.shared.dispatch(name: "control", params: params)) ?? [:]
+            let r = Self.callControl(params)
             let path = (r["path"] as? String) ?? ""
             let img = path.isEmpty ? nil : UIImage(contentsOfFile: path)
             DispatchQueue.main.async {

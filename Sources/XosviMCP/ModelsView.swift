@@ -107,6 +107,10 @@ struct ModelsView: View {
                         Label("本机工具桥（任何模型都能用）", systemImage: "point.3.connected.trianglepath.dotted")
                     }
                 }
+                // v9.10：按用户要求删除截图所指的模型列表功能块——原来这里是「默认 N 个」
+                // 分组标题 + 每个模型一张卡（…菜单 / > 进编辑）。这一整块连同分组标题一起移除：
+                // 模型的查看、编辑与新增统一走上面的「服务商目录」（onEdit / onBrowseModels），
+                // 需要恢复时把下面这段 ForEach 加回来即可。
                 if store.configs.isEmpty {
                     Section {
                         HStack {
@@ -121,29 +125,6 @@ struct ModelsView: View {
                             }
                             .padding(.vertical, 40)
                             Spacer()
-                        }
-                    }
-                } else {
-                    // v9.9：按用户要求删除「默认」分组区块——模型列表按分组平铺（组名一律走数据里的分组）
-                    let groups = groupedKeys()
-                    ForEach(groups, id: \.self) { g in
-                        Section(header: HStack {
-                            Text(g)
-                                .font(.subheadline.weight(.semibold))
-                            Spacer()
-                            Text(L10n.t("ui_155", count(in: g)))
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                        }) {
-                            ForEach(configs(in: g)) { cfg in
-                                ModelRow(config: cfg)
-                                    .contentShape(Rectangle())
-                                    .onTapGesture {
-                                        isNewModel = false
-                                        editing = cfg
-                                    }
-                            }
-                            .onDelete { offsets in delete(in: g, at: offsets) }
                         }
                     }
                 }

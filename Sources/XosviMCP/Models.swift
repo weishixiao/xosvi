@@ -394,6 +394,15 @@ final class ModelStore: ObservableObject {
         }
         save()
     }
+
+    /// v9.10：按 id 删除一个模型。模型列表整块从「模型 API」页移除后，删除入口改挂到
+    /// 「服务商目录」的账号管理菜单，避免只能加不能删。
+    @discardableResult
+    func delete(id: UUID) -> Bool {
+        guard let idx = configs.firstIndex(where: { $0.id == id }) else { return false }
+        delete(at: IndexSet(integer: idx))
+        return true
+    }
 }
 
 // MARK: - 模型列表获取与连接测试

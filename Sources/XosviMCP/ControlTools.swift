@@ -163,6 +163,25 @@ final class ControlAgentTools {
                 skipProbe: skipProbe,
                 allowMain: true
             )
+            // v9.10：成败以 InjectionManager 的真实结果为准。旧版无条件写 injected=true，
+            // enable 返回 injected=false（原地注入没写进去 / 静态重打包装不上）时控制台仍然
+            // 弹"注入完成，正在打开…"，用户看到的就是"提示注入成功、实际没注入、用不了"。
+            let injected = (result["injected"] as? Bool) ?? false
+            guard injected else {
+                let why = (result["message"] as? String)
+                    ?? (result["inplace_error"] as? String)
+                    ?? "injection did not take effect"
+                var fail: [String: Any] = [
+                    "error": "injection failed: \(why)",
+                    "injected": false,
+                    "bundle_id": bundleId,
+                    "dylib": dylibPath,
+                    "detail": result,
+                    "next_step": "看 detail 里的 message/inplace_error/ipa；越狱下原地注入失败时检查 App bundle 是否可写（属主 root 需先修 setuid/属主），否则在「注入与自动化」里手动恢复后再试"
+                ]
+                if let ipa = result["ipa"] as? String { fail["ipa"] = ipa }
+                return fail
+            }
             // v2.9.109：注入OK自动开启真后台保活 (目标 App + Xosvi 自身），
             // 防止目标 App 切后台被系统挂起导致 4789 断连
             postKeepAliveNotification(true)
@@ -171,6 +190,7 @@ final class ControlAgentTools {
                 "injected": true,
                 "bundle_id": bundleId,
                 "dylib": dylibPath,
+                "method": result["method"] as? String ?? "unknown",
                 "detail": result,
                 "keepalive": true,
                 "next_step": "after launching target App call control.status to confirm connection, then use control.ui_tree / control.tap etc.; real background keep-alive is on, target App won't suspend in background"

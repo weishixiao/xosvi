@@ -112,13 +112,24 @@ struct SettingsView: View {
                          subtitle: "\(ModelStore.shared.configs.count) 个 · \(modelProviderName())",
                          icon: "rectangle.stack.badge.person.crop", color: .blue,
                          destination: AnyView(ModelsView())),
-            // v6.9.10：删除"系统指令"设置入口——模式已由 AI 自动路由（见 SystemPrompts.routerPrompt）。
-            // 仅移除入口，SystemPromptsView / 7 个模式的提示词内容全部保留，
-            // 需要恢复时把本段加回即可。
+        ]))
+
+        // v9.10：合并功能块——「模型破甲提示词 / 知识库 / Agents 与 skills」三项原来散在
+        // 「模型」与「工具与管理」两个分组里，按用户要求合成一个独立功能块。
+        groups.append(SettingsGroup(header: "知识与指令", items: [
             SettingsItem(title: L10n.t("row_dev_instructions"),
                          subtitle: devInstructionsSubtitle(),
                          icon: "doc.text.magnifyingglass", color: .orange,
-                         destination: AnyView(DeveloperInstructionsView()))
+                         destination: AnyView(DeveloperInstructionsView())),
+            // v8.4：知识库——FTS5 索引管理 + 试检索
+            SettingsItem(title: "知识库",
+                         subtitle: "内置知识包 · FTS5 检索 · 试查询",
+                         icon: "books.vertical", color: .tmCyan,
+                         destination: AnyView(KnowledgeSettingsView())),
+            SettingsItem(title: L10n.t("row_agents"),
+                         subtitle: "隔离指令 · 工作流",
+                         icon: "person.3.fill", color: .indigo,
+                         destination: AnyView(AgentsAndSkillsView()))
         ]))
 
         // 网络与抓包（v3.3.1：独立分组，不依赖开发者模式——普通用户也能直接看到抓包入口）
@@ -167,11 +178,7 @@ struct SettingsView: View {
                              subtitle: "服务商 / 读取方式 / 测连 / 超时",
                              icon: "magnifyingglass", color: .gray,
                              destination: AnyView(SearchServicesView())),
-                // v8.4：知识库——FTS5 索引管理 + 试检索
-                SettingsItem(title: "知识库",
-                             subtitle: "内置知识包 · FTS5 检索 · 试查询",
-                             icon: "books.vertical", color: .tmCyan,
-                             destination: AnyView(KnowledgeSettingsView())),
+                // v9.10：知识库入口已并入上面的「知识与指令」分组
                 // v7.11.0：控制台——把 control 的 10 个子命令做成可点操作
                 SettingsItem(title: "控制台",
                          subtitle: "注入目标 · 界面元素 · 点按滑动 · 键入按键",
@@ -195,10 +202,7 @@ struct SettingsView: View {
                              subtitle: "绑定目录 · 命令执行 · 文件读写",
                              icon: "folder", color: .gray,
                              destination: AnyView(WorkspaceSettingsView())),
-                SettingsItem(title: L10n.t("row_agents"),
-                             subtitle: "隔离指令 · 工作流",
-                             icon: "person.3.fill", color: .indigo,
-                             destination: AnyView(AgentsAndSkillsView()))
+                // v9.10：「Agents 与 skills」入口已并入上面的「知识与指令」分组
                 // v9.4：按用户要求删除「本机知识库」入口——其导入能力并入上面的「知识库」页
                 // （KnowledgeSettingsView），KnowledgeBaseView 源码一并移除。
             ]
