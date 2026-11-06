@@ -63,6 +63,13 @@ struct ControlConsoleView: View {
 
     var body: some View {
         List {
+            // v10：页首大标题卡（与「环境」页同一套排版）
+            Section {
+                XHeroHeader(icon: "hand.tap",
+                            title: connected ? "已连接目标 App" : "未连接",
+                            subtitle: statusText,
+                            tint: connected ? .green : .primary)
+            }
             targetSection
             screenSection
             gestureSection
@@ -72,7 +79,7 @@ struct ControlConsoleView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("控制台")
         .navigationBarTitleDisplayMode(.inline)
-        .deepseekList()
+        .xGroupedPage()
         .onAppear {
             if bundleId.isEmpty, let last = UserDefaults.standard.string(forKey: Self.bundleKey) {
                 bundleId = last
@@ -137,7 +144,7 @@ struct ControlConsoleView: View {
                 Button {
                     showAppPicker = true
                 } label: {
-                    Text("选择 App").font(.caption)
+                    Text("选择 App").font(XType.note)
                 }
                 .buttonStyle(PlainButtonStyle())
                 .foregroundColor(DoubaoTheme.accent)
@@ -177,7 +184,7 @@ struct ControlConsoleView: View {
                     }
                     Spacer()
                     if controlPath.isEmpty {
-                        Image(systemName: "arrow.clockwise").font(.caption).foregroundColor(.secondary)
+                        Image(systemName: "arrow.clockwise").font(XType.note).foregroundColor(.secondary)
                     } else {
                         Text(controlPath).font(.system(size: 10, design: .monospaced)).foregroundColor(.secondary)
                     }
@@ -189,7 +196,7 @@ struct ControlConsoleView: View {
             sectionHeader("目标", "iphone.and.arrow.forward")
         } footer: {
             Text("ControlAgent 注入到目标 App 后，App 需在前台运行约 1.5 秒才能被读到界面。点按 / 滑动在多条路径可用时优先走 HID，不依赖注入。")
-                .font(.caption2)
+                .font(XType.section)
         }
     }
 
@@ -238,12 +245,12 @@ struct ControlConsoleView: View {
                         .clipShape(RoundedRectangle(cornerRadius: 10))
                     HStack(spacing: 16) {
                         Button("保存到相册") { saveShotToPhotos() }
-                            .font(.caption)
+                            .font(XType.note)
                         Button("复制路径") {
                             UIPasteboard.general.string = shotPath
                             toast = "已复制路径"
                         }
-                        .font(.caption)
+                        .font(XType.note)
                         Spacer()
                     }
                 }
@@ -252,7 +259,7 @@ struct ControlConsoleView: View {
             if !tappables.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("可点元素 · \(tappables.count) · 签名 \(treeSignature.prefix(6))")
-                        .font(.caption2).foregroundColor(.secondary)
+                        .font(XType.section).foregroundColor(.secondary)
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
                             ForEach(Array(tappables.prefix(40).enumerated()), id: \.offset) { _, item in
@@ -278,7 +285,7 @@ struct ControlConsoleView: View {
             sectionHeader("界面", "rectangle.dashed")
         } footer: {
             Text("元素坐标来自 ControlAgent 读到的界面树（归一化），点元素即点它的中心。界面变了要重新读取。")
-                .font(.caption2)
+                .font(XType.section)
         }
     }
 
@@ -358,7 +365,7 @@ struct ControlConsoleView: View {
                     }
                     HStack {
                         Text("开启后填完自动按回车")
-                            .font(.caption2).foregroundColor(.secondary)
+                            .font(XType.section).foregroundColor(.secondary)
                         Spacer()
                         smallButton("点输入框并填写") { fillByPlaceholder() }
                             .disabled(fillPlaceholder.isEmpty || fillText.isEmpty || busy)
@@ -376,7 +383,7 @@ struct ControlConsoleView: View {
             sectionHeader("键入与按键", "keyboard")
         } footer: {
             Text("「输入」只发给当前焦点：先在目标 App 里点一下输入框。按键走 ControlAgent 的 home/back/enter。")
-                .font(.caption2)
+                .font(XType.section)
         }
     }
 
@@ -396,7 +403,7 @@ struct ControlConsoleView: View {
                             UIPasteboard.general.string = lastResult
                             toast = "已复制结果"
                         } label: {
-                            Image(systemName: "doc.on.doc").font(.caption)
+                            Image(systemName: "doc.on.doc").font(XType.note)
                         }
                         .buttonStyle(PlainButtonStyle())
                     }
@@ -417,7 +424,7 @@ struct ControlConsoleView: View {
                                 .textSelection(.enabled)
                                 .padding(.top, 4)
                         }
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                     }
                 }

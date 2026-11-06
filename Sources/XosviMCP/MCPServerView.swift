@@ -24,6 +24,13 @@ struct MCPServerView: View {
 
     var body: some View {
         List {
+            // v10：页首大标题卡（与「环境」页同一套排版）
+            Section {
+                XHeroHeader(icon: "server.rack",
+                            title: "本地网关",
+                            subtitle: gateway.running ? "运行中 · \(gateway.address)" : "已停止")
+            }
+
             // MARK: 状态
             Section(header: Text("服务状态"),
                     footer: Text(gateway.running
@@ -34,24 +41,24 @@ struct MCPServerView: View {
                         .fill(gateway.running ? Color.green : Color.secondary.opacity(0.5))
                         .frame(width: 8, height: 8)
                     Text(gateway.running ? "运行中" : "已停止")
-                        .foregroundColor(gateway.running ? MonoChat.text : MonoChat.subtext)
+                        .foregroundColor(gateway.running ? Color.primary : Color.secondary)
                     Spacer()
                     Toggle("", isOn: Binding(
                         get: { gateway.running },
                         set: { on in setRunning(on) }
                     ))
                     .labelsHidden()
-                    .accentColor(MonoChat.text)
+                    .accentColor(Color.primary)
                 }
                 HStack {
                     Text("监听地址")
                     Spacer()
                     Text(gateway.running ? gateway.address : "—")
                         .font(.system(.footnote, design: .monospaced))
-                        .foregroundColor(MonoChat.subtext)
+                        .foregroundColor(Color.secondary)
                 }
                 if !health.isEmpty {
-                    Text(health).font(.caption).foregroundColor(MonoChat.subtext)
+                    Text(health).font(XType.note).foregroundColor(Color.secondary)
                 }
                 Button {
                     healthCheck()
@@ -89,10 +96,10 @@ struct MCPServerView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("允许局域网访问")
                         Text(bindLAN ? "0.0.0.0（同网段可连）" : "127.0.0.1（仅本机）")
-                            .font(.caption).foregroundColor(MonoChat.subtext)
+                            .font(XType.note).foregroundColor(Color.secondary)
                     }
                 }
-                .accentColor(MonoChat.text)
+                .accentColor(Color.primary)
             }
 
             // MARK: 令牌
@@ -105,7 +112,7 @@ struct MCPServerView: View {
                     Spacer()
                     Text(gateway.pairingCode)
                         .font(.system(.body, design: .monospaced))
-                        .foregroundColor(MonoChat.subtext)
+                        .foregroundColor(Color.secondary)
                 }
                 Button {
                     let r = MCPGatewayServer.shared.rotateTokens()
@@ -122,7 +129,7 @@ struct MCPServerView: View {
                     footer: Text("把下面这段粘进客户端的 MCP 配置（url 换成设备 IP，需先开局域网模式）。tools/list 会返回本机当前启用的全部工具。")) {
                 Text(configSnippet)
                     .font(.system(size: 11, design: .monospaced))
-                    .foregroundColor(MonoChat.secondaryText)
+                    .foregroundColor(Color.secondary)
                     .textSelection(.enabled)
                 Button {
                     UIPasteboard.general.string = configSnippet
@@ -135,15 +142,13 @@ struct MCPServerView: View {
             // MARK: 说明
             Section(header: Text("说明")) {
                 Text("端点：POST / 发 JSON-RPC（initialize / tools/list / tools/call）；GET /sse 为流式通道；GET /health 免令牌探活；POST /pair 用配对码换令牌。")
-                    .font(.caption).foregroundColor(MonoChat.subtext)
+                    .font(XType.note).foregroundColor(Color.secondary)
                 if !toast.isEmpty {
-                    Text(toast).font(.caption).foregroundColor(MonoChat.secondaryText)
+                    Text(toast).font(XType.note).foregroundColor(Color.secondary)
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .listRowSeparator(.hidden)
-        .deepseekList()
+        .xGroupedPage()
         .navigationTitle("MCP 服务")
         .onAppear {
             gateway.refresh()
@@ -156,9 +161,9 @@ struct MCPServerView: View {
 
     private func rowLabel(_ icon: String, _ title: String) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 17)).foregroundColor(MonoChat.text)
-                .frame(width: 26, alignment: .center)
-            Text(title).foregroundColor(MonoChat.text)
+            Image(systemName: icon).font(XType.rowIcon).foregroundColor(Color.primary)
+                .frame(width: 24, alignment: .center)
+            Text(title).font(XType.body).foregroundColor(Color.primary)
             Spacer()
         }
     }
@@ -169,8 +174,8 @@ struct MCPServerView: View {
                 Text(title)
                 Spacer()
                 Button(showToken ? "隐藏" : "显示") { showToken.toggle() }
-                    .font(.caption)
-                    .foregroundColor(MonoChat.subtext)
+                    .font(XType.note)
+                    .foregroundColor(Color.secondary)
                 Button {
                     UIPasteboard.general.string = value
                     toast = "\(title)已复制"
@@ -182,7 +187,7 @@ struct MCPServerView: View {
             Text(showToken ? (value.isEmpty ? "（未生成，点下方轮换）" : value)
                            : String(repeating: "•", count: min(max(value.count, 8), 32)))
                 .font(.system(size: 12, design: .monospaced))
-                .foregroundColor(MonoChat.subtext)
+                .foregroundColor(Color.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
         }

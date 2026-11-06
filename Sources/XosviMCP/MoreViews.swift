@@ -496,18 +496,14 @@ struct AgentsAndSkillsView: View {
     @State private var showAgentEditor = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // v2.9.77：美化头部
-            PageHeader(
-                icon: "person.2.fill",
-                title: L10n.t("page_agents"),
-                subtitle: L10n.t("page_agents_sub"),
-                colors: [Color(white: 0.35), Color(white: 0.55)]
-            )
-            .padding(.vertical, 8)
+        List {
+            Section {
+                XHeroHeader(icon: "person.2",
+                            title: L10n.t("page_agents"),
+                            subtitle: L10n.t("page_agents_sub"))
+            }
 
-            List {
-                Section(header: SettingSectionHeader(title: "Skills")) {
+            Section(header: SettingSectionHeader(title: "Skills")) {
                     if skills.isEmpty {
                         Text(L10n.t("ui_87"))
                             .foregroundColor(.secondary)
@@ -519,7 +515,7 @@ struct AgentsAndSkillsView: View {
                                         .font(.body)
                                         .foregroundColor(SkillStore.shared.isEnabled(s.name) ? .primary : .secondary)
                                     Text(s.summary.isEmpty ? s.instruction : s.summary)
-                                        .font(.caption)
+                                        .font(XType.note)
                                         .foregroundColor(.secondary)
                                         .lineLimit(2)
                                 }
@@ -555,7 +551,7 @@ struct AgentsAndSkillsView: View {
                                     Text(a.name)
                                         .font(.body)
                                     Text(a.systemPrompt)
-                                        .font(.caption)
+                                        .font(XType.note)
                                         .foregroundColor(.secondary)
                                         .lineLimit(2)
                                 }
@@ -567,15 +563,14 @@ struct AgentsAndSkillsView: View {
 
                 Section(header: SettingSectionHeader(title: "说明")) {
                     Text(L10n.t("ui_67"))
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                     Text(L10n.t("ui_2"))
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                 }
             }
-            .listStyle(.insetGrouped)
-        .deepseekList()
+            .xGroupedPage()
             .onAppear {
                 SkillStore.shared.seedIfEmpty()
                 reload()
@@ -586,8 +581,6 @@ struct AgentsAndSkillsView: View {
             }
             .sheet(isPresented: $showSkillEditor) { SkillEditorView() }
             .sheet(isPresented: $showAgentEditor) { AgentEditorView() }
-        }
-        .background(Color(.systemGroupedBackground))
         .navigationTitle(L10n.t("page_agents"))
         .navigationBarTitleDisplayMode(.inline)
     }

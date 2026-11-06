@@ -54,7 +54,7 @@ struct SkillEditorView: View {
                 }
                 Section(header: SettingSectionHeader(title: "说明")) {
                     Text(L10n.t("ui_66"))
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                 }
             }

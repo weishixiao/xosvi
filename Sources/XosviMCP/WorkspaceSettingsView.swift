@@ -14,25 +14,14 @@ struct WorkspaceSettingsView: View {
     var body: some View {
         List {
             Section {
-                HStack {
-                    Image(systemName: "folder")
-                        .font(.system(size: 16))
-                        .foregroundColor(.primary)
-                        .frame(width: 24)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("当前工作区")
-                            .font(.system(size: 15))
-                        Text(store.root)
-                            .font(.system(size: 11.5, design: .monospaced))
-                            .foregroundColor(.secondary)
-                            .lineLimit(2)
-                    }
-                    Spacer()
-                }
+                // v10：页首大标题卡（与「环境」页同一套排版）
+                XHeroHeader(icon: "folder",
+                            title: "当前工作区",
+                            subtitle: store.root)
                 Button {
                     showPicker = true
                 } label: {
-                    Label("选择文件夹", systemImage: "folder.badge.plus")
+                    Label("选择文件夹", systemImage: "folder.badge.plus").font(XType.body)
                 }
                 if store.boundRoot != nil {
                     Button(role: .destructive) {
@@ -40,14 +29,13 @@ struct WorkspaceSettingsView: View {
                         store.refresh()
                         toast = "已恢复默认工作区"
                     } label: {
-                        Label("恢复默认（App 工作区）", systemImage: "arrow.uturn.backward")
+                        Label("恢复默认（App 工作区）", systemImage: "arrow.uturn.backward").font(XType.body)
                     }
                 }
             } header: {
                 Text("绑定目录")
             } footer: {
-                Text("模型只能在这个目录里读写文件。默认是 App 沙盒内的 Workspace 文件夹。")
-                    .font(.caption2)
+                XFooterNote("模型只能在这个目录里读写文件。默认是 App 沙盒内的 Workspace 文件夹。")
             }
 
             Section {
@@ -56,9 +44,9 @@ struct WorkspaceSettingsView: View {
                     set: { WorkspaceStore.shared.enabled = $0 }
                 )) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("启用工作区工具")
+                        Text("启用工作区工具").font(XType.body)
                         Text("关闭后模型看不到 workspace 工具")
-                            .font(.caption).foregroundColor(.secondary)
+                            .font(XType.note).foregroundColor(.secondary)
                     }
                 }
                 Toggle(isOn: Binding(
@@ -66,28 +54,27 @@ struct WorkspaceSettingsView: View {
                     set: { WorkspaceStore.shared.fullAccess = $0 }
                 )) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("完全访问")
+                        Text("完全访问").font(XType.body)
                         Text("允许读写工作区之外的路径、执行任意命令")
-                            .font(.caption).foregroundColor(.secondary)
+                            .font(XType.note).foregroundColor(.secondary)
                     }
                 }
             } header: {
                 Text("权限")
             } footer: {
-                Text("默认只允许工作区内操作。开启完全访问后模型能读写整个 App 沙盒，风险自负。")
-                    .font(.caption2)
+                XFooterNote("默认只允许工作区内操作。开启完全访问后模型能读写整个 App 沙盒，风险自负。")
             }
 
             Section {
                 ForEach(Self.toolRows, id: \.0) { row in
                     HStack(spacing: 10) {
                         Image(systemName: row.2)
-                            .font(.system(size: 14))
-                            .foregroundColor(.secondary)
-                            .frame(width: 22)
-                        VStack(alignment: .leading, spacing: 1) {
-                            Text(row.0).font(.system(size: 14))
-                            Text(row.1).font(.system(size: 11)).foregroundColor(.secondary)
+                            .font(XType.rowIcon)
+                            .foregroundColor(.primary)
+                            .frame(width: 24)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(row.0).font(XType.body)
+                            Text(row.1).font(XType.note).foregroundColor(.secondary)
                         }
                         Spacer()
                     }
@@ -95,8 +82,7 @@ struct WorkspaceSettingsView: View {
             } header: {
                 Text("可用工具")
             } footer: {
-                Text("与 Kelivo 的 workspace 对齐。没有 Linux 沙盒——命令走 App 内置的原生工具链（busybox / python3 / bsdtar 等）。")
-                    .font(.caption2)
+                XFooterNote("与 Kelivo 的 workspace 对齐。没有 Linux 沙盒——命令走 App 内置的原生工具链（busybox / python3 / bsdtar 等）。")
             }
         }
         .navigationTitle("工作区")
@@ -111,7 +97,7 @@ struct WorkspaceSettingsView: View {
         .overlay(alignment: .bottom) {
             if let t = toast {
                 Text(t)
-                    .font(.footnote)
+                    .font(XType.note)
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(Capsule().fill(Color.black.opacity(0.78)))
                     .foregroundColor(.white)

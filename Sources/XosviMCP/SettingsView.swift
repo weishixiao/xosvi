@@ -456,7 +456,13 @@ struct SSHSettingsView: View {
 
     var body: some View {
         Form {
-            Section(header: Text(L10n.t("ui_137"))) {
+            Section {
+                XHeroHeader(icon: "terminal",
+                            title: "SSH 远程连接",
+                            subtitle: host.isEmpty ? "未填写主机" : "\(user.isEmpty ? "root" : user)@\(host)")
+            }
+
+            Section(header: SettingSectionHeader(title: L10n.t("ui_137"))) {
                 HStack {
                     Text(L10n.t("ui_20")).frame(width: 80, alignment: .leading)
                     TextField("如 192.168.1.100", text: $host)
@@ -476,7 +482,7 @@ struct SSHSettingsView: View {
                 }
             }
 
-            Section(header: Text(L10n.t("ui_131"))) {
+            Section(header: SettingSectionHeader(title: L10n.t("ui_131"))) {
                 HStack {
                     Text(L10n.t("ui_46")).frame(width: 80, alignment: .leading)
                     SecureField("密码", text: $password)
@@ -502,13 +508,15 @@ struct SSHSettingsView: View {
                 .foregroundColor(.blue)
             }
 
-            Section(header: Text(L10n.t("ui_24"))) {
+            Section(header: SettingSectionHeader(title: L10n.t("ui_24"))) {
                 Text(L10n.t("ui_140"))
-                    .font(.footnote)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
             }
         }
+        .xGroupedPage()
         .navigationTitle("SSH 远程连接")
+        .navigationBarTitleDisplayMode(.inline)
         .onAppear {
             let defaults = UserDefaults.standard
             host = defaults.string(forKey: "ssh_host") ?? ""

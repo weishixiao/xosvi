@@ -34,13 +34,18 @@ struct SearchServicesView: View {
 
     var body: some View {
         List {
+            // v10：页首大标题卡（与「环境」页同一套排版）
+            Section {
+                XHeroHeader(icon: "magnifyingglass",
+                            title: "搜索服务",
+                            subtitle: "联网搜索与网页正文抓取")
+            }
             servicesSection
             fetchModeSection
             generalSection
             testSection
         }
-        .listStyle(.insetGrouped)
-        .deepseekList()
+        .xGroupedPage()
         .navigationTitle("搜索服务")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -134,7 +139,7 @@ struct SearchServicesView: View {
             sectionHeader("搜索服务商")
         } footer: {
             Text("点行进入编辑；右侧 ⋯ 可测连 / 设为当前 / 删除。当前服务商决定 web.search 默认走哪家，失败仍会自动回退到其它可用引擎。至少保留一个。")
-                .font(.caption2)
+                .font(XType.section)
         }
     }
 
@@ -149,10 +154,10 @@ struct SearchServicesView: View {
                         .font(.system(size: 16))
                         .foregroundColor(.primary)
                         .frame(width: 24)
-                    Text("读取方式").foregroundColor(.primary)
+                    Text("读取方式").font(XType.body).foregroundColor(.primary)
                     Spacer()
                     Text(cfg.webFetchModeLabel)
-                        .font(.system(size: 14))
+                        .font(XType.body)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                     Image(systemName: "chevron.right")
@@ -178,7 +183,7 @@ struct SearchServicesView: View {
             sectionHeader("网页读取")
         } footer: {
             Text("snippet 不够时用此方式读取网页正文。跟随搜索 = 用当前搜索服务商的 reader（需支持）；不支持则退回本地直连抓取，JS 页面可能失败。")
-                .font(.caption2)
+                .font(XType.section)
                 .fixedSize(horizontal: false, vertical: true)
         }
     }
@@ -221,7 +226,7 @@ struct SearchServicesView: View {
             sectionHeader("通用设置")
         } footer: {
             Text("自动读正文最多 3 条、每条 4000 字，并行抓取；值越大回复越慢。")
-                .font(.caption2)
+                .font(XType.section)
         }
     }
 
@@ -247,14 +252,14 @@ struct SearchServicesView: View {
             sectionHeader("实测")
         } footer: {
             Text("用当前选中的服务商跑一次真实搜索（含回退链），确认 Key 与网络可用。")
-                .font(.caption2)
+                .font(XType.section)
         }
     }
 
     // MARK: 组件
 
     private func sectionHeader(_ t: String) -> some View {
-        Text(t).font(.caption).fontWeight(.semibold).foregroundColor(.secondary)
+        Text(t).font(XType.note).fontWeight(.semibold).foregroundColor(.secondary)
     }
 
     private func stepperRow(icon: String, title: String, value: Int, unit: String,
@@ -262,7 +267,7 @@ struct SearchServicesView: View {
                             onChange: @escaping (Int) -> Void) -> some View {
         HStack(spacing: 12) {
             Image(systemName: icon).font(.system(size: 16)).frame(width: 24)
-            Text(title)
+            Text(title).font(XType.body)
             Spacer()
             HStack(spacing: 10) {
                 Button { if value - step >= lo { onChange(value - step) } } label: {
@@ -272,7 +277,7 @@ struct SearchServicesView: View {
                 .foregroundColor(value - step >= lo ? .primary : .secondary.opacity(0.4))
 
                 Text("\(value)\(unit)")
-                    .font(.system(size: 14, design: .monospaced))
+                    .font(XType.mono)
                     .frame(minWidth: 38)
 
                 Button { if value + step <= hi { onChange(value + step) } } label: {
@@ -373,7 +378,7 @@ struct SearchProviderRow: View {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 6) {
                     Text(service.displayName)
-                        .font(.system(size: 15, weight: isSelected ? .medium : .regular))
+                        .font(.system(size: 17, weight: isSelected ? .medium : .regular))
                         .foregroundColor(.primary)
                     if isSelected {
                         Text("当前")
@@ -391,7 +396,7 @@ struct SearchProviderRow: View {
                         .padding(.horizontal, 6).padding(.vertical, 1.5)
                         .background(Capsule().fill(status.fg.opacity(0.12)))
                     Text(detailText)
-                        .font(.system(size: 11.5))
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                         .lineLimit(1)
                 }
@@ -500,7 +505,7 @@ struct SearchServiceEditorView: View {
                 } header: {
                     Text("服务商")
                 } footer: {
-                    Text(kind.hint).font(.caption2)
+                    Text(kind.hint).font(XType.section)
                 }
 
                 if kind.needsKey {
@@ -536,7 +541,7 @@ struct SearchServiceEditorView: View {
                         Text("凭据")
                     } footer: {
                         Text("多个 Key 会按请求轮换，分摊额度。Key 只存在本机，不上传。")
-                            .font(.caption2)
+                            .font(XType.section)
                     }
                 }
 
@@ -555,7 +560,7 @@ struct SearchServiceEditorView: View {
                         Text("实例地址")
                     } footer: {
                         Text("需要在实例的 settings.yml 里开启 json 格式输出。")
-                            .font(.caption2)
+                            .font(XType.section)
                     }
                 }
 
@@ -570,13 +575,13 @@ struct SearchServiceEditorView: View {
                     }
                     .disabled(isTesting)
                     if !testStatus.isEmpty {
-                        Text(testStatus).font(.caption).foregroundColor(testColor)
+                        Text(testStatus).font(XType.note).foregroundColor(testColor)
                     }
                 } header: {
                     Text("操作")
                 } footer: {
                     Text("测连会用当前填写的 Key 发一次最小搜索（1 条结果）。")
-                        .font(.caption2)
+                        .font(XType.section)
                 }
 
                 if canDelete && service != nil {
@@ -588,7 +593,7 @@ struct SearchServiceEditorView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .deepseekList()
+            .xGroupedPage()
             .navigationTitle(service == nil ? "添加服务商" : "编辑服务商")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -34,7 +34,7 @@ struct DeveloperInstructionsView: View {
         }
         .navigationTitle(L10n.t("page_dev_instr"))
         .navigationBarTitleDisplayMode(.inline)
-        .deepseekPage()
+        .xGroupedPage()
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
                 Button {
@@ -54,7 +54,7 @@ struct DeveloperInstructionsView: View {
         .overlay(alignment: .bottom) {
             if let t = toast {
                 Text(t)
-                    .font(.footnote)
+                    .font(XType.note)
                     .padding(.horizontal, 14).padding(.vertical, 8)
                     .background(Capsule().fill(Color.black.opacity(0.78)))
                     .foregroundColor(.white)
@@ -83,9 +83,9 @@ struct DeveloperInstructionsView: View {
                 }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(L10n.t("page_dev_instr"))
-                        .font(.headline)
+                        .font(XType.hero)
                     Text(L10n.t("page_dev_instr_sub"))
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                         .lineLimit(2)
                 }
@@ -101,7 +101,7 @@ struct DeveloperInstructionsView: View {
             Text(enabledCount == 0
                  ? "当前没有启用的指令：勾选一份后才会追加到 AI 请求。"
                  : "勾选的指令会追加在系统指令之后；「默认」只决定优先顺序，不勾选也不会注入。")
-                .font(.caption2)
+                .font(XType.note)
                 .foregroundColor(.secondary)
         }
         .padding(14)
@@ -111,7 +111,7 @@ struct DeveloperInstructionsView: View {
 
     private func metric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2).foregroundColor(.secondary)
+            Text(title).font(XType.note).foregroundColor(.secondary)
             Text(value)
                 .font(.system(size: 13, weight: .semibold))
                 .foregroundColor(.primary)
@@ -137,13 +137,13 @@ struct DeveloperInstructionsView: View {
                         .font(.subheadline.weight(.medium))
                         .foregroundColor(.primary)
                     Text("扩充词库版破甲提示词（TECHNICAL 模式）")
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                 }
                 Spacer()
                 if hasPreset {
                     Text("覆盖")
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                 }
             }
@@ -165,7 +165,7 @@ struct DeveloperInstructionsView: View {
                         .font(.system(size: 26))
                         .foregroundColor(Color(UIColor.tertiaryLabel))
                     Text(L10n.t("ui_136"))
-                        .font(.footnote)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                 }
@@ -219,20 +219,20 @@ struct DeveloperInstructionsView: View {
                         .foregroundColor(Color(UIColor.tertiaryLabel))
                 }
                 Text(preview(item.content))
-                    .font(.caption)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
                     .lineLimit(2)
                 HStack(spacing: 14) {
                     Button {
                         editing = DevInstrEditorPayload(name: item.name, content: item.content)
-                    } label: { Label("编辑", systemImage: "pencil").font(.caption) }
+                    } label: { Label("编辑", systemImage: "pencil").font(XType.note) }
                         .buttonStyle(PlainButtonStyle())
                     Button {
                         copyItem(item)
                     } label: {
                         Label(copiedName == item.name ? "已复制" : "复制",
                               systemImage: copiedName == item.name ? "checkmark" : "doc.on.doc")
-                            .font(.caption)
+                            .font(XType.note)
                     }
                     .buttonStyle(PlainButtonStyle())
                     if !item.isDefault {
@@ -240,7 +240,7 @@ struct DeveloperInstructionsView: View {
                             DeveloperInstructionStore.shared.setDefault(name: item.name)
                             reload()
                             toast = "已设为默认"
-                        } label: { Label("设为默认", systemImage: "star").font(.caption) }
+                        } label: { Label("设为默认", systemImage: "star").font(XType.note) }
                             .buttonStyle(PlainButtonStyle())
                     }
                     Spacer()
@@ -280,13 +280,13 @@ struct DeveloperInstructionsView: View {
 
             if showExplain {
                 Text(L10n.t("ui_145"))
-                    .font(.caption)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
                 Text("用 <!--用户可见--> ... <!--/用户可见--> 包住的段落只显示给你，不会注入 AI 请求。")
-                    .font(.caption2)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
                 Text("作为补充提示词追加在系统指令之后，与「开发者模式」组合使用；只用于授权范围内的安全测试。")
-                    .font(.caption2)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
             }
         }

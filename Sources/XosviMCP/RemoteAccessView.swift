@@ -65,7 +65,7 @@ struct RemoteAccessView: View {
         }
         .navigationTitle("远程访问")
         .navigationBarTitleDisplayMode(.inline)
-        .deepseekPage()
+        .xGroupedPage()
         .onAppear { terminalRunning = RemoteTerminalServer.shared.isRunning }
     }
 
@@ -76,10 +76,10 @@ struct RemoteAccessView: View {
             HStack(spacing: 10) {
                 StatusDot(on: anyDoorOpen)
                 Text(anyDoorOpen ? (terminalRunning ? "本机服务在线" : "已配置远程主机") : "两扇门都关着")
-                    .font(.headline)
+                    .font(XType.hero)
                 Spacer()
                 Text(anyDoorOpen ? "运行中" : "未启用")
-                    .font(.caption2)
+                    .font(XType.section)
                     .padding(.horizontal, 8).padding(.vertical, 3)
                     .background(Capsule().fill(Color.black.opacity(0.06)))
                     .foregroundColor(.secondary)
@@ -92,7 +92,7 @@ struct RemoteAccessView: View {
                 statusMetric(title: "局域网", value: lanIP)
             }
             Text(tokenState)
-                .font(.caption2)
+                .font(XType.section)
                 .foregroundColor(.secondary)
         }
         .padding(14)
@@ -110,7 +110,7 @@ struct RemoteAccessView: View {
 
     private func statusMetric(title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2).foregroundColor(.secondary)
+            Text(title).font(XType.section).foregroundColor(.secondary)
             Text(value)
                 .font(.system(size: 13, weight: .semibold, design: .monospaced))
                 .foregroundColor(.primary)
@@ -222,10 +222,10 @@ struct RemoteAccessView: View {
             Label("安全提醒", systemImage: "lock.shield")
                 .font(.subheadline.weight(.semibold))
             Text("• 服务默认只放行只读诊断工具；注入、写入、点按、抓包等危险工具要在细节页单独开启。")
-                .font(.caption)
+                .font(XType.note)
                 .foregroundColor(.secondary)
             Text("• 令牌必填：远程请求需带 Authorization: Bearer <令牌>。公网映射（N1 / 路由器端口转发）只在你完全信任的网络里使用。")
-                .font(.caption)
+                .font(XType.note)
                 .foregroundColor(.secondary)
         }
         .padding(14)
@@ -271,7 +271,7 @@ private struct DoorRow: View {
             VStack(alignment: .leading, spacing: 2) {
                 Text(title).font(.subheadline.weight(.medium)).foregroundColor(.primary)
                 Text(subtitle)
-                    .font(.caption)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
             }

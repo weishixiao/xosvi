@@ -30,21 +30,12 @@ struct EnvironmentPane: View {
         List {
             // ── 环境 ─────────────────────────────
             Section {
-                HStack(spacing: 10) {
-                    Image(systemName: "cube.box")
-                        .font(.system(size: 20))
-                        .foregroundColor(.primary)
-                        .frame(width: 28)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Alpine \(version.isEmpty ? "—" : version) (iSH)")
-                            .font(.system(size: 16))
-                        Text(booted ? "就绪" : "未启动")
-                            .font(.system(size: 12))
-                            .foregroundColor(.secondary)
-                    }
-                    Spacer()
-                }
-                .padding(.vertical, 4)
+                // 设计稿：图标 + 21pt 半粗大标题 + 13pt 灰色副标题
+                XHeroHeader(
+                    icon: "cube.box",
+                    title: "Alpine \(version.isEmpty ? "—" : version)（iSH）",
+                    subtitle: booted ? "就绪" : "未启动"
+                )
 
                 infoRow("状态", booted || ISH.rootfsInstalled ? "已安装" : "未安装", check: ISH.rootfsInstalled)
                 infoRow("大小", size > 0 ? String(format: "%.2f MB", Double(size) / 1048576) : "—")
@@ -67,7 +58,7 @@ struct EnvironmentPane: View {
                 }
                 if !bootError.isEmpty {
                     Text(bootError)
-                        .font(.system(size: 11, design: .monospaced))
+                        .font(XType.mono)
                         .foregroundColor(.secondary)
                 }
             }
@@ -156,10 +147,10 @@ struct EnvironmentPane: View {
                 if !speedRows.isEmpty {
                     ForEach(speedRows, id: \.0.id) { row in
                         HStack {
-                            Text(row.0.name).font(.system(size: 14))
+                            Text(row.0.name).font(XType.body)
                             Spacer()
                             Text(String(format: "%.1fs", row.1))
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(XType.mono)
                                 .foregroundColor(.secondary)
                         }
                     }
@@ -182,19 +173,16 @@ struct EnvironmentPane: View {
                 Button {
                     installer.refresh()
                 } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: "arrow.clockwise").frame(width: 24)
-                        Text(installer.busy ? "检测中…" : "刷新工具状态").font(.system(size: 15))
-                        Spacer()
-                        if installer.busy { ProgressView().scaleEffect(0.7) }
-                    }
+                    XActionRow(icon: "arrow.clockwise",
+                               title: installer.busy ? "检测中…" : "刷新工具状态",
+                               busy: installer.busy,
+                               accent: .primary)
                 }
                 .disabled(installer.busy)
             } header: {
                 Text("环境预设")
             } footer: {
-                Text("安装到共享沙盒，所有工作区均可使用。")
-                    .font(.caption2)
+                XFooterNote("安装到共享沙盒，所有工作区均可使用。")
             }
 
             // ── 环境变量 ─────────────────────────
@@ -226,15 +214,14 @@ struct EnvironmentPane: View {
                 } label: {
                     HStack(spacing: 10) {
                         Image(systemName: "trash").frame(width: 24)
-                        Text("重置").font(.system(size: 15))
+                        Text("重置").font(XType.body)
                         Spacer()
                     }
                 }
             } header: {
                 Text("操作")
             } footer: {
-                Text("环境是沙盒使用的 Linux 根文件系统。工作区单独存放，重置环境不会删除工作区文件。数据保存在本机已解压的 rootfs 中。")
-                    .font(.caption2)
+                XFooterNote("环境是沙盒使用的 Linux 根文件系统。工作区单独存放，重置环境不会删除工作区文件。数据保存在本机已解压的 rootfs 中。")
             }
         }
         .navigationTitle("环境")
@@ -267,61 +254,34 @@ struct EnvironmentPane: View {
     // MARK: 组件
 
     private func infoRow(_ label: String, _ value: String, check: Bool = false) -> some View {
-        HStack {
-            Text(label).foregroundColor(.primary)
-            Spacer()
-            Text(value).foregroundColor(.secondary)
-            if check {
-                Image(systemName: "checkmark")
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundColor(.green)
-            }
-        }
+        // v10：行统一 17pt（左标签 / 右灰值 / 可选绿勾），见 XTheme
+        XInfoRow(label: label, value: value, check: check)
     }
 
     private func row(_ title: String, _ subtitle: String, _ icon: String) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: icon)
-                .font(.system(size: 16)).foregroundColor(.primary).frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(title).font(.system(size: 15)).foregroundColor(.primary)
-                if !subtitle.isEmpty {
-                    Text(subtitle).font(.system(size: 11.5)).foregroundColor(.secondary).lineLimit(2)
-                }
-            }
-            Spacer()
-        }
-        .contentShape(Rectangle())
+        XNavRow(icon: icon, title: title, subtitle: subtitle)
     }
 
-    /// v9.5：预设行（图标 + 标题/副标题 + 右侧状态），与原 EnvironmentPresetsView 的样式一致
+    /// v9.5：预设行（图标 + 标题/副标题 + 右侧状态），字形按 v10 规范统一
     private func presetRow(_ dep: EnvDependency) -> some View {
-        HStack(spacing: 10) {
-            Image(systemName: dep.icon)
-                .font(.system(size: 16)).foregroundColor(.primary).frame(width: 24)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(dep.title).font(.system(size: 15))
-                Text(dep.subtitle).font(.system(size: 11.5)).foregroundColor(.secondary)
-            }
-            Spacer()
-            if installer.installing == dep {
-                HStack(spacing: 5) {
-                    ProgressView().scaleEffect(0.7)
-                    Text("安装中").font(.system(size: 12)).foregroundColor(.secondary)
-                }
-            } else {
-                switch installer.status(dep) {
-                case .installed:
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundColor(.green)
-                case .missing:
-                    Text("未安装").font(.system(size: 12)).foregroundColor(.secondary)
-                case .unknown:
-                    Text("—").font(.system(size: 12)).foregroundColor(.secondary)
-                }
+        var status = ""
+        var busy = false
+        var installed = false
+        if installer.installing == dep {
+            busy = true
+        } else {
+            switch installer.status(dep) {
+            case .installed: installed = true
+            case .missing: status = "未安装"
+            case .unknown: status = "—"
             }
         }
+        return XNavRow(icon: dep.icon,
+                       title: dep.title,
+                       subtitle: dep.subtitle,
+                       status: status,
+                       busy: busy,
+                       checked: installed)
     }
 
     // MARK: 操作
@@ -500,24 +460,21 @@ struct DependencyDetailView: View {
     var body: some View {
         List {
             Section {
-                HStack(spacing: 10) {
-                    Image(systemName: dependency.icon)
-                        .font(.system(size: 20))
-                        .foregroundColor(.primary)
-                        .frame(width: 28)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(dependency.title).font(.system(size: 16))
-                        Text(dependency.subtitle)
-                            .font(.system(size: 12)).foregroundColor(.secondary)
-                    }
+                XHeroHeader(icon: dependency.icon,
+                            title: dependency.title,
+                            subtitle: dependency.subtitle)
+                HStack {
+                    Text("状态").font(XType.body).foregroundColor(.primary)
                     Spacer()
+                    Text(installer.status(dependency) == .installed ? "已安装" : "未安装")
+                        .font(XType.body).foregroundColor(.secondary)
                     if installer.status(dependency) == .installed {
-                        Text("已安装").font(.system(size: 12)).foregroundColor(.secondary)
-                    } else {
-                        Text("未安装").font(.system(size: 12)).foregroundColor(.secondary)
+                        Image(systemName: "checkmark")
+                            .font(XType.check)
+                            .foregroundColor(.green)
                     }
                 }
-                .padding(.vertical, 4)
+                .frame(minHeight: 25)
             }
 
             Section {

@@ -55,9 +55,9 @@ struct SystemPromptsView: View {
             }
             VStack(alignment: .leading, spacing: 3) {
                 Text(L10n.t("row_sys_prompts"))
-                    .font(.headline)
+                    .font(XType.hero)
                 Text(L10n.t("ui_4"))
-                    .font(.caption)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
             }
             Spacer()
@@ -96,7 +96,7 @@ struct SystemPromptsView: View {
                             .font(.headline)
                             .foregroundColor(isSelected ? .tmCyan : .primary)
                         Text(prompt.desc)
-                            .font(.caption)
+                            .font(XType.note)
                             .foregroundColor(.secondary)
                             .lineLimit(2)
                     }
@@ -119,7 +119,7 @@ struct SystemPromptsView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     ScrollView {
                         Text(prompt.content)
-                            .font(.system(size: 12, design: .monospaced))
+                            .font(XType.mono)
                             .foregroundColor(.secondary)
                             .padding(12)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -143,7 +143,7 @@ struct SystemPromptsView: View {
                     Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
                         .font(.system(size: 11, weight: .semibold))
                     Text(isExpanded ? "收起内容" : "查看内容")
-                        .font(.caption)
+                        .font(XType.note)
                 }
                 .foregroundColor(.tmCyan)
             }
@@ -167,13 +167,13 @@ struct SystemPromptsView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(.tmCyan)
             Text(L10n.t("ui_14"))
-                .font(.caption)
+                .font(XType.note)
                 .foregroundColor(.secondary)
             Text(L10n.t("ui_13"))
-                .font(.caption)
+                .font(XType.note)
                 .foregroundColor(.secondary)
             Text(L10n.t("ui_12"))
-                .font(.caption)
+                .font(XType.note)
                 .foregroundColor(.secondary)
 
             Divider()
@@ -183,10 +183,10 @@ struct SystemPromptsView: View {
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(.orange)
             Text("选择「开发者模式」可以让 AI 执行破甲、越狱、注入、绕过等高级测试任务，适合做 App 破解和安全测试。")
-                .font(.caption)
+                .font(XType.note)
                 .foregroundColor(.secondary)
             Text("其他模式（逆向、渗透、游戏修改等）也都有各自的专业提示词，直接选对应模式即可。")
-                .font(.caption)
+                .font(XType.note)
                 .foregroundColor(.secondary)
         }
         .padding(14)

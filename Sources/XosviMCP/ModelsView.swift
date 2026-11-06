@@ -27,6 +27,15 @@ struct ModelsView: View {
             // RecommendCardArea()  ← 已移除
 
             List {
+                // v10：页首大标题卡（与「环境」页同一套排版）
+                Section {
+                    XHeroHeader(icon: "cpu",
+                                title: "模型服务",
+                                subtitle: store.configs.isEmpty
+                                    ? "尚未连接任何服务商"
+                                    : "\(store.configs.count) 个账号 · \(Set(store.configs.map { $0.provider }).count) 家服务商")
+                }
+
                 // v9.8：顶部「服务商」入口——卡片目录 + 一键连接（只填密钥）。
                 // 旧的「快速添加服务商」折叠列表被它取代（同一批预设，功能更强）。
                 Section {
@@ -49,7 +58,7 @@ struct ModelsView: View {
                                 Text(store.configs.isEmpty
                                      ? "点一家，只填密钥即可连接"
                                      : "\(Set(store.configs.map { $0.provider }).count) 家已连接 · \(store.configs.count) 个账号")
-                                    .font(.caption)
+                                    .font(XType.note)
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
@@ -66,7 +75,7 @@ struct ModelsView: View {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text("添加 OpenAI 兼容 API").foregroundColor(.primary)
                                 Text("只填密钥和基础 URL，右上角取模型")
-                                    .font(.caption)
+                                    .font(XType.note)
                                     .foregroundColor(.secondary)
                             }
                             Spacer()
@@ -79,15 +88,15 @@ struct ModelsView: View {
                     DisclosureGroup(isExpanded: $showBridgeInfo) {
                         let st = ChatBridgeServer.shared.status()
                         VStack(alignment: .leading, spacing: 8) {
-                            Text("Base URL").font(.caption).foregroundColor(.secondary)
+                            Text("Base URL").font(XType.note).foregroundColor(.secondary)
                             Text(st["base_url"] as? String ?? "")
-                                .font(.system(.footnote, design: .monospaced))
+                                .font(XType.mono)
                                 .textSelection(.enabled)
-                            Text("模型名").font(.caption).foregroundColor(.secondary)
-                            Text("xosvi-local").font(.system(.footnote, design: .monospaced))
-                            Text("鉴权").font(.caption).foregroundColor(.secondary)
+                            Text("模型名").font(XType.note).foregroundColor(.secondary)
+                            Text("xosvi-local").font(XType.mono)
+                            Text("鉴权").font(XType.note).foregroundColor(.secondary)
                             Text("Bearer <上页「MCP 服务」里的 token>")
-                                .font(.footnote).foregroundColor(.secondary)
+                                .font(XType.note).foregroundColor(.secondary)
                             HStack(spacing: 10) {
                                 Button(ChatBridgeServer.shared.isRunning ? "停止" : "启动") {
                                     if ChatBridgeServer.shared.isRunning {
@@ -99,7 +108,7 @@ struct ModelsView: View {
                                 }
                                 .foregroundColor(.blue)
                                 Text(ChatBridgeServer.shared.isRunning ? "运行中 :\(ChatBridgeServer.shared.port)" : "未启动")
-                                    .font(.caption).foregroundColor(.secondary)
+                                    .font(XType.note).foregroundColor(.secondary)
                             }
                         }
                         .padding(.vertical, 4)
@@ -120,7 +129,7 @@ struct ModelsView: View {
                                     .font(.system(size: 40))
                                     .foregroundColor(.secondary)
                                 Text(L10n.t("ui_50"))
-                                    .font(.footnote)
+                                    .font(XType.note)
                                     .foregroundColor(.secondary)
                             }
                             .padding(.vertical, 40)
@@ -130,7 +139,7 @@ struct ModelsView: View {
                 }
             }
             .listStyle(.insetGrouped)
-        .deepseekList()
+        .xGroupedPage()
         }
         .navigationTitle("模型 API")
         // v9.9：按用户要求删除右上角「+」添加模型入口（新增/编辑一律走「服务商目录」与「添加 OpenAI 兼容 API」）
@@ -226,7 +235,7 @@ struct ModelRow: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(config.name)
-                        .font(.system(size: 15, weight: config.isDefault ? .medium : .regular))
+                        .font(.system(size: 17, weight: config.isDefault ? .medium : .regular))
                         .foregroundColor(.primary)
                         .lineLimit(1)
                     if config.isDefault {
@@ -593,13 +602,13 @@ struct ModelEditorView: View {
                     }
                     Section(header: sectionHeader("参数说明")) {
                         Text(L10n.t("ui_7"))
-                            .font(.caption)
+                            .font(XType.note)
                             .foregroundColor(.secondary)
                         Text(L10n.t("ui_18"))
-                            .font(.caption)
+                            .font(XType.note)
                             .foregroundColor(.secondary)
                         Text(L10n.t("ui_72"))
-                            .font(.caption)
+                            .font(XType.note)
                             .foregroundColor(.blue)
                     }
                 }
@@ -607,7 +616,7 @@ struct ModelEditorView: View {
                 if !validationError.isEmpty {
                     Section {
                         Label(validationError, systemImage: "exclamationmark.triangle.fill")
-                            .font(.caption)
+                            .font(XType.note)
                             .foregroundColor(.red)
                     }
                 }
@@ -670,7 +679,7 @@ struct ModelEditorView: View {
                             Image(systemName: "checkmark.circle.fill")
                                 .foregroundColor(.green)
                             Text(L10n.t("ui_52"))
-                                .font(.caption)
+                                .font(XType.note)
                                 .foregroundColor(.green)
                         }
                     }
@@ -679,19 +688,19 @@ struct ModelEditorView: View {
                 if !testStatus.isEmpty {
                     Section(header: sectionHeader("连接测试")) {
                         Text(testStatus)
-                            .font(.caption)
+                            .font(XType.note)
                             .foregroundColor(testColor)
                     }
                 }
 
                 Section(header: sectionHeader("说明")) {
                     Text(L10n.t("ui_138"))
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                 }
             }
             .listStyle(.insetGrouped)
-        .deepseekList()
+        .xGroupedPage()
             .navigationTitle(config == nil ? "添加 API" : name)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -775,7 +784,7 @@ struct ModelEditorView: View {
 
     private func sectionHeader(_ title: String) -> some View {
         Text(title)
-            .font(.caption)
+            .font(XType.note)
             .fontWeight(.semibold)
             .foregroundColor(.secondary)
     }
@@ -994,7 +1003,7 @@ struct ModelPickerSheet: View {
                 }
             }
             .listStyle(.insetGrouped)
-        .deepseekList()
+        .xGroupedPage()
             .navigationTitle("选择模型")
             .toolbar {
                 Button("关闭") { presentationMode.wrappedValue.dismiss() }
@@ -1048,7 +1057,7 @@ struct UsageStatsView: View {
                                     Text(row.name).font(.subheadline.weight(.medium))
                                     Spacer()
                                     Text(L10n.t("ui_156", row.total, row.ok))
-                                        .font(.caption)
+                                        .font(XType.note)
                                         .foregroundColor(.secondary)
                                 }
                                 ProgressView(value: row.total > 0 ? Double(row.ok) / Double(row.total) : 0)
@@ -1068,7 +1077,7 @@ struct UsageStatsView: View {
                 }
             }
             .listStyle(.insetGrouped)
-        .deepseekList()
+        .xGroupedPage()
             .navigationTitle("用量统计")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -1100,7 +1109,7 @@ struct UsageStatsView: View {
     private func statCell(title: String, value: String, color: Color) -> some View {
         VStack(spacing: 4) {
             Text(value).font(.headline).foregroundColor(color)
-            Text(title).font(.caption2).foregroundColor(.secondary)
+            Text(title).font(XType.note).foregroundColor(.secondary)
         }
         .frame(maxWidth: .infinity)
     }
@@ -1122,12 +1131,12 @@ struct UsageStatsView: View {
                     .font(.system(size: 13))
                 Text(name).font(.subheadline).lineLimit(1)
                 Spacer()
-                Text("\(el)ms").font(.caption).foregroundColor(.secondary)
-                Text(f.string(from: d)).font(.caption2).foregroundColor(.secondary)
+                Text("\(el)ms").font(XType.note).foregroundColor(.secondary)
+                Text(f.string(from: d)).font(XType.note).foregroundColor(.secondary)
             }
-            Text(model).font(.caption).foregroundColor(.secondary).lineLimit(1)
+            Text(model).font(XType.note).foregroundColor(.secondary).lineLimit(1)
             if !ok, !error.isEmpty {
-                Text(error).font(.caption2).foregroundColor(.red).lineLimit(2)
+                Text(error).font(XType.note).foregroundColor(.red).lineLimit(2)
             }
         }
         .padding(.vertical, 2)

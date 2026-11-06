@@ -35,6 +35,13 @@ struct KnowledgeSettingsView: View {
 
     var body: some View {
         List {
+            // v10：页首大标题卡（与「环境」页同一套排版）
+            Section {
+                XHeroHeader(icon: "books.vertical",
+                            title: "知识库",
+                            subtitle: "\(localFiles.count) 个本机文件 · 按需检索")
+            }
+
             // MARK: 本机文件
             Section(header: Text("本机文件"),
                     footer: Text("导入的文本文件直接进入 AI 的检索范围（knowledge.search）。支持 Markdown / TXT / JSON / CSV / 代码；PDF 与图片请先用 OCR 转成文字再导入。")) {
@@ -49,15 +56,15 @@ struct KnowledgeSettingsView: View {
                     rowLabel("folder.badge.plus", "从工作区导入")
                 }
                 if !importNote.isEmpty {
-                    Text(importNote).font(.caption).foregroundColor(MonoChat.subtext)
+                    Text(importNote).font(XType.note).foregroundColor(.secondary)
                 }
-                HStack { Text("已导入"); Spacer(); Text("\(localFiles.count) 个").foregroundColor(MonoChat.subtext) }
+                HStack { Text("已导入").font(XType.body); Spacer(); Text("\(localFiles.count) 个").font(XType.body).foregroundColor(.secondary) }
                 ForEach(localFiles, id: \.self) { name in
                     HStack {
-                        Text(name).font(.system(size: 14)).lineLimit(1)
+                        Text(name).font(XType.body).lineLimit(1)
                         Spacer()
                         Text("\((KnowledgeStore.shared.size(of: name) / 1024)) KB")
-                            .font(.caption).foregroundColor(MonoChat.subtext)
+                            .font(XType.note).foregroundColor(.secondary)
                     }
                 }
                 .onDelete { idx in
@@ -68,8 +75,8 @@ struct KnowledgeSettingsView: View {
 
             // MARK: 内置知识
             Section(header: Text("内置知识")) {
-                HStack { Text("条目数"); Spacer(); Text("\(entryCount)").foregroundColor(MonoChat.subtext) }
-                HStack { Text("索引构建时间"); Spacer(); Text(builtAt.isEmpty ? "未构建" : builtAt).foregroundColor(MonoChat.subtext) }
+                XInfoRow(label: "条目数", value: "\(entryCount)")
+                XInfoRow(label: "索引构建时间", value: builtAt.isEmpty ? "未构建" : builtAt)
                 Button {
                     rebuild()
                 } label: {
@@ -84,10 +91,10 @@ struct KnowledgeSettingsView: View {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("本地无命中时联网补充")
                         Text("当前服务商：\(search.selectedService?.displayName ?? "必应")")
-                            .font(.caption).foregroundColor(MonoChat.subtext)
+                            .font(XType.note).foregroundColor(.secondary)
                     }
                 }
-                .accentColor(MonoChat.text)
+                .accentColor(.primary)
             }
 
             // MARK: 试检索
@@ -100,37 +107,34 @@ struct KnowledgeSettingsView: View {
                     .disabled(query.trimmingCharacters(in: .whitespaces).isEmpty)
                 if searched && hits.isEmpty && fileHits.isEmpty {
                     Text("无匹配条目。可换更具体的词（错误原文、工具名）。")
-                        .font(.caption).foregroundColor(MonoChat.subtext)
+                        .font(XType.note).foregroundColor(.secondary)
                 }
                 ForEach(hits, id: \.id) { h in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(h.title).font(.system(size: 14, weight: .medium))
+                        Text(h.title).font(.system(size: 17, weight: .medium))
                         Text(String(h.body.prefix(120)))
-                            .font(.caption).foregroundColor(MonoChat.subtext).lineLimit(2)
+                            .font(XType.note).foregroundColor(.secondary).lineLimit(2)
                         if !h.appliesIf.isEmpty {
                             Text("applies_if: \(h.appliesIf.joined(separator: ", "))")
-                                .font(.caption2).foregroundColor(MonoChat.subtext)
+                                .font(XType.section).foregroundColor(.secondary)
                         }
                     }
                     .padding(.vertical, 2)
                 }
                 ForEach(Array(fileHits.enumerated()), id: \.offset) { _, line in
-                    Text(line).font(.system(size: 12, design: .monospaced))
-                        .foregroundColor(MonoChat.secondaryText).lineLimit(3)
+                    Text(line).font(XType.mono).foregroundColor(.secondary).lineLimit(3)
                 }
             }
 
             // MARK: 说明
             Section(header: Text("说明")) {
                 Text("知识不会全局注入上下文，由 knowledge.search 按需检索后作为工具结果返回。")
-                    .font(.caption).foregroundColor(MonoChat.subtext)
+                    .font(XType.note).foregroundColor(.secondary)
                 Text("自定义结构化条目放 Documents/Knowledge/custom/*.json（结构见内置包），导入后点「重建索引」。")
-                    .font(.caption2).foregroundColor(MonoChat.subtext)
+                    .font(XType.section).foregroundColor(.secondary)
             }
         }
-        .listStyle(.insetGrouped)
-        .deepseekList()
-        .listRowSeparator(.hidden)
+        .xGroupedPage()
         .navigationTitle("知识库")
         .onAppear(perform: refresh)
         .sheet(isPresented: $showingImporter) {
@@ -143,9 +147,9 @@ struct KnowledgeSettingsView: View {
     /// 行样式：与设置页圆框行同一套图标 + 文案
     private func rowLabel(_ icon: String, _ title: String) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: icon).font(.system(size: 17)).foregroundColor(MonoChat.text)
+            Image(systemName: icon).font(XType.rowIcon).foregroundColor(.primary)
                 .frame(width: 26, alignment: .center)
-            Text(title).foregroundColor(MonoChat.text)
+            Text(title).font(XType.body).foregroundColor(.primary)
             Spacer()
         }
     }

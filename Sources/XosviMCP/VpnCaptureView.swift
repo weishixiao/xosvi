@@ -25,9 +25,9 @@ struct VpnCaptureView: View {
                     }
                     VStack(alignment: .leading, spacing: 3) {
                         Text("抓包 VPN")
-                            .font(.headline)
+                            .font(XType.hero)
                         Text(mainSwitchSubtitle())
-                            .font(.caption)
+                            .font(XType.note)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
@@ -94,7 +94,7 @@ struct VpnCaptureView: View {
             if !notice.isEmpty {
                 Section(header: SettingSectionHeader(title: "提示")) {
                     Text(notice)
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.orange)
                 }
             }
@@ -103,22 +103,22 @@ struct VpnCaptureView: View {
             Section(header: SettingSectionHeader(title: "最近日志")) {
                 if logFiles.isEmpty {
                     Text("暂无")
-                        .font(.caption)
+                        .font(XType.note)
                         .foregroundColor(.secondary)
                 } else {
                     ForEach(logFiles.prefix(8), id: \.self) { f in
                         HStack(spacing: 8) {
                             Image(systemName: "doc.plaintext")
-                                .font(.caption)
+                                .font(XType.note)
                                 .foregroundColor(.secondary)
-                            Text(f).font(.caption2).foregroundColor(.secondary)
+                            Text(f).font(XType.section).foregroundColor(.secondary)
                         }
                     }
                 }
             }
         }
         .navigationTitle("抓包 VPN")
-        .deepseekPage()
+        .xGroupedPage()
         .navigationBarTitleDisplayMode(.inline)
         .onAppear { refresh() }
     }
@@ -132,7 +132,7 @@ struct VpnCaptureView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundColor(color)
                 Text(title)
-                    .font(.caption)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
             }
             Text(value)
@@ -165,7 +165,7 @@ struct VpnCaptureView: View {
                     .foregroundColor(.primary)
                 Spacer()
                 Image(systemName: "chevron.right")
-                    .font(.caption)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
             }
         }
@@ -183,7 +183,7 @@ struct VpnCaptureView: View {
                     .font(.subheadline)
                     .foregroundColor(.primary)
                 Text(desc)
-                    .font(.caption)
+                    .font(XType.note)
                     .foregroundColor(.secondary)
             }
         }
