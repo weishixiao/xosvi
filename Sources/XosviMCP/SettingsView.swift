@@ -243,6 +243,12 @@ struct SettingsView: View {
 
     private var listBody: some View {
         List {
+            // 统一头部：设置页与所有二级页共用 XHeroHeader（标题 + 环境状态）
+            Section {
+                XHeroHeader(icon: "gearshape",
+                            title: L10n.t("settings"),
+                            subtitle: envSubtitle())
+            }
             // v4.3.64：移除"测试系统分享面板（Debug）"——本设备侧载环境任何系统分享面板
             // 都崩（MobileIcons/CoreImage SIGSEGV，v4.3.43-63 全部真机证伪），
             // 该按钮只会闪退，无诊断价值。分享统一走 ShareCenter 自建菜单（存储到文件/拷贝）。
@@ -254,8 +260,7 @@ struct SettingsView: View {
                 }
             }
         }
-        .listStyle(.insetGrouped)
-        .deepseekList()
+        .xGroupedPage()
         .actionSheet(isPresented: $showLanguagePicker) {
             ActionSheet(
                 title: Text(L10n.t("row_lang")),
@@ -277,8 +282,8 @@ struct SettingsView: View {
         // v9.4：更新镜像源弹窗随「检查更新」入口一起删除
     }
 
-    /// v9.4：每一行改用圆框卡片（灰底 + 黑细描边），不再用系统分隔线。
-    /// rowCard 统一处理背景、圆角、描边与行间距。
+    /// v9.11：主设置页改用系统分组卡片（与所有二级页一致）——
+    /// 行不再自绘圆角描边，交给 insetGrouped 的白卡与分隔线。
     @ViewBuilder
     private func listRow(_ item: SettingsItem) -> some View {
         rowCard {
@@ -307,23 +312,9 @@ struct SettingsView: View {
         }
     }
 
-    /// 行卡片的容器修饰（所有行共用，保证圆框/描边/间距一致）
+    /// 行内容的容器（保留这个包装，方便以后统一加前缀/后缀）
     private func rowCard<C: View>(@ViewBuilder _ content: () -> C) -> some View {
         content()
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            // 行底用抬升面灰、白页上才有边界；与对话页聊天气泡同色系
-            .background(MonoChat.surfaceRaised)
-            .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(MonoChat.stroke, lineWidth: 0.8)
-            )
-            // 圆框之间留 8pt 空隙，替代原来的分隔线
-            .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
-            .listRowBackground(Color.clear)
-            .listRowSeparator(.hidden)
     }
 
     // MARK: - 动态值
@@ -410,12 +401,12 @@ struct SettingRowContent: View {
         // v7.1.1（DeepSeek 风格）：彩色方块 + 白色重图标 → 黑白简洁版（裸线条图标）
         HStack(spacing: 12) {
             Image(systemName: item.icon)
-                .font(.system(size: 17, weight: .regular))
+                .font(XType.rowIcon)
                 .foregroundColor(.primary)
                 .frame(width: 26, alignment: .center)
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.title)
-                    .font(.system(size: 16))
+                    .font(XType.body)
                     .foregroundColor(.primary)
                 // v7.3.0：只保留主设置名，副标题说明小字不再显示（用户要求）
             }

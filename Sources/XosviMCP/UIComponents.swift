@@ -114,11 +114,11 @@ struct SettingSectionHeader: View {
     let title: String
 
     var body: some View {
-        // v9.4：分组标题跟随对话页配色——小号黑灰字（原来是 .secondary 在灰底上偏淡）
+        // v9.11：统一设计规范——分组标题 13pt、中黑、secondary（与设计稿一致）
         Text(title)   // v9.4：不再强制大写，中文大写无意义、英文全大写生硬
-            .font(.caption)
-            .fontWeight(.semibold)
-            .foregroundColor(MonoChat.subtext)
+            .font(XType.section)
+            .fontWeight(.medium)
+            .foregroundColor(.secondary)
             .padding(.top, 8)
             .padding(.leading, 4)
     }

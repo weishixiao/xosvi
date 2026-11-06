@@ -162,28 +162,35 @@ struct ConversationDrawerView: View {
             conversationList
             bottomWorkbench
         }
-        .background(MonoChat.bg)   // v9.3：抽屉配色与聊天页统一（白底黑字）
+        .background(Color(uiColor: .systemGroupedBackground))   // 与设置页/二级页同一底色
         .onAppear(perform: refreshReadiness)
     }
 
-    /// v7.6.1：头部只保留「搜索框 + 编辑键」同一水平线（用户要求）。
+    /// v9.11：顶部统一头部 + 搜索框/编辑键同一行（搜索框与编辑键仍并排）
     /// 右上角圆圈 X 关闭键已删除；抽屉用点遮罩/侧滑关闭。
     private var header: some View {
-        HStack(spacing: 10) {
-            searchBar
-            // 编辑（新建会话）——移到最右侧，与搜索框同一条水平线
-            Button(action: {
-                withAnimation { ui.drawerOpen = false }
-                store.newConversation()
-                NotificationCenter.default.post(name: .tmNewConversation, object: nil)
-            }) {
-                Image(systemName: "square.and.pencil")
-                    .font(.system(size: 19, weight: .medium))
-                    .foregroundColor(.primary)
-                    .frame(width: 36, height: 36)
-                    .contentShape(Rectangle())
+        VStack(alignment: .leading, spacing: 10) {
+            // 抽屉顶部统一头部（与设置页二级页同一套 XHeroHeader）
+            XHeroHeader(icon: "bubble.left.and.bubble.right",
+                        title: L10n.t("drawer_title"),
+                        subtitle: L10n.t("drawer_count")
+                            .replacingOccurrences(of: "{n}", with: "\(store.conversations.count)"))
+            HStack(spacing: 10) {
+                searchBar
+                // 编辑（新建会话）——移到最右侧，与搜索框同一条水平线
+                Button(action: {
+                    withAnimation { ui.drawerOpen = false }
+                    store.newConversation()
+                    NotificationCenter.default.post(name: .tmNewConversation, object: nil)
+                }) {
+                    Image(systemName: "square.and.pencil")
+                        .font(.system(size: 19, weight: .medium))
+                        .foregroundColor(.primary)
+                        .frame(width: 36, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
             }
-            .buttonStyle(PlainButtonStyle())
         }
         .padding(.horizontal, 16)
         .padding(.top, topSafeArea + 6)
@@ -204,9 +211,9 @@ struct ConversationDrawerView: View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
                 .foregroundColor(.secondary)
-                .font(.system(size: 14))
+                .font(XType.note)
             TextField(L10n.t("drawer_search"), text: $searchText)
-                .font(.subheadline)
+                .font(XType.body)
             if !searchText.isEmpty {
                 Button(action: { searchText = "" }) {
                     Image(systemName: "xmark.circle.fill")
@@ -216,15 +223,15 @@ struct ConversationDrawerView: View {
         }
         .padding(.horizontal, 14)
         .frame(height: 44)
-        // v7.6.0（DeepSeek）：改为胶囊形（对齐参考截图）
+        // 胶囊形，填充用系统卡片色（深色模式自适应）
         .background(Capsule(style: .continuous)
-            .fill(MonoChat.surfaceRaised))   // v9.3：搜索框配色与聊天输入框一致
+            .fill(Color(uiColor: .secondarySystemGroupedBackground)))
     }
 
     private var countLabel: some View {
         HStack {
             Text(L10n.t("drawer_count").replacingOccurrences(of: "{n}", with: "\(store.conversations.count)"))
-                .font(.caption)
+                .font(XType.note)
                 .foregroundColor(.secondary)
             Spacer()
         }
@@ -239,9 +246,10 @@ struct ConversationDrawerView: View {
             LazyVStack(alignment: .leading, spacing: 2) {
                 ForEach(groupedConversations, id: \.key) { group in
                     Text(group.key)
-                        .font(.system(size: 13, weight: .medium))
+                        .font(XType.section)
+                        .fontWeight(.medium)
                         .foregroundColor(.secondary)
-                        .padding(.horizontal, 22)
+                        .padding(.horizontal, 16)
                         .padding(.top, 14)
                         .padding(.bottom, 4)
 
@@ -250,7 +258,7 @@ struct ConversationDrawerView: View {
                     }
                 }
             }
-            .padding(.horizontal, 8)
+            .padding(.horizontal, 16)
             .padding(.bottom, 8)
         }
     }
@@ -337,17 +345,20 @@ struct ConversationDrawerView: View {
                     .background(
                         Group {
                             if store.selectedId == conv.id {
-                                // v9.3：选中行与聊天页配色统一——灰底黑字（去蓝底蓝字）
-                                MonoChat.surfaceRaised
+                                // 选中行：白色卡片叠加一层淡墨色高亮（深色模式自适应）
+                                Color(uiColor: .systemBackground)
+                                    .overlay(Color.primary.opacity(0.07))
                             } else {
-                                MonoChat.bg
+                                Color(uiColor: .systemBackground)
                             }
                         }
                     )
-                    // v9.3：每个会话行加圆形（圆角矩形）外框，描边与聊天页一致
+                    // 行卡片外框：系统分隔色描边，与设置页卡片观感一致
                     .overlay(
                         RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(store.selectedId == conv.id ? MonoChat.strokeStrong : MonoChat.stroke,
+                            .stroke(store.selectedId == conv.id
+                                        ? Color.primary.opacity(0.22)
+                                        : Color(uiColor: .separator).opacity(0.6),
                                     lineWidth: 0.8)
                     )
                     .cornerRadius(16)
@@ -399,9 +410,10 @@ struct ConversationDrawerView: View {
         return HStack(alignment: .center, spacing: 8) {
             // v7.6.1：只显示标题（用户要求去掉消息内容预览）
                 Text(conv.title)
-                    .font(.system(size: 16, weight: isSel ? .semibold : .regular))
-                    // v9.3：标题统一黑字（不再选中变蓝，与聊天页配色一致）
-                    .foregroundColor(MonoChat.text)
+                    .font(XType.body)
+                    .fontWeight(isSel ? .semibold : .regular)
+                    // 标题用系统主文字色（深色模式自适应）
+                    .foregroundColor(.primary)
                     .lineLimit(1)
                     .truncationMode(.tail)
             Spacer(minLength: 6)
@@ -473,7 +485,7 @@ struct ConversationDrawerView: View {
                     .font(.system(size: 22, weight: .semibold))
                     .foregroundColor(.primary)
                     .frame(width: 52, height: 52)
-                    .background(Color(.secondarySystemBackground))
+                    .background(Color(uiColor: .tertiarySystemFill))
                     .cornerRadius(14)
                     .contentShape(Rectangle())
             }
@@ -483,10 +495,14 @@ struct ConversationDrawerView: View {
         .padding(.vertical, 12)
         .background(
             RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(.systemBackground))
-                .shadow(color: .black.opacity(0.07), radius: 8, x: 0, y: 2)
+                .fill(Color(uiColor: .systemBackground))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 20, style: .continuous)
+                        .stroke(Color(uiColor: .separator).opacity(0.6), lineWidth: 0.8)
+                )
+                .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
         )
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 16)
         .padding(.bottom, max(bottomSafeArea, 12))
     }
 
