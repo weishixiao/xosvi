@@ -243,7 +243,7 @@ static void log_args(const request_t *r, char *out, size_t cap) {
 }
 
 /* helper 白名单，与 deb 里 /usr/libexec/xosvi/ 下的可执行文件一一对应。 */
-static const char *kHelpers[] = { "xosvi-build", "xosvi-install", "xosvi-symbolicate", NULL };
+static const char *kHelpers[] = { "xosvi-build", "xosvi-install", "xosvi-symbolicate", "xosvi-bin", NULL };
 
 /* "build" / "xosvi-build" / "xosvi/xosvi-build" 归一为白名单项，其它返回 NULL。 */
 static const char *normalize_helper(const char *name) {
@@ -440,7 +440,7 @@ static void run_helper_request(const request_t *r, xpc_object_t reply) {
     const char *helper = normalize_helper(r->name);
     if (!helper) {
         xpc_dictionary_set_string(reply, "error",
-                                  "helper not allowed (xosvi-build/xosvi-install/xosvi-symbolicate)");
+                                  "helper not allowed (xosvi-build/xosvi-install/xosvi-symbolicate/xosvi-bin)");
         return;
     }
     char helper_path[PATH_MAX];

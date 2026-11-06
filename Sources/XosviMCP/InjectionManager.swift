@@ -277,6 +277,18 @@ final class InjectionManager {
             if viaXPC.0 == 0 { return (0, viaXPC.1) }
             if nativeError == nil { nativeError = "[xpc-root] " + viaXPC.1 }
         }
+        // v0.2.5：守护的 root helper **xosvi-bin** 代跑包内工具（白名单 + 绝对路径校验）。
+        //
+        // 上面那条 runViaRootChannel 走的是 `xosvi-build --exec <裸命令>`，转一趟 dash：
+        // 命令串里的引号被吃一层、非 0 退出码被 [exit N] 包住还要二次解析，任何一环
+        // 不对劲就表现为「spawnRoot failed」而看不到真实原因。这里改成把**工具绝对
+        // 路径 + 参数数组**原样交给 helper，不经过 shell，拿到的就是工程真正的退出码。
+        // 守护没装（< 0.2.5）时 helper 不在白名单，返回 nil，自动退回老路径。
+        if JBEnvironment.isJailbroken,
+           let viaBin = runViaBinHelper(name, bin: bin, args: args, timeout: timeout) {
+            if viaBin.0 == 0 { return (0, viaBin.1) }
+            if nativeError == nil { nativeError = "[xosvi-bin] " + viaBin.1 }
+        }
         // v6.6.10：越狱环境专用提权路径。
         // rootHide/Relaxin 会拦截 persona spawn → 恒返回 85 (ENOSYS)，那条路注定失败。
         // 越狱的 amfid 已绕过签名校验，只要 helper 有 setuid + root 属主，
@@ -375,6 +387,72 @@ final class InjectionManager {
 
     private func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
+    }
+
+    // MARK: - root helper xosvi-bin
+
+    /// xosvi-bin 能代跑的工具（与 Support/xosvi/xosvi-bin.c 的 allowed_tools 一致）。
+    private static let rootBinTools: Set<String> = [
+        "ldid", "cp", "cp-15", "rm", "mv", "mv-15", "mkdir", "chown",
+        "insert_dylib", "optool", "install_name_tool", "ct_bypass", "teamid", "opainject"
+    ]
+
+    /// 借守护的 root helper 执行一个包内工具，返回（退出码, 输出）；守护不可用时返回 nil。
+    ///
+    /// 不经过 shell：请求体是 `[<工具名>, <工具绝对路径>, "--", 参数...]`，
+    /// 守护 fork 出 xosvi-bin 后直接 execv，stdout/stderr 原样回传。
+    private func runViaBinHelper(_ name: String, bin: String, args: [String], timeout: Double) -> (Int32, String)? {
+        guard Self.rootBinTools.contains(name) else { return nil }
+        let trusted = prepareTrustedToolForRoot(name, path: bin)
+        let res = XosviXPC.helper("xosvi-bin",
+                                  args: [name, trusted, "--"] + args,
+                                  timeout: Int(min(max(timeout, 1), 120)))
+        guard (res["ok"] as? Bool) == true else { return nil }
+        // helper 不在白名单 = 守护版本太旧（< 0.2.5），让调用方退回老路径
+        if let err = res["error"] as? String, err.contains("not allowed") { return nil }
+        let code = Int32((res["exit_code"] as? Int) ?? -1)
+        var out = (res["stdout"] as? String) ?? ""
+        if let err = res["error"] as? String, !err.isEmpty { out += (out.isEmpty ? "" : " ") + err }
+        if code == 127, out.contains("Unable to find") {
+            out += "（副本缺 bootstrap 依赖库：\(trusted)）"
+        }
+        return (code, out)
+    }
+
+    /// 为包内工具找一份「跑得起来」的副本。
+    ///
+    /// 本机实测（iOS 17.1 / roothide）：守护启动的**第一个** helper 会在自己的 bootstrap
+    /// 视图（/.jbroot-*/usr/...）里被内核按该视图补齐 rootfs 沙箱扩展；之后 fork 出来的
+    /// 子进程再 exec 真根视图路径（/var/containers/.../Xosvi.app/bin/cp）会因为镜像
+    /// 不在视图映射里，拿不到同样的扩展 → 被禁写 App 容器，复制 App 只有 EPERM。
+    /// 但同一个 App 自带的**原版** cp 从 dash 视图启动却是正常的。
+    ///
+    /// 所以优先用 bootstrap 里的 cp（`<bootstrap>` 由调用方作为首参传入时解析）；
+    /// 没有才退回包内副本，并把失败原因带回去，而不是笼统报「spawnRoot failed」。
+    private func prepareTrustedToolForRoot(_ name: String, path: String) -> String {
+        // 工具名 → bootstrap 里的名字：coreutils 的 cp 变体都叫 cp
+        let wanted = name.hasPrefix("cp") ? "cp" : (name.hasPrefix("mv") ? "mv" : name)
+        for root in Self.bootstrapRoots() {
+            let cand = root + "/usr/bin/" + wanted
+            if FileManager.default.isExecutableFile(atPath: cand) { return cand }
+        }
+        return path
+    }
+
+    /// 本机上 bootstrap 的候选根：共享视图里的 .jbroot-* 目录。
+    private static func bootstrapRoots() -> [String] {
+        let bases = ["/private/var/containers/Bundle/Application",
+                     "/var/containers/Bundle/Application"]
+        var out: [String] = []
+        let fm = FileManager.default
+        for base in bases {
+            guard let entries = try? fm.contentsOfDirectory(atPath: base) else { continue }
+            for e in entries where e.hasPrefix(".jbroot-") {
+                let p = base + "/" + e
+                if fm.isExecutableFile(atPath: p + "/usr/bin/cp") { out.append(p) }
+            }
+        }
+        return out
     }
 
     /// v2.9.126：root 环境下 FileManager 原生映射 (对齐 TrollFools isPrivileged 快路径）。

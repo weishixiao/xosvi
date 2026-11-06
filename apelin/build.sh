@@ -64,6 +64,7 @@ build_one tools/xosvi-cli.c            xosvi-cli            -framework Foundatio
 build_one Support/xosvi/xosvi-build.c       xosvi-build      -ISupport/xosvi
 build_one Support/xosvi/xosvi-install.c     xosvi-install    -ISupport/xosvi
 build_one Support/xosvi/xosvi-symbolicate.c xosvi-symbolicate -ISupport/xosvi
+build_one Support/xosvi/xosvi-bin.c         xosvi-bin        -ISupport/xosvi
 
 # ---- 签名 --------------------------------------------------------------------
 echo ">>> 签名"
@@ -80,11 +81,12 @@ BIN_PATHCHECK=$(staged_bin xosvi-pathcheck)
 BIN_BUILD=$(staged_bin xosvi-build)
 BIN_INSTALL=$(staged_bin xosvi-install)
 BIN_SYM=$(staged_bin xosvi-symbolicate)
+BIN_XBIN=$(staged_bin xosvi-bin)
 
 ldid -S"${APELIN_PROJECT_ROOT:?}/Support/xosvid.entitlements"     "$BIN_XOSVID"
 ldid -S"${APELIN_PROJECT_ROOT:?}/Support/xosvi-cli.entitlements"  "$BIN_CLI"
 ldid -S"${APELIN_PROJECT_ROOT:?}/Support/bin-entitlements.plist"  "$BIN_PATHCHECK" || ldid -S "$BIN_PATHCHECK"
-for b in "$BIN_BUILD" "$BIN_INSTALL" "$BIN_SYM"; do
+for b in "$BIN_BUILD" "$BIN_INSTALL" "$BIN_SYM" "$BIN_XBIN"; do
   ldid -S"${APELIN_PROJECT_ROOT:?}/Support/bin-entitlements.plist" "$b" || ldid -S "$b"
 done
 
@@ -99,11 +101,13 @@ install -m 0755 "$BIN_BUILD"      "$pkg/usr/libexec/xosvi/xosvi-build"
 install -m 0755 "$BIN_INSTALL"    "$pkg/usr/libexec/xosvi/xosvi-install"
 install -m 0755 "$BIN_SYM"        "$pkg/usr/libexec/xosvi/xosvi-symbolicate"
 install -m 0755 "$BIN_PATHCHECK"  "$pkg/usr/libexec/xosvi/xosvi-pathcheck"
+install -m 0755 "$BIN_XBIN"       "$pkg/usr/libexec/xosvi/xosvi-bin"
 install -m 0755 "$BIN_CLI"        "$pkg/usr/bin/xosvi-cli"
 
 # 布局自检：少一个文件就失败，而不是装出半套
 for f in usr/libexec/xosvid usr/libexec/xosvi/xosvi-build usr/libexec/xosvi/xosvi-install \
-         usr/libexec/xosvi/xosvi-symbolicate usr/libexec/xosvi/xosvi-pathcheck usr/bin/xosvi-cli; do
+         usr/libexec/xosvi/xosvi-symbolicate usr/libexec/xosvi/xosvi-pathcheck \
+         usr/libexec/xosvi/xosvi-bin usr/bin/xosvi-cli; do
   [ -f "$pkg/$f" ] || { echo "layout missing: $f" >&2; exit 1; }
 done
 
@@ -157,8 +161,10 @@ cat > "$pkg/Library/LaunchDaemons/wiki.qaq.xosvid.plist" <<'PLIST'
 PLIST
 
 # ---- DEBIAN ------------------------------------------------------------------
-VERSION="0.2.4"   # 0.2.4 守护：参数/耗时/退出码入日志、helper 移出监听队列（并发 ≤3）、
-                  # run_helper 超时与 4MB 输出不再死锁、日志去重；App 侧 XPC 取消竞态修复
+VERSION="0.2.5"   # 0.2.5：新增 xosvi-bin root helper（白名单代跑 App 包内注入工具，
+                  # 不经 shell、绝对路径校验），补上 iOS 17 越狱上「静态注入第一步就
+                  # spawnRoot failed」的缺口；0.2.4 起参数/耗时/退出码入日志、
+                  # helper 移出监听队列（并发 ≤3）、run_helper 超时与 4MB 输出不再死锁
 cat > "$root/DEBIAN/control" <<CONTROL
 Package: com.xosvi.daemon
 Version: ${VERSION}
@@ -170,7 +176,7 @@ Priority: optional
 Depends: firmware (>= 15.0)
 Description: Xosvi 特权守护进程与构建 helper
  xosvid 以 root 身份提供 XPC MachService wiki.qaq.xosvi.service，
- 只执行白名单 helper（xosvi-build / xosvi-install / xosvi-symbolicate）。
+ 只执行白名单 helper（xosvi-build / xosvi-install / xosvi-symbolicate / xosvi-bin）。
  roothide 下按 /var/containers/Bundle/Application/.jbroot-* 实际探测 bootstrap。
 CONTROL
 

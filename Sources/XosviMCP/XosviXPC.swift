@@ -27,7 +27,7 @@ enum XosviXPC {
     /// 守护只接受带这个 entitlement 的客户端（见 tools/xosvid.c 的 peer_allowed）
     static let clientEntitlement = "wiki.qaq.xosvi.client"
     /// 守护允许的 helper 白名单，与 tools/xosvid.c 的 normalize_helper 一致
-    static let allowedHelpers = ["xosvi-build", "xosvi-install", "xosvi-symbolicate"]
+    static let allowedHelpers = ["xosvi-build", "xosvi-install", "xosvi-symbolicate", "xosvi-bin"]
 
     /// XPC_ERROR_KEY_DESCRIPTION 的字面值（xpc/xpc.h）：错误事件就是带这个键的字典。
     private static let errorKey = "XPCErrorDescription"
