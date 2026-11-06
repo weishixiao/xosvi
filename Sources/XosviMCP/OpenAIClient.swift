@@ -1851,9 +1851,8 @@ final class UsageRecorder {
     private var lastInputEst = 0
 
     init() {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first
-            ?? FileManager.default.temporaryDirectory
-        fileURL = dir.appendingPathComponent("xosvi_usage.jsonl")
+        // v9.12：用量记录跟着数据根走，不再往共享 Documents 里丢文件
+        fileURL = URL(fileURLWithPath: XDirs.usage)
     }
 
     func begin(messages: [ChatMessage]) {

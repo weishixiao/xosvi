@@ -130,7 +130,7 @@ struct KnowledgeSettingsView: View {
             Section(header: Text("说明")) {
                 Text("知识不会全局注入上下文，由 knowledge.search 按需检索后作为工具结果返回。")
                     .font(XType.note).foregroundColor(.secondary)
-                Text("自定义结构化条目放 Documents/Knowledge/custom/*.json（结构见内置包），导入后点「重建索引」。")
+                Text("自定义结构化条目放 /var/mobile/Documents/wiki.qaq.xosvi/Knowledge/custom/*.json（结构见内置包），导入后点「重建索引」。")
                     .font(XType.section).foregroundColor(.secondary)
             }
         }

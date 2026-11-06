@@ -40,8 +40,7 @@ final class SkillStore {
     private var enabledKey = "xosvi.skills_enabled"
 
     private var kbURL: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("KnowledgeBase")
+        URL(fileURLWithPath: XDirs.knowledgeBase, isDirectory: true)
             .appendingPathComponent("skills.json")
     }
 

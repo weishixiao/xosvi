@@ -158,8 +158,7 @@ final class AuditLog: ObservableObject {
 
     private static let jsonlLimit = 500
     private var jsonlURL: URL {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("audit", isDirectory: true)
+        let dir = URL(fileURLWithPath: XDirs.audit, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("tool_log.jsonl")
     }

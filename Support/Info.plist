@@ -75,7 +75,7 @@
 	<array>
 		<dict>
 			<key>CFBundleURLName</key>
-			<string>dev.xosvi.app.deeplink</string>
+			<string>com.xosvi.app.deeplink</string>
 			<key>CFBundleURLSchemes</key>
 			<array>
 				<string>xosvi</string>
@@ -85,7 +85,7 @@
 	<key>CFBundleVersion</key>
 	<string>267</string>
 	<key>MinimumOSVersion</key>
-	<string>14.0</string>
+	<string>15.0</string>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsArbitraryLoadsInWebContent</key>
@@ -124,11 +124,7 @@
 		<string>bin/install_name_tool</string>
 		<string>bin/optool</string>
 		<string>bin/opainject</string>
-		<string>bin/python3</string>
-		<string>bin/lua</string>
-		<string>bin/node</string>
-		<string>bin/r2</string>
-		<string>bin/cstool</string>
+		<string>bin/fuck_helper</string>
 	</array>
 	<key>UIBackgroundModes</key>
 	<array>

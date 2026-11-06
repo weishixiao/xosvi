@@ -26,6 +26,17 @@
   2. `FileExecTool.extractStrings` 逐字节 append 到 `[UInt8]`，27MB App 二进制实测 20s+ 未返回，同一次请求后网关整体失去响应 → 已改为切片扫描 + 只扫前 8MB（C 等价实现验证 27MB 即时返回）。
   另：`file` 工具对 `/usr/bin/true` 报 no such file —— App 沙盒看不到 jbroot 路径，属既有路径可见性问题，与 B5 无关。
   `smoke_external.json` 因此改为模板变量，真机需用 App 容器内可见的路径。
+- D-014（2026-11-06）：**数据目录彻底隔离**。所有可写数据统一到
+  `/var/mobile/Documents/wiki.qaq.xosvi`（`Sources/XosviMCP/XDirs.swift` 是唯一来源），
+  App Group 换成 `group.wiki.qaq.xosvi`。三条执行原则：
+  1. 共享位置（`/var/mobile/Documents`、`/var/mobile/Library`）上的旧数据**只复制、绝不 move**——
+     同机可能装着上游 TrollAgent，搬走等于替它删数据；只有本 App 沙盒容器里的旧 Workspace 才搬。
+  2. `FreshInstallReset` 的清理范围收回到数据根 + 真正的沙盒容器 + Keychain。此前按
+     `.documentDirectory` / `.libraryDirectory` 清空，而在 `no-container` 下这两个值解析成
+     `/var/mobile/Documents` 与 `/var/mobile/Library`，触发即清空整个 mobile 的 Library（不可恢复）。
+  3. 故意不动的三处：iSH rootfs（`Library/Application Support/ish-rootfs`，迁走须整个重解压）、
+     jb-p1lot（`Library/Application Support/jb-p1lot`，跨工具共用同一份二进制）、
+     固定端口（8765/4789/18080/18180/19080，三端协同改动，收益低风险高）。
 
 ## 阻塞记录（补充）
 
@@ -70,6 +81,12 @@
 | P1-4 | python3 bind 容错 + realpath | DONE | main | python3 -c "print(1)" 输出 1 | PythonCLI/main.c |
 | P1-5 | shell 分段执行 + 路径归一 | DONE | main | B=/tmp id -u、for 循环可用 | ShellSegmenter.swift |
 | P2-6 | shim 识别（sqlite3/plutil） | DONE | main | diagnose 的 shims 标出 | ShimDetector.swift |
+| I1 | Swift 侧路径统一到 XDirs | DONE | main | `grep -rn documentDirectory Sources/` 只剩迁移与 iSH 绑定 | 知识库/技能/指令/审计/崩溃/用量/图标缓存/临时文件/默认 cwd/下载目录共 15 处；**Swift 未编译，需 CI** |
+| I2 | `FreshInstallReset` 清理范围收口 | DONE | main | 代码审阅 | 只清 `XDirs.dataRoot` + 含 `Containers/Data/Application` 的真容器 + Keychain；标记加旧位置兼容 |
+| I3 | 迁移不破坏上游共享数据 | DONE | main | 代码审阅 | 共享位置只复制；容器旧 Workspace 才 move；组迁移先判空、后落标记 |
+| I4 | MitmC 日志路径去掉写死 UUID | DONE | main | 代码审阅 | 从 `ca_pem` 推导 App Group 根，`TMPDIR` 兜底 |
+| I5 | 持久注入目录隔离 | DONE | main | 代码审阅 | 写 `<数据根>/persist/PersistentPlugins`；旧目录只读兼容 + 卸载时一并清理 |
+| I6 | 杂项对齐 | DONE | main | 代码审阅 | workflow 名 `build-ios.yml`；MinimumOSVersion 15.0；URL scheme `com.xosvi.app.deeplink`；TSRootBinaries 去掉 5 个不存在的二进制、补 `fuck_helper`；远程文件接口白名单收窄到数据根 |
 
 ## 下一步
 

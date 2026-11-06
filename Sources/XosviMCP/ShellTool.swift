@@ -1796,7 +1796,7 @@ final class ShellExecTool: MCPTool {
         // 解析路径
         var resolvedPath = ShellExecTool.normalizePath((path as NSString).expandingTildeInPath)
         if resolvedPath == "." || resolvedPath == "./" {
-            resolvedPath = NSHomeDirectory() + "/Documents"
+            resolvedPath = XDirs.workspace
         }
         
         // 检查路径是否存在。v3.4.9：不再强制"必须是目录"——
@@ -1807,7 +1807,7 @@ final class ShellExecTool: MCPTool {
                 "command": command,
                 "exit_code": 1,
                 "stdout": "ls: cannot access '\(path)': No such file or directory",
-                "cwd": NSHomeDirectory() + "/Documents",
+                "cwd": XDirs.workspace,
                 "ios_native": true,
                 "hint": "iOS native ls: direct access to iOS filesystem"
             ]
@@ -2532,7 +2532,7 @@ final class ShellExecTool: MCPTool {
         let tmo: TimeInterval = (name == "r2") ? 300 : 90
         // fix3ck/fix3cl3: r2 输出写 TROLL_R2_OUT 文件（r_core 静态库构造器重定向 stdout，fputs 全丢）——
         // Workspace 绝对路径 + mkdir 保障（子进程 fopen 依赖父目录存在）
-        let wsBase = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace"
+        let wsBase = XDirs.workspace
         try? FileManager.default.createDirectory(atPath: wsBase, withIntermediateDirectories: true)
         let r2OutPath = wsBase + "/troll_r2_out.txt"
         var benv = ["PYTHONIOENCODING": "utf-8", "TMPDIR": NSTemporaryDirectory()]
@@ -3310,8 +3310,8 @@ final class ShellExecTool: MCPTool {
     
     /// v3.1.32: iOS native pwd 命令——显示当前目录
     private static func runIOSPwd(_ command: String) -> [String: Any] {
-        // 用工作区目录作为默认 pwd
-        let pwd = NSHomeDirectory() + "/Documents"
+        // 用工作区目录作为默认 pwd（v9.12：不再指向共享的 /var/mobile/Documents）
+        let pwd = XDirs.workspace
         return [
             "command": command,
             "exit_code": 0,
@@ -3672,7 +3672,9 @@ final class ShellExecTool: MCPTool {
         // 下载模式
         if outputPath.isEmpty {
             let filename = url.lastPathComponent
-            outputPath = NSHomeDirectory() + "/Documents/downloads/" + (filename.isEmpty ? "download.bin" : filename)
+            let dlDir = XDirs.workspace + "/downloads"
+            try? FileManager.default.createDirectory(atPath: dlDir, withIntermediateDirectories: true)
+            outputPath = dlDir + "/" + (filename.isEmpty ? "download.bin" : filename)
         }
         // v4.4.6: 下载走进度条（URLSession downloadTask + delegate → InstallationRegistry.setFraction），
         // UI 实时显示百分比；完成后 AI 拿到含大小/耗时的结构化摘要。
@@ -4072,7 +4074,7 @@ final class ShellExecTool: MCPTool {
     /// v3.1.33: iOS 原生 df 命令——磁盘空间
     private static func runIOSDf(_ command: String) -> [String: Any] {
         let fm = FileManager.default
-        let docsURL = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let docsURL = URL(fileURLWithPath: XDirs.dataRoot, isDirectory: true)
         let attrs = try? fm.attributesOfFileSystem(forPath: docsURL.path)
         let freeSize = (attrs?[.systemFreeSize] as? NSNumber)?.int64Value ?? 0
         let totalSize = (attrs?[.systemSize] as? NSNumber)?.int64Value ?? 0

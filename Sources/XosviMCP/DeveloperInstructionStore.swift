@@ -19,8 +19,7 @@ final class DeveloperInstructionStore {
     private var metaKey = "xosvi.dev_instructions_meta"
 
     private var dir: URL {
-        let kb = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("KnowledgeBase")
+        let kb = URL(fileURLWithPath: XDirs.knowledgeBase, isDirectory: true)
         return kb.appendingPathComponent("DeveloperInstructions", isDirectory: true)
     }
 

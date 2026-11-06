@@ -78,8 +78,9 @@ final class DeviceSnapshotTool: MCPTool {
         let battery = UIDevice.current.batteryLevel
         let fm = FileManager.default
         var freeBytes: Int64 = 0
-        if let url = try? fm.url(for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: false) {
-            let vals = try? url.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
+        if fm.fileExists(atPath: XDirs.dataRoot) {
+            // v9.12：查卷容量只需要一个存在的路径，用本 App 数据根即可
+            let vals = try? URL(fileURLWithPath: XDirs.dataRoot).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey])
             freeBytes = Int64(vals?.volumeAvailableCapacityForImportantUsage ?? 0)
         }
         return [

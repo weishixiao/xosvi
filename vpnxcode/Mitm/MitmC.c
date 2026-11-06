@@ -32,18 +32,47 @@
 static X509 *g_ca_cert = NULL;
 static EVP_PKEY *g_ca_key = NULL;
 
-// 诊断日志(写 AppGroup/mitm_debug.log)——区分 SSL_accept 失败根因(gen_cert 失败 vs App 拒证书 vs 超时)
+// 诊断日志目标（由 mitm_init 从证书路径推出 = App Group 容器根下的 mitm_debug.log）
+// 以前这里写死过一个 App Group 容器的 UUID 路径，组标识换了（group.com.ai.iosxcode →
+// group.wiki.qaq.xosvi）之后就永远 fopen 失败，日志静默全丢。
+static char g_log_path[1024];
+
+// 诊断日志——区分 SSL_accept 失败根因(gen_cert 失败 vs App 拒证书 vs 超时)
 static void mitm_dbg(const char *fmt, ...) {
     char buf[512];
     va_list ap;
     va_start(ap, fmt);
     vsnprintf(buf, sizeof buf, fmt, ap);
     va_end(ap);
-    FILE *f = fopen("/var/mobile/Containers/Shared/AppGroup/1FAA4F33-8923-4681-8243-CDADD323D990/mitm_debug.log", "a");
+    char fallback[1024];
+    const char *path = g_log_path;
+    if (path[0] == '\0') {
+        // mitm_init 还没跑（或证书路径里没有分隔符）：退回 App 自己的 TMPDIR
+        const char *tmp = getenv("TMPDIR");
+        if (!tmp) return;
+        snprintf(fallback, sizeof fallback, "%s/mitm_debug.log", tmp);
+        path = fallback;
+    }
+    FILE *f = fopen(path, "a");
     if (f) { fprintf(f, "[%ld] %s\n", (long)time(NULL), buf); fclose(f); }
 }
 
+// 从 ca_pem（<AppGroup>/Cert/cacert.pem）截出 <AppGroup>/mitm_debug.log
+static void set_log_path_from_cert(const char *ca_pem) {
+    if (!ca_pem) return;
+    size_t n = strlen(ca_pem);
+    if (n >= sizeof g_log_path) return;
+    memcpy(g_log_path, ca_pem, n + 1);
+    char *slash = strrchr(g_log_path, '/');          // 去掉 cacert.pem
+    if (!slash) { g_log_path[0] = '\0'; return; }
+    *slash = '\0';
+    char *parent = strrchr(g_log_path, '/');         // 去掉 Cert
+    if (parent) *parent = '\0';
+    strncat(g_log_path, "/mitm_debug.log", sizeof g_log_path - strlen(g_log_path) - 1);
+}
+
 int mitm_init(const char *ca_pem, const char *ca_key_pem) {
+    set_log_path_from_cert(ca_pem);
     SSL_library_init();
     OpenSSL_add_all_algorithms();
     SSL_load_error_strings();

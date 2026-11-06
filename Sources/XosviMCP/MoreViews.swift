@@ -587,7 +587,7 @@ struct AgentsAndSkillsView: View {
 
     private func reload() {
         skills = SkillStore.shared.all
-        let kb = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("KnowledgeBase")
+        let kb = URL(fileURLWithPath: XDirs.knowledgeBase, isDirectory: true)
         if let data = try? Data(contentsOf: kb.appendingPathComponent("agents.json")),
            let json = try? JSONSerialization.jsonObject(with: data) as? [[String: String]] {
             agents = json.map { AgentItem(name: $0["name"] ?? "", systemPrompt: $0["systemPrompt"] ?? "") }

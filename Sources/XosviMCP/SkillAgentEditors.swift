@@ -9,8 +9,7 @@ import SwiftUI
 /// Agent 保存（独立实现，写 KnowledgeBase/agents.json）
 enum AgentJSONStore {
     static func upsert(file: String, entry: [String: String]) {
-        let kb = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("KnowledgeBase")
+        let kb = URL(fileURLWithPath: XDirs.knowledgeBase, isDirectory: true)
         try? FileManager.default.createDirectory(at: kb, withIntermediateDirectories: true)
         let url = kb.appendingPathComponent(file)
         var list: [[String: String]] = []

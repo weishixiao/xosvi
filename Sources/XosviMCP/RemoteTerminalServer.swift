@@ -281,12 +281,11 @@ final class RemoteTerminalServer {
             return
         }
         let allowedPrefixes: [String] = [
-            XDirs.workspace + "/",
-            NSHomeDirectory() + "/Documents/",
+            XDirs.dataRoot + "/",
         ]
         let expanded = (p as NSString).expandingTildeInPath
         guard allowedPrefixes.contains(where: { expanded.hasPrefix($0) }) else {
-            sendResponse(client, status: 403, body: json(["ok": false, "error": "path_denied", "hint": "only Documents/wiki.qaq.xosvi/Workspace and Documents are allowed"]))
+            sendResponse(client, status: 403, body: json(["ok": false, "error": "path_denied", "hint": "only paths under the Xosvi data root are allowed"]))
             return
         }
         guard let data = FileManager.default.contents(atPath: expanded) else {

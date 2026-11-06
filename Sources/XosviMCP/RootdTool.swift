@@ -43,10 +43,11 @@ final class RootdTool: MCPTool {
         // rootd 1.3.3 起会 glob 每个 App 容器的 Documents/Rootd。
         var dirs: [String] = []
         let home = NSHomeDirectory()
+        // v9.12：本 App 自己的 rootd 目录优先；共享 Documents/Rootd 留作兼容旧版守护进程
+        dirs.append(XDirs.rootd)
         dirs.append(home + "/Documents/Rootd")
-        dirs.append("/var/mobile/Documents/wiki.qaq.xosvi/Rootd")
         dirs.append("/var/mobile/Library/Rootd")
-        dirs.append("/var/mobile/Documents/wiki.qaq.xosvi/Workspace")
+        dirs.append(XDirs.workspace)
         dirs.append("/rootfs/var/mobile/Library/Rootd")
         return dirs
     }()

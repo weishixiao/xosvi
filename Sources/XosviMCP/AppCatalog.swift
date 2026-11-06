@@ -209,7 +209,8 @@ final class AppCatalog {
     static let iconCache = NSCache<NSString, UIImage>()
 
     /// v6.0.30: 图标磁盘缓存目录——内存缓存被系统回收后，回划仍能毫秒级读盘，不会重新占位加载
-    static let diskIconDir = NSHomeDirectory() + "/Documents/IconCache"
+    /// v9.12：挪进本 App 数据根，不再往共享的 /var/mobile/Documents 写
+    static let diskIconDir = XDirs.dataRoot + "/IconCache"
 
     private static func iconCachePath(bundleId: String) -> String {
         return diskIconDir + "/" + bundleId + ".png"
@@ -319,7 +320,7 @@ final class AppCatalog {
     static func autoCleanTempFiles() {
         let fm = FileManager.default
         let tempDirs = [
-            NSHomeDirectory() + "/tmp",
+            XDirs.tmp,
             XDirs.workspace
         ]
         let cutoff = Date().addingTimeInterval(-3*24*3600) // 3天前

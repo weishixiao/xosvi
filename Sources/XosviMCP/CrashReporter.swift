@@ -35,8 +35,7 @@ final class CrashReporter {
     }
 
     static func write(_ text: String) {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CrashLogs", isDirectory: true)
+        let dir = URL(fileURLWithPath: XDirs.crashLogs, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let path = dir.appendingPathComponent("crash-\(Int(Date().timeIntervalSince1970)).log")
         try? text.data(using: .utf8)?.write(to: path)
@@ -44,8 +43,7 @@ final class CrashReporter {
 
     static func logs() -> [URL] {
         var out: [URL] = []
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CrashLogs", isDirectory: true)
+        let dir = URL(fileURLWithPath: XDirs.crashLogs, isDirectory: true)
         if let here = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil))?
             .filter({ $0.lastPathComponent.hasPrefix("crash-") }) {
             out += here

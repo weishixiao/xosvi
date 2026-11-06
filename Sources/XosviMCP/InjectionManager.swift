@@ -1036,9 +1036,21 @@ final class InjectionManager {
         FileManager.default.fileExists(atPath: target + ".bak_macho")   // 旧格式兼容
     }
 
-    /// 持久化注入资产到 /var/mobile/Library/TrollFools/PersistentPlugins/<bid>/ (对齐 TrollFools persist：
-    /// App 覆盖重装/更新后可从持久区恢复注入）
-    private static let persistentPluginsRoot = "/var/mobile/Library/TrollFools/PersistentPlugins"
+    /// 持久化注入资产到 <数据根>/persist/PersistentPlugins/<bid>/（App 覆盖重装/更新后可从此恢复注入）
+    /// v9.12：从共享的 /var/mobile/Library/TrollFools/PersistentPlugins 挪进本 App 数据根——
+    /// 那个目录同机的 TrollFools / 上游 TrollAgent 也在用，两边同名 bundle 会互相覆盖。
+    private static let persistentPluginsRoot = XDirs.persist + "/PersistentPlugins"
+    /// 旧共享位置：只读兼容与清理，不再写入
+    private static let legacyPluginsRoot = "/var/mobile/Library/TrollFools/PersistentPlugins"
+
+    /// 某个 bundle 的持久化目录：新位置优先，没有则回落旧位置（升级前注入过的还能恢复）
+    private static func pluginsBase(for bundleId: String) -> String {
+        let newBase = persistentPluginsRoot + "/" + bundleId
+        if FileManager.default.fileExists(atPath: newBase) { return newBase }
+        let oldBase = legacyPluginsRoot + "/" + bundleId
+        if FileManager.default.fileExists(atPath: oldBase) { return oldBase }
+        return newBase
+    }
     private func persistAsset(name: String, src: String, bid: String) {
         let base = Self.persistentPluginsRoot + "/" + bid
         let dst = (base as NSString).appendingPathComponent(name)
@@ -1053,7 +1065,7 @@ final class InjectionManager {
 
     /// 从持久化区启用插件 (对齐 TrollFools：启用 = 从 PersistentPlugins 副本重新注入）
     func restore(bundleId: String) throws -> [String: Any] {
-        let base = Self.persistentPluginsRoot + "/" + bundleId
+        let base = Self.pluginsBase(for: bundleId)
         guard let items = try? FileManager.default.contentsOfDirectory(atPath: base) else {
             throw MCPError.failed("this App has no persisted plugin to enable (inject first to persist)")
         }
@@ -2001,9 +2013,12 @@ final class InjectionManager {
         if desist {
         for asset in assets {
             let pName = (asset as NSString).lastPathComponent
-            let pDst = Self.persistentPluginsRoot + "/" + bundleId + "/" + pName
-            if FileManager.default.fileExists(atPath: pDst) {
-                _ = runAsRoot("rm", args: ["-rf", pDst])
+            // 新旧两个位置都清：升级前持久化在共享目录里的也要一并删掉
+            for rootBase in [Self.persistentPluginsRoot, Self.legacyPluginsRoot] {
+                let pDst = rootBase + "/" + bundleId + "/" + pName
+                if FileManager.default.fileExists(atPath: pDst) {
+                    _ = runAsRoot("rm", args: ["-rf", pDst])
+                }
             }
         }
         }

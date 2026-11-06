@@ -60,7 +60,6 @@ final class SaveDataTool: MCPTool {
             return ["message": "未找到 App：\(bid)", "hint": "用 app list 确认 bundle_id"]
         }
         let house = NSHomeDirectory() // 本 App 容器
-        _ = house
         // 目标 App 数据容器：优先 container 解析
         let candidates = [
             "/var/mobile/Containers/Data/Application",

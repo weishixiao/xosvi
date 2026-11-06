@@ -147,7 +147,30 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 + 经验记忆。
 遇到不熟悉的逆向/抓包/注入流程，先查技能库；缺技能可建议新增，不要把任务硬塞到不匹配的工具。
 
-## 构建与安装（com.xosvi.daemon，v0.2.0 起）
+## 数据目录与 App Group（v9.12 起）
+
+本二改与上游 TrollAgent 装在同一台机器上，所有可写数据都走自己的路径，**不再共用上游的目录与组**：
+
+| 用途 | 路径 |
+|---|---|
+| 数据根 | `/var/mobile/Documents/wiki.qaq.xosvi` |
+| 工作区 / 日志 / 临时 | `<数据根>/Workspace`、`<数据根>/logs`、`<数据根>/tmp` |
+| 知识库 / 技能 / 审计 / 崩溃 | `<数据根>/Knowledge`、`KnowledgeBase`、`audit`、`CrashLogs` |
+| 持久注入资产 | `<数据根>/persist/PersistentPlugins/<bundleId>/` |
+| rootd 通道 | `<数据根>/Rootd` |
+| App Group | `group.wiki.qaq.xosvi`（上游旧的 `group.com.ai.iosxcode` 只在一次性迁移里读） |
+
+- Swift 侧一律用 `Sources/XosviMCP/XDirs.swift` 的常量。App 带 `com.apple.private.security.no-container`，
+  `.documentDirectory` / `.libraryDirectory` 解析成 `/var/mobile/Documents`、`/var/mobile/Library`
+  （**全机共享**），往那儿写就是污染别人的目录，`FreshInstallReset` 甚至曾据此清空整个 Library。
+- C / shell 侧是字面量，改目录时两边一起改：`Support/xosvi/xosvi-common.h`、`Support/rootd/rootd.sh`、
+  `Support/xosvi/*.c`、`tools/`、`vpnxcode/`、`tweaks/`。
+- 迁移（`XDirs.migrateLegacyDirs` / `migrateLegacyAppGroup`）只做一次，标记 `.migrated-v2`、
+  `.migrated-appgroup`。共享位置上的旧数据**只复制、绝不 move**（同机的上游可能还在用）；
+  只有 App 自己沙盒容器里的旧 Workspace 才搬走。
+- 改 App Group 或 entitlements 必须**重签 + 重装**（含 VpnTunnel appex），否则新容器拿不到。
+
+## 构建与安装（com.xosvi.daemon，v0.2.5 起）
 
 - 本项目是 **external workspace**：`apelin/build.sh` 是唯一的构建入口，由 `apelin_project_build`
   调用（`apelin-project.json` 的 `external.script`）。不要在 `shell_run` 里自己 `dpkg-deb` 打包。

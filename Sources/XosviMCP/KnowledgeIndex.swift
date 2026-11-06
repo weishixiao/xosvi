@@ -46,8 +46,9 @@ final class KnowledgeIndex {
     private let queue = DispatchQueue(label: "xosvi.kb.index")
 
     private var dbPath: String {
-        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Knowledge", isDirectory: true)
+        // v9.12：索引落到本 App 数据根。共享 Documents 下那份与上游 TrollAgent 共用，
+        // 两边的 SQLite WAL 会互相抢锁。
+        let dir = URL(fileURLWithPath: XDirs.knowledge, isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return dir.appendingPathComponent("kb.sqlite").path
     }
@@ -198,8 +199,8 @@ enum KnowledgeLoader {
                 }
             }
         }
-        let customDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Knowledge/custom", isDirectory: true)
+        // v9.12：自定义条目跟索引同目录，落在本 App 数据根（迁移时已从共享 Documents 复制过来）
+        let customDir = URL(fileURLWithPath: XDirs.knowledge + "/custom", isDirectory: true)
         if let files = try? FileManager.default.contentsOfDirectory(at: customDir, includingPropertiesForKeys: nil) {
             for u in files where u.pathExtension == "json" {
                 if let d = try? Data(contentsOf: u),
