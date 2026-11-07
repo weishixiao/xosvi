@@ -243,12 +243,8 @@ struct SettingsView: View {
 
     private var listBody: some View {
         List {
-            // 统一头部：设置页与所有二级页共用 XHeroHeader（标题 + 环境状态）
-            Section {
-                XHeroHeader(icon: "gearshape",
-                            title: L10n.t("settings"),
-                            subtitle: envSubtitle())
-            }
+            // v9.12：按用户要求删除设置页顶部固定「设置」字块（原来这里是 XHeroHeader）。
+            // 环境状态仍在下面的「环境」一行显示，envSubtitle / envIcon 保留未删。
             // v4.3.64：移除"测试系统分享面板（Debug）"——本设备侧载环境任何系统分享面板
             // 都崩（MobileIcons/CoreImage SIGSEGV，v4.3.43-63 全部真机证伪），
             // 该按钮只会闪退，无诊断价值。分享统一走 ShareCenter 自建菜单（存储到文件/拷贝）。

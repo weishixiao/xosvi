@@ -930,6 +930,8 @@ public final class ToolRegistry: ObservableObject {
         "web.search", "web.fetch",
         // v4.3.66：按需绑定 App 数据容器（bind_app 只读安全，bind_app_write 可写先备份，
         // app_write_file 原生直写先备份）——否则"小白一句话分析/改 App 数据"时 AI 看不到这些工具
+        // 第一梯队：统一备份台账——不默认启用的话「还原/清点备份」这类保命入口 AI 根本看不见
+        "backup",
         "bind_app", "bind_app_write", "app_write_file",
         // v7.6.5：github 工具已移除
         // v7.14.0：jb-p1lot 真机桥接（未安装二进制时工具会明确提示先 install，不会空转）
@@ -2094,6 +2096,8 @@ public final class ToolRegistry: ObservableObject {
         // v4.3.3: 原生可写通道——fakefs 挂载点固定只读(bind_app_write 实测写不进, Errno 30),
         // 写 App 数据容器改用 iOS 原生 FileManager 直写(绕开 Alpine), 写前自动备份。
         register(AppWriteFileTool())
+        // 第一梯队：统一备份台账——四类落点合并清点、一键还原、卸载前前置还原、目标指纹校验
+        register(BackupTool())
         // v2.9.99：一键新机 (绿盾式组合）
         // v3.1.62: 删 NewDeviceTool (已合并到 DeviceExecTool：device new_device）
         // v2.9.100：AI 分析引擎

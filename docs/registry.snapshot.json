@@ -1,11 +1,12 @@
 {
-  "count": 51,
+  "count": 52,
   "names": [
     "app",
     "app_write_file",
     "artifact",
     "assistant_memory",
     "automation",
+    "backup",
     "bind_app",
     "bind_app_write",
     "container",
@@ -93,6 +94,14 @@
       "requires_jailbreak": false,
       "requires_trollstore": false,
       "verified": true
+    },
+    "backup": {
+      "category": "filesystem",
+      "file": "BackupRegistry.swift",
+      "remote_only": false,
+      "requires_jailbreak": false,
+      "requires_trollstore": false,
+      "verified": false
     },
     "bind_app": {
       "category": "filesystem",

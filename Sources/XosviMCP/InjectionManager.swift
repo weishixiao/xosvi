@@ -455,6 +455,45 @@ final class InjectionManager {
         return out
     }
 
+    /// v9.11：把 `/bin/cp`、`/usr/bin/open` 这类**逻辑路径**换成这台机器上真能 exec 的一份。
+    ///
+    /// roothide / rootHide 下真根里的 `/bin`、`/usr/bin` 只是指向 bootstrap 的**占位符号链接**
+    /// （`/bin/cp -> .jbroot/usr/bin/cp`）。App 的容器视图里那条相对链接解析成断链，
+    /// 于是 `isExecutableFile` 与 `posix_spawn` 都当它不存在 → ENOENT(2)。
+    /// 控制台里那条 `Copy app failed: … spawnRoot failed (2 ENOENT)` 就是
+    /// `spawnRoot("/bin/cp", …)` 撞上的，跟目标 App、跟权限都无关。
+    ///
+    /// 解析顺序（第一个**真的可执行**的胜出）：原路径 → `<bootstrap>`+原路径 →
+    /// `<bootstrap>/usr/bin|usr/sbin/<名字>` → `/rootfs`+原路径 → App 自带的 `bin/<名字>` →
+    /// 原路径（保持旧行为，报错还是原来的）。
+    ///
+    /// 实测本机：`<bootstrap>/bin/cp` 本身也是 `cp -> .jbroot/usr/bin/cp` 这种相对链接，
+    /// 按绝对路径解开同样落空，所以真正能拿到的是 `<bootstrap>/usr/bin/cp`。
+    static func resolveTool(_ path: String) -> String {
+        guard path.hasPrefix("/") else { return path }
+        let fm = FileManager.default
+        if fm.isExecutableFile(atPath: path) { return path }
+        let name = (path as NSString).lastPathComponent
+        if let jb = JBEnvironment.jbrootPath, !jb.isEmpty, !path.hasPrefix(jb + "/") {
+            let direct = jb + path
+            if fm.isExecutableFile(atPath: direct) { return direct }
+            let parent = (path as NSString).deletingLastPathComponent
+            let remap: String? = (parent == "/bin") ? "/usr/bin" : (parent == "/sbin" ? "/usr/sbin" : nil)
+            if let remap = remap {
+                let cand = jb + remap + "/" + name
+                if fm.isExecutableFile(atPath: cand) { return cand }
+            }
+        }
+        let rf = JBEnvironment.rootfsPrefix
+        if !rf.isEmpty, !path.hasPrefix(rf + "/") {
+            let cand = rf + path
+            if fm.isExecutableFile(atPath: cand) { return cand }
+        }
+        let bundled = Bundle.main.bundleURL.appendingPathComponent("bin/" + name).path
+        if fm.isExecutableFile(atPath: bundled) { return bundled }
+        return path
+    }
+
     /// v2.9.126：root 环境下 FileManager 原生映射 (对齐 TrollFools isPrivileged 快路径）。
     /// 只处理参数形态明确的简单操作，无法安全映射返回 nil 走 spawn。
     private func nativeFileOp(_ name: String, _ args: [String]) -> (Int32, String)? {
@@ -645,7 +684,9 @@ final class InjectionManager {
     /// v2.9.281：argv[0] 必须放可执行路径——posix_spawn 的 argv[0] 是程序名惯例，
     /// trollstorehelper 等从 argv[1] 开始解析命令；之前直接放 args 导致 cmd 错位
     ///  (收到 "installd"/"custom" 而非 "install"/"uninstall"），helper 静默返回 0 假OK。
-    func spawn(_ path: String, args: [String], timeout: Double = 60) -> (Int32, String) {
+    func spawn(_ rawPath: String, args: [String], timeout: Double = 60) -> (Int32, String) {
+        // v9.11：逻辑路径先落地成真能 exec 的一份（越狱下 /bin/*、/usr/bin/* 常是断链）
+        let path = Self.resolveTool(rawPath)
         var argv: [UnsafeMutablePointer<CChar>?] = [strdup(path)] + args.map { strdup($0) }
         argv.append(nil)
         defer { for p in argv where p != nil { free(p) } }
@@ -768,7 +809,9 @@ final class InjectionManager {
         return .failed(code: code, detail: detail)
     }
 
-    func spawnRootDetailed(_ path: String, args: [String], timeout: Double = 60, usePersona: Bool = true) -> SpawnResult {
+    func spawnRootDetailed(_ rawPath: String, args: [String], timeout: Double = 60, usePersona: Bool = true) -> SpawnResult {
+        // v9.11：`/bin/cp`、`/usr/bin/open` 在 roothide 下是断链，先解析成 bootstrap 里的真路径
+        let path = Self.resolveTool(rawPath)
         // v2.9.281：argv[0] 放可执行路径 (posix_spawn 程序名惯例）。之前 argv[0]=args[0]
         // 导致 trollstorehelper 的 main (从 argv[1] 解析 cmd）把命令参数当成命令：
         // install/uninstall/refresh-all 全部假OK返回 0，实际从未执行 (小红书装不上根因）。
@@ -1068,6 +1111,16 @@ final class InjectionManager {
         let base = Self.pluginsBase(for: bundleId)
         guard let items = try? FileManager.default.contentsOfDirectory(atPath: base) else {
             throw MCPError.failed("this App has no persisted plugin to enable (inject first to persist)")
+        }
+        // 第一梯队：目标指纹校验。
+        // 台账记的是上次注入时的版本；App 已更新过就说明这份持久化资产可能对不上新二进制，
+        // 这时候自动重新注入不是「恢复」，是拿旧零件硬装新车——跳过，把判断交回给人。
+        if let app = AppCatalog.find(bundleId),
+           let why = BackupRegistry.fingerprintMismatch(bundleId: bundleId, appPath: app.path) {
+            AuditLog.shared.log("injection.fingerprint_skip", detail: "\(bundleId): \(why)")
+            return ["action": "restore", "bundleId": bundleId, "restored": [String: String](),
+                    "skipped": true, "reason": why,
+                    "hint": "App 已更新，旧持久化注入资产未自动恢复。确认兼容后再 inject command=enable 重新注入一遍以刷新台账。"]
         }
         var restored: [String: String] = [:]
         for item in items.sorted() where item.hasSuffix(".dylib") || item.hasSuffix(".framework") || item.hasSuffix(".bundle") {
@@ -1458,12 +1511,13 @@ final class InjectionManager {
             guard !builtinDylib.isEmpty else {
                 throw MCPError.failed("iOS 17+ requires dylib_path parameter (no built-in dylib found)")
             }
-            let (ok, msg) = injectStatic(bundleId: bundleId, dylibPath: builtinDylib)
-            if ok {
-                return ["injected": true, "method": "static", "message": msg, "ios_version": majorVer]
-            }
-            var out: [String: Any] = ["injected": false, "method": "static",
-                                      "message": msg, "ios_version": majorVer]
+            // v9.11：越狱设备上**先原地写**。
+            //
+            // 静态链要先把整个 App 复制到工作区、再打 IPA、再交给安装器重装——在 rootHide
+            // 这类设备上既慢又脆（旧版连第一步的 `/bin/cp` 都因断链 ENOENT，控制台只留一句
+            // "Copy app failed"）。越狱环境本来就不需要重签重装：改动目标 Mach-O、写完
+            // ldid 伪签就生效，出问题还有 .troll-fools.bak 可回滚。所以先走它，
+            // 不成再退回静态重打包（TrollStore 非越狱环境仍只有静态一条路）。
             if JBEnvironment.isJailbroken {
                 do {
                     let r = try inPlaceEnable(bundleId: bundleId, dylibSourcePath: builtinDylib,
@@ -1474,15 +1528,38 @@ final class InjectionManager {
                         var okResult = r
                         okResult["method"] = "inplace"
                         okResult["ios_version"] = majorVer
-                        okResult["static_error"] = msg
                         return okResult
                     }
-                    out["inplace_attempt"] = r
+                    let (ok, msg) = injectStatic(bundleId: bundleId, dylibPath: builtinDylib)
+                    if ok {
+                        return ["injected": true, "method": "static",
+                                "message": msg, "ios_version": majorVer,
+                                "inplace_attempt": r]
+                    }
+                    var out = r
+                    out["injected"] = false
+                    out["method"] = "inplace"
+                    out["ios_version"] = majorVer
+                    out["static_error"] = msg
+                    return out
                 } catch {
-                    out["inplace_error"] = "\(error)"
+                    let (ok, msg) = injectStatic(bundleId: bundleId, dylibPath: builtinDylib)
+                    if ok {
+                        return ["injected": true, "method": "static",
+                                "message": msg, "ios_version": majorVer,
+                                "inplace_error": "\(error)"]
+                    }
+                    return ["injected": false, "method": "inplace",
+                            "message": "原地注入失败：\(error)；静态重打包也失败：\(msg)",
+                            "ios_version": majorVer]
                 }
             }
-            return out
+            let (ok, msg) = injectStatic(bundleId: bundleId, dylibPath: builtinDylib)
+            if ok {
+                return ["injected": true, "method": "static", "message": msg, "ios_version": majorVer]
+            }
+            return ["injected": false, "method": "static",
+                    "message": msg, "ios_version": majorVer]
         }
 
         return try inPlaceEnable(bundleId: bundleId, dylibSourcePath: dylibSourcePath,
@@ -1883,6 +1960,11 @@ final class InjectionManager {
             }
             persisted = true
             detachMetadata(bundleId: bundleId)
+            // 第一梯队：记下「这次改的是哪个版本」。
+            // 没有这份记录，App 更新后按旧记录恢复注入就是盲操作——旧 dylib 对不上新二进制。
+            if let ap = AppCatalog.find(bundleId)?.path {
+                BackupRegistry.writeLedger(bundleId: bundleId, appPath: ap, assets: preparedAssets)
+            }
         }
         let trollfoolsCompatible = hasFrameworks
         return [
@@ -2694,12 +2776,17 @@ final class InjectionManager {
         try? fm.createDirectory(atPath: injectRoot, withIntermediateDirectories: true)
 
         // 1. 复制 App bundle 到临时目录
+        //
+        // v9.11：改成走 runAsRoot("cp"）而不是 spawnRoot("/bin/cp"）。
+        // 后者写死真根逻辑路径，在 roothide 上是断链（ENOENT 2），控制台只剩
+        // 一句 "Copy app failed"；runAsRoot 会按序尝试 native 直写 → 守护 root 通道 →
+        // xosvi-bin helper → 越狱 spawn，每一步的真实原因都带回结果里。
         let appDirName = (app.path as NSString).lastPathComponent
         let destApp = injectRoot + "/" + appDirName
         _ = try? fm.removeItem(atPath: destApp)
-        let (cpRc, cpOut) = spawnRoot("/bin/cp", args: ["-a", app.path, destApp], timeout: 180)
+        let (cpRc, cpOut) = runAsRoot("cp", args: ["-a", app.path, destApp], timeout: 180)
         guard cpRc == 0 else {
-            return (false, "Copy app failed: \(cpOut.prefix(200))")
+            return (false, "Copy app failed (rc=\(cpRc)): \(cpOut.prefix(300))")
         }
 
         // 2. 把 dylib 复制到 App bundle 的 Frameworks 目录
@@ -2707,9 +2794,9 @@ final class InjectionManager {
         try? fm.createDirectory(atPath: frameworksDir, withIntermediateDirectories: true)
         let dylibName = (dylibPath as NSString).lastPathComponent
         let destDylib = frameworksDir + "/" + dylibName
-        let (cpDylibRc, cpDylibOut) = spawnRoot("/bin/cp", args: [dylibPath, destDylib], timeout: 60)
+        let (cpDylibRc, cpDylibOut) = runAsRoot("cp", args: ["-f", dylibPath, destDylib], timeout: 60)
         guard cpDylibRc == 0 else {
-            return (false, "Copy dylib failed: \(cpDylibOut.prefix(200))")
+            return (false, "Copy dylib failed (rc=\(cpDylibRc)): \(cpDylibOut.prefix(300))")
         }
 
         // 3. 找主二进制路径
@@ -2732,11 +2819,11 @@ final class InjectionManager {
         // 5. 删除旧签名 (TrollStore 安装时会重新签名）
         let codeSign = destApp + "/_CodeSignature"
         if fm.fileExists(atPath: codeSign) {
-            _ = spawnRoot("/bin/rm", args: ["-rf", codeSign])
+            _ = runAsRoot("rm", args: ["-rf", codeSign])
         }
         let codeResources = destApp + "/CodeResources"
         if fm.fileExists(atPath: codeResources) {
-            _ = spawnRoot("/bin/rm", args: ["-rf", codeResources])
+            _ = runAsRoot("rm", args: ["-rf", codeResources])
         }
 
         // 6. 打包成 IPA (Payload/App.app 结构）
@@ -2747,9 +2834,9 @@ final class InjectionManager {
         try? fm.createDirectory(atPath: payloadRoot + "/Payload", withIntermediateDirectories: true)
         let payloadApp = payloadRoot + "/Payload/" + appDirName
         _ = try? fm.removeItem(atPath: payloadApp)
-        let (cpPayloadRc, cpPayloadOut) = spawnRoot("/bin/cp", args: ["-a", destApp, payloadApp], timeout: 180)
+        let (cpPayloadRc, cpPayloadOut) = runAsRoot("cp", args: ["-a", destApp, payloadApp], timeout: 180)
         guard cpPayloadRc == 0 else {
-            return (false, "Assemble Payload failed: \(cpPayloadOut.prefix(200))")
+            return (false, "Assemble Payload failed (rc=\(cpPayloadRc)): \(cpPayloadOut.prefix(300))")
         }
         _ = try? fm.removeItem(atPath: ipaPath)
         guard ZipStorer.createZip(at: ipaPath, fromDirectory: payloadRoot) else {

@@ -45,8 +45,6 @@ struct ChatView: View {
     @ObservedObject private var modelStore = ModelStore.shared
     // v8.4：TTSService 观察已随朗读功能删除
     @ObservedObject private var uiState = AppUIState.shared   // v7.1.2：抽屉开关（顶部栏 ≡ 键要用）
-    // v9：搜索服务（输入框「搜索·xx」胶囊要跟着设置页改）
-    @ObservedObject private var searchCfg = SearchSettings.shared
 
     @State private var inputText = ""
     @State private var inputHeight: CGFloat = 36
@@ -64,8 +62,6 @@ struct ChatView: View {
     @State private var showModelPicker = false  // v2.9.36：聊天框切换上游模型
     /// v9.8：密钥/额度被拒时的引导卡 → 半屏「服务商目录」（在这里就能改密钥，不必进设置）
     @State private var showProviderFix = false
-    // v9：搜索服务快捷切换半屏（临时换服务商，不改设置里的默认值以外的任何东西）
-    @State private var showSearchQuickSheet = false
     // v6.6.11：右上角 + 号菜单入口
     // v3.3.4：输入框 + 号展开"应用/相册/文件/浏览器"快捷行（点 + 变 x 收起）
     @State private var attachExpanded = false
@@ -353,12 +349,8 @@ struct ChatView: View {
             }
         }
         // v2.9.36：聊天框切换上游模型（点"当前模型"弹出，老 MCP 风格半屏）
-        // v9：搜索服务快捷切换（半屏）
-        .sheet(isPresented: $showSearchQuickSheet) {
-            ChatSearchQuickSheet(onDone: {
-                showSearchQuickSheet = false
-            })
-        }
+        // v9.11：按用户要求删除输入栏的「搜索·服务商」胶囊及其半屏（ChatSearchQuickSheet），
+        // 联网检索仍在设置页配置，会话页不再留搜索入口。
         // v9.8：密钥被拒 → 直接在这里打开服务商目录改密钥/换账号
         .sheet(isPresented: $showProviderFix) {
             NavigationView {
@@ -698,74 +690,20 @@ struct ChatView: View {
                     .padding(.horizontal, 6)
                     .padding(.top, 6)
 
-                HStack(spacing: 10) {
-                    // v9.4：按用户要求删除「思考·强度」胶囊——思考改为内置自动：
-                    // 由 ReasoningSettings.autoEnabledForRequest 按请求内容决定强度，
-                    // 界面上不再暴露开关（用户指定"默认为自动，根据情况自动调整强度"）。
-
-                    // v9：搜索服务快捷切换（Kelivo 的 search_settings_sheet）——
-                    // 联网检索仍然默认全开，这个胶囊只用来「临时换一家服务商」和看读取方式。
-                    DeepSeekPillButton(
-                        icon: "magnifyingglass",
-                        title: "搜索·\(searchCfg.selectedService?.displayName ?? Self.defaultSearchName)",
-                        isOn: true
-                    ) {
-                        showSearchQuickSheet = true
-                    }
-                    .contextMenu {
-                        Button { showSearchQuickSheet = true } label: {
-                            Label("切换搜索服务商", systemImage: "magnifyingglass")
-                        }
-                        Button {
-                            AppUIState.shared.settingsPresented = true
-                        } label: {
-                            Label("打开搜索设置", systemImage: "gearshape")
-                        }
-                    }
+                // v9.11：按用户要求重排输入栏——左侧「+」，右侧「发送」，两者放大到 40pt，
+                // 中间整体留空；「搜索·服务商」胶囊整块删除（搜索设置仍可在设置页改）。
+                HStack(spacing: 12) {
+                    attachButton
 
                     Spacer(minLength: 0)
 
                     if store.selectedIsRequesting {
-                        Button(action: { store.cancelCurrent() }) {
-                            // v9.3：停止键改灰底黑方块（去黑底）
-                            Image(systemName: "stop.fill")
-                                .font(.system(size: 13, weight: .bold))
-                                .foregroundColor(MonoChat.text)
-                                .frame(width: 32, height: 32)
-                                .background(MonoChat.surfaceRaised)
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
+                        stopButton
                     } else {
-                        Button(action: send) {
-                            Image(systemName: "paperplane.fill")
-                                .font(.system(size: 14, weight: .semibold))
-                                // v9.3：可发送=黑箭头灰底，空输入=灰箭头灰底（去黑底圆）
-                                .foregroundColor(inputText.isEmpty ? MonoChat.subtext : MonoChat.text)
-                                .frame(width: 32, height: 32)
-                                .background(MonoChat.surfaceRaised)
-                                .clipShape(Circle())
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(inputText.isEmpty)
+                        sendButton
                     }
-
-                    // v7.3.0：+ 号从工具行最左边移到发送键左侧，两者用固定间距并排
-                    Button(action: {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                            attachExpanded.toggle()
-                        }
-                    }) {
-                        Image(systemName: attachExpanded ? "xmark" : "plus")
-                            .font(.system(size: 15, weight: .medium))
-                            .foregroundColor(MonoChat.subtext)
-                            .frame(width: 32, height: 32)
-                            .background(Circle().fill(MonoChat.surfaceRaised))
-                            .contentShape(Circle())
-                    }
-                    .buttonStyle(PlainButtonStyle())
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, 10)
                 .padding(.bottom, 8)
             }
             // v9.1：黑白输入卡——近黑底 + 白色细描边（不用阴影，纯黑上阴影看不出来）
@@ -792,12 +730,66 @@ struct ChatView: View {
         // 此处不再挂 actionSheet，避免与上方 +号 的 actionSheet 同 view 覆盖。
     }
 
+    // MARK: - v9.11：输入栏三键（+ / 发送 / 停止）
+    //
+    // 用户反馈：原来的 32pt 灰底「+」「发送」在白卡片上几乎看不见，且两个键挤在右侧。
+    // 现在「+」靠左、「发送」靠右，都放大到 40pt；发送键在可发送时是**唯一反色块**
+    // （黑底白箭头），空输入退化成白底灰箭头，一眼能分清按不按得动。
+
+    /// 输入栏左侧「+」：展开/收起附件快捷行（应用 / 相册 / 文件）。
+    private var attachButton: some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                attachExpanded.toggle()
+            }
+        }) {
+            Image(systemName: attachExpanded ? "xmark" : "plus")
+                .font(.system(size: 19, weight: .semibold))
+                .foregroundColor(MonoChat.text)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(MonoChat.bg))
+                .overlay(Circle().stroke(MonoChat.stroke, lineWidth: 0.8))
+                .contentShape(Circle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(attachExpanded ? "收起附件" : "添加附件")
+    }
+
+    /// 输入栏右侧「发送」：有内容黑底白箭头，空输入白底灰箭头且不可点。
+    private var sendButton: some View {
+        let canSend = !inputText.isEmpty
+        return Button(action: send) {
+            Image(systemName: "paperplane.fill")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundColor(canSend ? MonoChat.invertText : MonoChat.subtext)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(canSend ? MonoChat.invertBg : MonoChat.bg))
+                .overlay(Circle().stroke(canSend ? Color.clear : MonoChat.stroke, lineWidth: 0.8))
+                .contentShape(Circle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .disabled(!canSend)
+        .accessibilityLabel("发送")
+    }
+
+    /// 请求进行中的「停止」：与发送键同尺寸同位置，避免切换时输入栏跳动。
+    private var stopButton: some View {
+        Button(action: { store.cancelCurrent() }) {
+            Image(systemName: "stop.fill")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundColor(MonoChat.text)
+                .frame(width: 40, height: 40)
+                .background(Circle().fill(MonoChat.bg))
+                .overlay(Circle().stroke(MonoChat.strokeStrong, lineWidth: 1))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("停止生成")
+    }
+
     /// v6.9.15：推理档位名（思考胶囊长按菜单用）
     /// v7.8.0：档位改用 ReasoningLevel（自动/关/最低/低/中/高/最高/极限）
     private var reasoningNames: [String] { ReasoningLevel.allCases.map { $0.displayName } }
-
-    /// v9：搜索胶囊的兜底名（抽成常量，避免字符串插值里嵌字面量）
-    private static let defaultSearchName = "必应"
 
     private func reasoningLabel() -> String {
         // v7.8.0：直接读 ReasoningSettings（兼容旧 chat_reasoning 整数）

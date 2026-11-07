@@ -113,6 +113,11 @@ final class AppUninstallTool: MCPTool {
         // 但磁盘残留文件还在，refresh-all 会把它扫回注册 (277 的"卸载后再查"漏删）。
         // 所以卸载OK后无条件按记录路径 uninstall-path custom 硬删。
         let oldPath = AppCatalog.list().first { $0.bundleId == bid }?.path
+        // 第一梯队：卸载前先把 Mach-O 备份还原回原位。
+        // 理由不是「删之前留个能启动的二进制」（删了就没了），而是避免把被我们改过的
+        // 二进制当成原样留在磁盘上、卸载不彻底时又被 refresh-all 扫回注册。
+        // 容器与工作区快照不动——App 都要删了，多动一步只是多一次失败机会。
+        let preRestore = BackupRegistry.preUninstallRestore(bundleId: bid)
         let (c, out) = im.spawnRoot(helper, args: ["uninstall", "custom", bid], timeout: 120)
         AuditLog.shared.log("app.uninstall", detail: "\(bid) c=\(c)")
         if c == 0 {
@@ -125,6 +130,7 @@ final class AppUninstallTool: MCPTool {
             AppCatalog.invalidateCache()
         }
         return ["ok": c == 0, "bundle_id": bid, "output": out,
+                "pre_uninstall_restore": preRestore,
                 "message": c == 0 ? "uninstalled \(bid)" : "uninstall failed: \(out)"]
     }
 }

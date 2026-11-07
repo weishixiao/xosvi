@@ -91,15 +91,13 @@ enum ISH {
     ///     避免半成品目录留在正式位置（下次启动会误判"已安装"）
     @discardableResult
     static func installRootfsIfNeeded(force: Bool = false) throws -> Bool {
-        // v9.3：每个 App 构建只解压一次 rootfs——旧逻辑只看版本号，r5→r6 改了内容却
-        // 可能因版本号未变/用户已手动修过而继续用旧 rootfs（源还是 https、没有工具）。
-        // 这里把「构建号」也纳入判定：换了 App 包就重装，保证内置源与预装包生效。
-        let buildStampKey = "ishRootfsBuildStamp"
-        let buildStamp = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0")
-            + "/" + (Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "0")
-        let stampMatched = UserDefaults.standard.string(forKey: buildStampKey) == buildStamp
+        // v9.12：按用户要求，覆盖安装不再重装 rootfs。
+        // v9.3 曾把「CFBundleVersion」纳入判定（换了 App 包就重新解压），结果每次覆盖安装
+        // 版本号都变 → rootfs 连同 apk 装的 python3/curl/git/sqlite3 一起被清空，
+        // 环境预设里的工具要重新下载。现在只看「rootfs 版本 + 目录是否完整」：
+        // 只有内置 rootfs 内容真的变了（bump bundledVersion）或用户点「修复」才重装。
         let saved = UserDefaults.standard.string(forKey: rootfsVersionKey)
-        if !force, stampMatched, saved == bundledVersion, isRootfsValid() { return false }
+        if !force, saved == bundledVersion, isRootfsValid() { return false }
         guard let zip = bundledZip else { throw InstallError.noBundle }
 
         let fm = FileManager.default
@@ -182,7 +180,8 @@ enum ISH {
         }
 
         UserDefaults.standard.set(bundledVersion, forKey: rootfsVersionKey)
-        UserDefaults.standard.set(buildStamp, forKey: buildStampKey)
+        // v9.12：构建戳判定已取消，顺手清掉旧版留下的键，免得以后误读
+        UserDefaults.standard.removeObject(forKey: "ishRootfsBuildStamp")
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "ishInstalledAt")
         return true
     }

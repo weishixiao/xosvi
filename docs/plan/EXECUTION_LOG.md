@@ -88,6 +88,14 @@
 | I5 | 持久注入目录隔离 | DONE | main | 代码审阅 | 写 `<数据根>/persist/PersistentPlugins`；旧目录只读兼容 + 卸载时一并清理 |
 | I6 | 杂项对齐 | DONE | main | 代码审阅 | workflow 名 `build-ios.yml`；MinimumOSVersion 15.0；URL scheme `com.xosvi.app.deeplink`；TSRootBinaries 去掉 5 个不存在的二进制、补 `fuck_helper`；远程文件接口白名单收窄到数据根 |
 
+## 第一梯队：备份统一（G 组）
+
+| ID | 事项 | 状态 | 分支 | 验证 | 备注 |
+|---|---|---|---|---|---|
+| G1 | 统一备份台账 `backup` | DONE | main | 代码审阅 + 括号扫描；`dump_registry` 快照手改（本机无 python3） | `BackupRegistry.swift`：四类落点一次清点（`.troll-fools.bak` / `.bak_macho` / `.xosvi.bak` / `Workspace/backups`）；`restore` 只自动还原 Mach-O，`cp -p` 到临时文件再 `mv`，不做「先 rm 再 mv」；`prune` 只删 `Workspace/backups` 一级目录。**后缀一个没改**（`.troll-fools.bak` 是 TrollFools 兼容格式）。**Swift 未编译，需 CI** |
+| G2 | 卸载 = 先还原再删 | DONE | main | 代码审阅 | `AppUninstallTool` 在 `uninstall` 之前调 `BackupRegistry.preUninstallRestore`，结果随回包返回 `pre_uninstall_restore`；容器改名与目录快照不动 |
+| G3 | 目标指纹校验 | DONE | main | 代码审阅 | 注入成功后写 `persist/BackupLedger/<bid>.json`（版本 / build / 主二进制大小 / dylib 名）；`inject command:enable_persisted` 发现版本对不上就不自动恢复，返回 `skipped` + `reason` + 提示重新注入刷新台账 |
+
 ## 下一步
 
 1. ~~B5 ExternalContent 接入（web.fetch / shell.exec / file / ui_tree / 剪贴板）~~ → DONE（v9.9，剪贴板 N/A）。

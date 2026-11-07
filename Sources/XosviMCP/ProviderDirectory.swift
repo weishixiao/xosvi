@@ -776,8 +776,10 @@ struct CompatAPIAddSheet: View {
                         }
                     }
 
+                    // v9.12：按用户要求去掉基础 URL 的默认示例地址，留空让用户自己填
+                    // （原来预置 api.openai.com，等于替用户选了一家服务商）
                     field(title: "基础 URL") {
-                        TextField("https://api.openai.com/v1", text: $baseURL)
+                        TextField("", text: $baseURL)
                             .font(.system(.body, design: .monospaced))
                             .autocapitalization(.none)
                             .disableAutocorrection(true)

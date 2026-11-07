@@ -30,6 +30,10 @@
 - 注入的备份格式认 `.troll-fools.bak`（旧格式 `.bak_macho` 仍兼容）；回滚优先用工具自身能力
   （`inject command:disable` 会从备份还原并返回 `restored_from_backup` / `status: reverted`），手工 `cp` 只作兜底。
 - **MUST NOT** 静默覆盖用户已有文件；覆盖前留 `_bak` 副本或整目录拷贝。
+- 备份的**统一入口**是 `backup`：`command:list`（不带 `bundle_id` 就扫全部 App）、`command:restore bundle_id:…`
+  （只自动还原 Mach-O 就地备份，`.troll-fools.bak` 优先于旧 `.bak_macho`）、`command:info bundle_id:…`
+  （台账里记的 App 版本与当前版本是否还对得上）、`command:prune days:…`（只清 `Workspace/backups` 下的目录快照）。
+  整容器改名（`.xosvi.bak`）与工作区目录快照只报告、不自动覆盖——前者回 `device command=refresh_container restore=true`，后者要人工比对。
 - 破坏性操作执行后必须做**验证**（进程存活 / 文件哈希 / `verify command:file` / `app command:deps` 对比），
   不能只看命令退出码就宣称成功。
 

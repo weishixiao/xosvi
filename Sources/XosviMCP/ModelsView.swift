@@ -27,15 +27,7 @@ struct ModelsView: View {
             // RecommendCardArea()  ← 已移除
 
             List {
-                // v10：页首大标题卡（与「环境」页同一套排版）
-                Section {
-                    XHeroHeader(icon: "cpu",
-                                title: "模型服务",
-                                subtitle: store.configs.isEmpty
-                                    ? "尚未连接任何服务商"
-                                    : "\(store.configs.count) 个账号 · \(Set(store.configs.map { $0.provider }).count) 家服务商")
-                }
-
+                // v9.12：按用户要求删除顶部「模型服务」字块（原来这里是 XHeroHeader）。
                 // v9.8：顶部「服务商」入口——卡片目录 + 一键连接（只填密钥）。
                 // 旧的「快速添加服务商」折叠列表被它取代（同一批预设，功能更强）。
                 Section {
@@ -529,7 +521,7 @@ struct ModelEditorView: View {
                     Section(header: sectionHeader("添加 API"),
                             footer: Text("填好密钥和 Base URL 后点「获取模型」，选中一个即可保存。")) {
                         tokenRow
-                        editorRow("Base URL", text: $baseURL, placeholder: "https://api.openai.com/v1")
+                        editorRow("Base URL", text: $baseURL, placeholder: "")
                         Button(action: fetchUpstreamModels) {
                             HStack(spacing: 12) {
                                 Image(systemName: "arrow.down.circle")
@@ -579,7 +571,7 @@ struct ModelEditorView: View {
                     }
 
                     Section(header: sectionHeader("API 配置")) {
-                        editorRow("Base URL", text: $baseURL, placeholder: "https://botcf.com/v1")
+                        editorRow("Base URL", text: $baseURL, placeholder: "")
                         editorRow("模型名", text: $model, placeholder: "gpt-5.6-terra")
                         pickerRow("鉴权方式", selection: $authMethod, options: ModelConfig.authMethods)
                         tokenRow
