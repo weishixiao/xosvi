@@ -188,9 +188,43 @@ final class KnowledgeIndex {
 // MARK: - 知识包加载
 
 enum KnowledgeLoader {
-    /// 内置包：Bundle Resources/Knowledge/*.json + Documents/Knowledge/custom/*.json
+    /// v9.13：内置种子（Workspace/knowledge/内置-*.md）也进 FTS。
+    /// 之前索引只吃 App 包里的 Resources/Knowledge/*.json，而包里根本没有这个目录，
+    /// 于是「内置知识 条目数」恒为 0、knowledge.search 也永远走不到 FTS 主路径。
+    /// 现在以播种出来的文件为准：用户在知识库页删掉某条，重建索引后它也就不再计入。
+    private static func builtinPack() -> KnowledgePack? {
+        KnowledgeStore.shared.ensure()   // 目录 + 内置条目就位（只补缺失，不覆盖已有）
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: KnowledgeStore.shared.dir, includingPropertiesForKeys: nil)) ?? []
+        let entries: [KnowledgeEntry] = files
+            .filter { $0.pathExtension == "md" && $0.lastPathComponent.hasPrefix("内置-") }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .compactMap { u -> KnowledgeEntry? in
+                guard let body = try? String(contentsOf: u, encoding: .utf8) else { return nil }
+                let name = u.deletingPathExtension().lastPathComponent
+                return KnowledgeEntry(id: "builtin:\(name)",
+                                      title: firstHeading(body) ?? name,
+                                      tags: name.split(separator: "-").map(String.init),
+                                      appliesIf: [],
+                                      body: body,
+                                      updated: "")
+            }
+        return entries.isEmpty ? nil : KnowledgePack(pack: "builtin", entries: entries)
+    }
+
+    /// 正文第一个 `# 标题` 行，作为条目标题
+    private static func firstHeading(_ text: String) -> String? {
+        for line in text.split(separator: "\n", maxSplits: 12, omittingEmptySubsequences: false) {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("# ") { return String(t.dropFirst(2)) }
+        }
+        return nil
+    }
+
+    /// 内置包：Workspace/knowledge/内置-*.md + Bundle Resources/Knowledge/*.json + Documents/Knowledge/custom/*.json
     static func loadAll() -> [KnowledgePack] {
         var packs: [KnowledgePack] = []
+        if let builtin = builtinPack() { packs.append(builtin) }
         if let urls = Bundle.main.urls(forResourcesWithExtension: "json", subdirectory: "Knowledge") {
             for u in urls {
                 if let d = try? Data(contentsOf: u),

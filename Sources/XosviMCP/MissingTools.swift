@@ -303,8 +303,9 @@ final class KnowledgeStore {
     // AI 遇"分析二进制/插件安不安全"类问题先 knowledge.search 检索这里, 再 web.search 补资料, 最后组合基础工具自主分析。
     // 版本迁移: 种子版本变更时删内置条目重新播种; 只删固定前缀的文件, 保留用户自建。
     private let seedVersionKey = "xosvi.knowledge_seed_version"
-    /// v9.12：2 → 3 只做一次「清掉旧内置条目」的迁移（用户要求内置条目数为 0）
-    private let currentSeedVersion = 3
+    /// v9.13：3 → 4 重新写回内置条目（v9.12 曾按当时的要求把它们清成 0）。
+    /// 版本不匹配时的「按前缀删除」会先跑一遍，所以升级上来是「删旧 + 写新」，内容以常量种子为准。
+    private let currentSeedVersion = 4
     private func seedBuiltinIfNeeded() {
         let fm = FileManager.default
         let saved = UserDefaults.standard.integer(forKey: seedVersionKey)
@@ -375,11 +376,14 @@ final class KnowledgeStore {
 可信 / 需真机验证(network.capture 看实际回连) / 可疑 / 恶意特征。命中要引用提取到的原文。
 """)
         ]
-        // v9.12：按用户要求把内置知识条目数降为 0——不再写入任何内置条目。
-        // 旧版本播种的「内置-*.md」已在上面的版本迁移里按前缀删掉，用户自己导入的文件原样保留。
-        // seeds / SeedKnowledgeData.v2Seeds 常量保留（下面这句只读它，防「未使用」告警），
-        // 以后想恢复内置知识，把下面这句换回原来的写盘循环并再抬一次 currentSeedVersion 即可。
-        _ = seeds.count + SeedKnowledgeData.v2Seeds.count
+        // v9.13：恢复播种（v9.12 曾按当时的要求把这些条目清成 0）。
+        // 只补缺失的文件：用户改过的内置条目、自己导入的文件都不会被覆盖。
+        for (name, content) in seeds + SeedKnowledgeData.v2Seeds {
+            let url = dir.appendingPathComponent(name)
+            if !fm.fileExists(atPath: url.path) {
+                try? content.write(to: url, atomically: true, encoding: .utf8)
+            }
+        }
     }
     func list() -> [String] {
         ensure()
