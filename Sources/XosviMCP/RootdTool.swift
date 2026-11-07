@@ -13,8 +13,8 @@ import Darwin
 /// 守护侧在连接时校验 `wiki.qaq.xosvi.client` entitlement，所以 App 必须在 Support/Xosvi.entitlements
 /// 里声明它，并在 `com.apple.security.exception.mach-lookup.global-name` 加上服务名。
 ///
-/// 旧目录通道（rootd v1.5.0，LaunchDaemon `com.xosvi.rootd`）保留在 `runViaDirectory` 里作为参考实现，
-/// 主流程不再调用。
+/// 旧目录通道（rootd v1.5.0，LaunchDaemon `com.xosvi.rootd`）在 `runViaDirectory` 里保留，
+/// v7.17.1 起作为**兜底**：XPC 明确不可达（`xpc_unreachable`）时才退回，见 `run`。
 final class RootdTool: MCPTool {
     let definition = ToolDefinition(
         name: "root",
@@ -27,8 +27,8 @@ final class RootdTool: MCPTool {
         returns: [
             "stdout": "命令输出（exec），以 root 身份由守护的子进程产生",
             "exit_code": "退出码（exec）",
-            "transport": "exec 走的通道：xpc",
-            "xpc": "XPC 通道状态：reachable / client_entitled / daemon pid 与 uid / 失败原因（status、probe）",
+            "transport": "exec 走的通道：xpc / directory（XPC 不可达时退回旧目录通道）",
+            "xpc": "XPC 通道状态：state(ready/cooldown) / reachable / client_entitled / daemon pid 与 uid / 失败原因（status、probe）",
             "diagnosis": "失败时的现场诊断"
         ],
         verified: false, category: "shell",
@@ -288,6 +288,12 @@ final class RootdTool: MCPTool {
             return out
         }
         if domain == "system" {
+            // 冷却中时「连不上」不是新信息：上一次失败后我们就没再碰 libxpc，别再让用户去查 entitlement
+            if (xpc["state"] as? String) == "cooldown" {
+                out["hint"] = "xosvid 在 system 域；XPC 通道冷却中（\(xpc["cooldown_remaining"] ?? "?")s），"
+                    + "期间 exec 自动走目录通道，root command:probe 可立即重试"
+                return out
+            }
             out["hint"] = "xosvid 已在 system 域，但 App 侧 XPC 连不上（xpc.error）："
                 + "看 xpc.client_entitled，App 必须带 \(XosviXPC.clientEntitlement) 并获准查找该 MachService"
             return out
@@ -316,18 +322,26 @@ final class RootdTool: MCPTool {
     }
 
     private func probe() -> [String: Any] {
-        let xpc = xpcStatus()
+        // forced：显式诊断必须真打一次 XPC，不能被上一次失败留下的冷却挡住。
+        let xpc = xpcStatus(force: true)
         // run() 声明成 throws（老目录通道会 throw），这里必须 try? 兜住，否则非 throws 的 probe() 编不过
-        let res: [String: Any] = (try? run("id -u", timeout: 8)) ?? ["completed": false, "exit_code": -1]
+        let res: [String: Any] = (try? run("id -u", timeout: 8, forceXPC: true))
+            ?? ["completed": false, "exit_code": -1]
         let uidText = (res["stdout"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let working = (xpc["reachable"] as? Bool) == true && (res["exit_code"] as? Int) == 0
-        return ["working": working,
-                "transport": "xpc",
-                "xpc": xpc,
-                "uid": uidText,
-                "result": res,
-                "hint": working ? "root 通道可用（XPC → xosvid uid=\(xpc["uid"] ?? "?"))"
-                                : "XPC 不通：看 xpc.error / xpc.client_entitled / daemon_domain"]
+        let transport = res["transport"] as? String ?? "xpc"
+        // uid 必须是 0 才算「拿到了 root」，501 说明守护跑在 user 域或退回了非 root 通道
+        let working = (res["exit_code"] as? Int) == 0 && uidText == "0"
+        var out: [String: Any] = ["working": working,
+                                  "transport": transport,
+                                  "xpc": xpc,
+                                  "uid": uidText,
+                                  "result": res]
+        if let fb = res["fallback"] { out["fallback"] = fb }
+        out["hint"] = working
+            ? "root 通道可用（\(transport) → uid=0）"
+            : "root 拿不到 uid 0：看 xpc.error / xpc.state / xpc.client_entitled / daemon_domain"
+                + "，以及 result 里目录通道的错"
+        return out
     }
 
     private func setDisabled(_ disabled: Bool) -> [String: Any] {
@@ -354,16 +368,38 @@ final class RootdTool: MCPTool {
     // 旧的 1777 目录 `.cmd/.out/.status` 轮询在 roothide 下不可靠（App 与 root 是两套文件视图），
     // 只在 XPC 明确不可达时才作为兜底保留。目录相关字段仍由 statusReport / dirState 提供。
 
-    private func run(_ script: String, timeout: Double, forceDir: String? = nil) throws -> [String: Any] {
-        return runViaXPC(script, timeout: timeout)
+    /// 执行一条命令。
+    ///
+    /// v7.17.1：XPC 明确不可达时退回旧目录通道。
+    /// 判据只看 `error == "xpc_unreachable"`——`runViaXPC` 对所有**通道层**失败都用这个码，
+    /// 而守护真的回了业务错误（rc≠0、脚本错、超时）时不会退回：那种情况退回等于把同一条
+    /// 命令在两条通道上各跑一遍，注入/安装这类有副作用的命令绝不能重跑。
+    private func run(_ script: String, timeout: Double, forceDir: String? = nil,
+                     forceXPC: Bool = false) throws -> [String: Any] {
+        let viaXPC = runViaXPC(script, timeout: timeout, forceXPC: forceXPC)
+        guard (viaXPC["error"] as? String) == "xpc_unreachable" else { return viaXPC }
+
+        let viaDir = runViaDirectory(script, timeout: timeout, forceDir: forceDir)
+        if (viaDir["completed"] as? Bool) == true {
+            var out = viaDir
+            out["transport"] = "directory"
+            out["xpc_error"] = viaXPC["detail"] as? String ?? (viaXPC["error"] as? String ?? "")
+            out["hint"] = "XPC 不通，已退回目录通道执行（rootd 心跳正常）；要恢复 XPC 走 root command:probe"
+            return out
+        }
+        var out = viaXPC
+        out["fallback"] = ["transport": "directory", "result": viaDir]
+        out["hint"] = "XPC 不通，目录通道也没成：root command:probe 会同时给出两条通道的病历"
+        return out
     }
 
     /// 通过 root 守护执行命令。守护以 root 身份起 `<bootstrap>/usr/bin/dash -c <脚本>`。
-    private func runViaXPC(_ script: String, timeout: Double) -> [String: Any] {
+    private func runViaXPC(_ script: String, timeout: Double, forceXPC: Bool = false) -> [String: Any] {
         // 守护只认三个 helper；给一条命令用的是 xosvi-build 的 --exec 模式（见 tools/xosvi-build.c）
         let res = XosviXPC.helper("xosvi-build",
                                   args: ["--exec", execWorkingDir(), script],
-                                  timeout: Int(max(3, min(timeout, 300))))
+                                  timeout: Int(max(3, min(timeout, 300))),
+                                  force: forceXPC)
         guard (res["ok"] as? Bool) == true else {
             let err = res["error"] as? String ?? "unknown"
             return ["completed": false, "error": "xpc_unreachable", "transport": "xpc",
@@ -402,13 +438,20 @@ final class RootdTool: MCPTool {
     }
 
     /// XPC 侧状态：守护是否可达。与磁盘目录探测分开，避免把视图问题当成守护问题。
-    private func xpcStatus() -> [String: Any] {
-        let res = XosviXPC.serviceStatus(timeout: 5)
+    /// - Parameter force: 穿透冷却闸门（`root command:probe` 用），其余调用一律吃冷却，
+    ///   避免一次注入/安装里每一步都去碰一次 `xpc_connection_create_mach_service`。
+    private func xpcStatus(force: Bool = false) -> [String: Any] {
+        let res = XosviXPC.serviceStatus(timeout: 5, force: force)
         var out: [String: Any] = [
             "service": XosviXPC.serviceName,
             "reachable": (res["ok"] as? Bool) == true && (res["error"] as? String ?? "").isEmpty,
             "client_entitled": XosviXPC.hasClientEntitlement()
         ]
+        // 闸门现状（只读）：ready = 下次会真打一条连接，cooldown = 期间直接返回、exec 走目录通道
+        let gate = XosviXPC.channelState()
+        out["state"] = gate["state"] as? String ?? "ready"
+        if let left = gate["cooldown_remaining"] { out["cooldown_remaining"] = left }
+        if let last = gate["last_error"] { out["last_error"] = last }
         if let e = res["error"] as? String { out["error"] = e }
         for k in ["status", "bootstrap", "resolved", "dash", "helper", "peer", "pid", "uid",
                   "running_helpers"] {

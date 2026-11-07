@@ -34,6 +34,68 @@ enum XosviXPC {
     /// XPC_ARRAY_APPEND == (size_t)-1
     private static let arrayAppend = Int(bitPattern: UInt.max)
 
+    /// 通道层失败后的冷却闸门（v7.17.1）。
+    ///
+    /// 本机 `xpc_connection_create_mach_service` 对**任何**服务都返回 `Connection invalid`，
+    /// 而每一次 create 都要走一遍 libxpc 与 launchd 的回复路径 —— 那段路上 roothide basebin
+    /// 替换了 `xpc_pipe_routine_reply` / `xpc_dictionary_create_reply`（见
+    /// `basebin/libjailbreak.dylib` 的 `_orig_*` / `_new_*` 符号）。设备上 79 份
+    /// `EXC_GUARD / namespc 7 / LIBXPC / XPC_EXIT_REASON_FAULT` 报告全落在越狱进程的这条路上
+    /// （Xosvi 33、TrollHax 10、Apelin 10、Spotlight 8、Sileo 6、irisin 4、NewTerm 4 …），
+    /// 微信/抖音之类普通 App 一份都没有，且跨 7.16.10 → 7.17.0-b75 二十多个构建。
+    ///
+    /// 通道本来就不通，一次注入/安装里每一步再打一次只会白加触发面，所以失败后在
+    /// `cooldownSeconds` 内直接返回，不再碰 libxpc。显式诊断（`root command:probe`）用
+    /// `force` 穿透，其余调用一律吃冷却。
+    private final class Gate {
+        static let shared = Gate()
+        let lock = NSLock()
+        var until: Date?
+        var reason: String?
+    }
+
+    /// 冷却时长：够覆盖一次注入/安装的全部步骤，又不至于让刚修好守护的用户等太久。
+    static let cooldownSeconds: TimeInterval = 60
+
+    /// 冷却剩余秒数；返回 nil 表示闸门开着（可打）。
+    private static func cooldownLeft() -> (seconds: Int, reason: String)? {
+        let g = Gate.shared
+        g.lock.lock()
+        defer { g.lock.unlock() }
+        guard let until = g.until else { return nil }
+        let left = Int(ceil(until.timeIntervalSinceNow))
+        if left <= 0 {
+            g.until = nil
+            g.reason = nil
+            return nil
+        }
+        return (left, g.reason ?? "未知")
+    }
+
+    private static func markChannelFailure(_ reason: String) {
+        let g = Gate.shared
+        g.lock.lock()
+        g.until = Date().addingTimeInterval(cooldownSeconds)
+        g.reason = reason
+        g.lock.unlock()
+    }
+
+    private static func clearChannelFailure() {
+        let g = Gate.shared
+        g.lock.lock()
+        g.until = nil
+        g.reason = nil
+        g.lock.unlock()
+    }
+
+    /// 闸门现状，`root command:status` 的 `xpc` 段里展示；只读，不改闸门。
+    static func channelState() -> [String: Any] {
+        if let (left, reason) = cooldownLeft() {
+            return ["state": "cooldown", "cooldown_remaining": left, "last_error": reason]
+        }
+        return ["state": "ready"]
+    }
+
     // 公共头把这两个符号标为 iOS 不可用，但运行时一直都在；按 LaunchdLauncher 的做法用 dlsym 取。
     private typealias CreateMachFn = @convention(c) (UnsafePointer<CChar>?, UnsafeMutableRawPointer?, UInt64) -> xpc_connection_t?
 
@@ -88,7 +150,8 @@ enum XosviXPC {
     }
 
     /// 发一条请求并等回复。
-    /// - Returns: `ok:false` 时 `error` 是连接层的原因（创建失败 / 错误事件 / 超时），
+    /// - Parameter force: 穿透冷却闸门（只给 `root command:probe` 这类显式诊断用）。
+    /// - Returns: `ok:false` 时 `error` 是连接层的原因（创建失败 / 错误事件 / 超时 / 闸门冷却），
     ///            `ok:true` 时其余键来自守护返回的字典（可能仍带守护侧的 `error` 字段）。
     ///
     /// v0.2.4：连接改为「一条请求一条连接，回完即 cancel」。
@@ -96,14 +159,26 @@ enum XosviXPC {
     /// 与 `box.reply` 跨线程无同步），既泄漏 `xpc_object_t` 也会让同一个 box 被
     /// 两个回调同时改；现在取消与读取都在锁里做。另外守护侧已把 helper 移出监听
     /// 队列，超时主要只剩「命令真的跑太久」一种原因，提示也据此改了。
-    static func request(_ message: [String: Any], timeout: Double) -> [String: Any] {
+    ///
+    /// v7.17.1：通道层失败进冷却（见 `Gate`）。一次注入/安装会连着发好几条请求，
+    /// 第一条失败后剩下的直接返回 `skipped:true`，不再各打一次 create_mach_service。
+    static func request(_ message: [String: Any], timeout: Double, force: Bool = false) -> [String: Any] {
+        if !force, let (left, reason) = cooldownLeft() {
+            return ["ok": false,
+                    "error": "xosvid 通道冷却中（\(left)s 后可重试）：\(reason)",
+                    "skipped": true,
+                    "cooldown_remaining": left,
+                    "hint": "上次 create_mach_service 已失败，冷却期内不再碰 libxpc，避免重复踩本机的 LIBXPC fault；root command:probe 可立即重试。"]
+        }
         guard let create = createMach() else {
+            markChannelFailure("libxpc 缺 xpc_connection_create_mach_service")
             return ["ok": false, "error": "libxpc 缺 xpc_connection_create_mach_service"]
         }
         let made: xpc_connection_t? = serviceName.withCString { name in
             create(name, nil, 0)
         }
         guard let conn = made else {
+            markChannelFailure("xpc_connection_create_mach_service 返回 NULL")
             return ["ok": false, "error": "xpc_connection_create_mach_service(\(serviceName)) 返回 NULL"]
         }
 
@@ -163,12 +238,19 @@ enum XosviXPC {
                     "hint": "守护已把 helper 移出监听队列；长时间无回复通常是命令本身还在跑（例如安装/构建）。先看 root command:status 的 running_helpers，再等或缩短命令。"]
         }
         if replyObj == nil, let e = err {
+            // v7.17.1：错误事件就是闸门该落下的地方。本机对任何 MachService 都回
+            // "Connection invalid"，那正是 libxpc → launchd 的回复路径（roothide basebin
+            // 替换了 xpc_pipe_routine_reply / xpc_dictionary_create_reply），也就是
+            // EXC_GUARD/LIBXPC fault 的现场。记一次冷却，后面几步不再各打一次 create。
+            markChannelFailure(e)
             return ["ok": false, "error": "xosvid 不可达：\(e)",
                     "hint": "服务 \(serviceName) 未在 launchd 注册；Connection invalid 是本机对任何 MachService 都出现的返回，需要先让守护在 system 域加载"]
         }
         guard var out = replyObj.map({ replyDict($0) }) else {
             return ["ok": false, "error": "xosvid 没有返回字典"]
         }
+        // 真的收到守护的字典 = 通道通着，把可能残留的冷却清掉（force 探测成功后立刻恢复常态）。
+        clearChannelFailure()
         out["ok"] = true
         return out
     }
@@ -179,17 +261,19 @@ enum XosviXPC {
         request(["command": "ping"], timeout: timeout)
     }
 
-    static func serviceStatus(timeout: Double = 5) -> [String: Any] {
-        request(["command": "status"], timeout: timeout)
+    static func serviceStatus(timeout: Double = 5, force: Bool = false) -> [String: Any] {
+        request(["command": "status"], timeout: timeout, force: force)
     }
 
     /// 调一个 helper。`args` 的第一项必须是项目目录（守护侧的要求）。
-    static func helper(_ name: String, args: [String], timeout: Int, dryrun: Bool = false) -> [String: Any] {
+    /// - Parameter force: 穿透冷却闸门（只给 `root command:probe` 用）。
+    static func helper(_ name: String, args: [String], timeout: Int,
+                       dryrun: Bool = false, force: Bool = false) -> [String: Any] {
         var msg: [String: Any] = ["command": "helper", "name": name, "args": args]
         if timeout > 0 { msg["timeout"] = timeout }
         if dryrun { msg["dryrun"] = true }
         // 客户端等待要比守护侧的超时更长，否则先超时的永远是客户端
-        return request(msg, timeout: Double(max(timeout, 30)) + 10)
+        return request(msg, timeout: Double(max(timeout, 30)) + 10, force: force)
     }
 
     // SecTask 是私有 API（公开 SDK 不导出）。这里不用 @_silgen_name：那两个符号在 DeviceProbe

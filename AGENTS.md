@@ -240,6 +240,16 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   `XOSVID_IDLE_SECS`（0.2.5 起支持覆盖）；验证完记得改回 900 并重装。
   已验证过一次：4 秒时空闲到点出现 `stay alive`，12 秒长任务返回 `exit_code: 0`。
 
+- **App 侧 XPC 冷却闸门 + 目录兜底（v7.17.1）**：本机 `xpc_connection_create_mach_service` 对
+  **任何** MachService 都回 `Connection invalid`，而每次 create 都走 libxpc ↔ launchd 的回复路径
+  （roothide basebin 替换了 `xpc_pipe_routine_reply` / `xpc_dictionary_create_reply`），设备上
+  79 份 `EXC_GUARD / namespc 7 / LIBXPC / XPC_EXIT_REASON_FAULT` 全落在越狱进程这条路上。
+  所以 `XosviXPC` 通道层失败后落 60s 冷却（`Gate`），期间 `request()` 直接回 `skipped:true`、
+  不再碰 libxpc；`root command:probe` 用 `force` 穿透，收到守护字典即清冷却。
+  同时 `RootdTool.run` 只在 `error == "xpc_unreachable"`（通道层失败）时退回旧目录通道
+  `runViaDirectory`；业务错误/超时**不**退回——注入、安装这类有副作用的命令不能跑两遍。
+  回包看 `transport`（xpc / directory）、`xpc.state`（ready / cooldown）、`xpc.cooldown_remaining`。
+
 ## 静态门禁（`scripts/check.sh`，改完先跑）
 
 从 Apelin 借来的做法：**设备上踩过的坑要变成可执行的检查**，而不是留在文档里等下一次会话记住。
