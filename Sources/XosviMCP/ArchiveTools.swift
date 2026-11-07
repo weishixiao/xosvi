@@ -210,7 +210,7 @@ enum CompressionStream {
             }
         }
         if !ended {
-            stream.src_ptr = zero
+            stream.src_ptr = UnsafePointer(zero)
             stream.src_size = 0
             _ = try pump(&stream, &outBuf, out, finalize: true)
         }
