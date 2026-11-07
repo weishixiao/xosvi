@@ -68,3 +68,25 @@ grep -rn 'repositories' Sources/
 - 每轮发现的**新坑**补进 `AGENTS.md` 的对应小节（尤其是环境类）。
 - 每轮修掉的**根因**写进 commit message 的正文，便于下次 grep。
 - 结论先给判断，再给证据：命令 / 路径 / 字节 / 哈希 / 表结构。
+
+## 7. 案例库（已查证 + 可复现）
+
+### 案例 1：控制台「注入 → 闪退」（EXC_GUARD / namespace LIBXPC / XPC_EXIT_REASON_FAULT）
+
+- **现象**：`control inject` 选完目标后 App 直接闪退；审计日志无记录（崩溃前不写）。偶发，
+  同一个按钮有时只报通道错误不崩。
+- **事实**：崩溃原因里出现 `EXC_GUARD`、`namespc 7`、`subtype LIBXPC`、`reason 9`，
+  即 libxpc 自己的「误用」出口，不是业务代码的野指针。
+- **对回代码**：`Sources/XosviMCP/XosviXPC.swift` 的 `request` 把
+  `xpc_connection_send_message_with_reply` 回调参数存进 `Box`，等主线程 `sem.wait`
+  回来才 `replyDict(对象)`。reply 对象只在块执行期间有效，块返回后 libxpc 已回收。
+- **复现**：`tools/xpc-reply-lifetime.c`（编译+`ldid -S` 后跑）
+  - `bad` 模式（块外读）：`Trace/BPT trap: 5` / `Bus error: 10`，必崩；
+  - `good` 模式（块内解析）：`status=OK uid=0 (parsed inside the reply block)`；
+  - 把服务名换成不存在的（`good wiki.qaq.nonexistent.svc`）得到 `status=(no status)`，
+    说明「有 status 才证明真收到守护回复」，别把错误对象读出来的 `0` 当结果。
+- **结论**：**xpc 对象不能跨块存活**。要跨块就把值读成 Swift 类型带走
+  （字符串 / 整数 / `Data`），或显式 `xpc_retain` 后再配对的 `xpc_release`。
+- **顺带纠正**：本机 XPC 通道一直是通的（`status` 返回 9 键字典、`helper` 以 uid=0 执行、
+  `exit_code=0`）。此前「本机对任何 MachService 都 Connection invalid」的说法源于两处误读：
+  守护回复后取消连接本就产生一次 `Connection invalid` 事件；以及上面这处 use-after-free。

@@ -107,8 +107,14 @@ enum XosviXPC {
     }
 
     /// 一次性把回复取回来的盒子：回调在 XPC 的连接队列上跑，主线程等信号量。
+    ///
+    /// 修复（XPC reply 存活期，见 docs/TROUBLESHOOTING.md 案例 1）：盒子里存的是**已经解析好的 Swift 字典**，不再存 xpc 对象。
+    /// reply 块拿到的对象只在这次块调用期间有效，块一返回 libxpc 就回收；
+    /// 之后再 `xpc_dictionary_get_*` 是 use-after-free——本机实测同一写法必崩
+    /// （纯 C 复现是 SIGBUS，App 里就是 EXC_GUARD / namespace LIBXPC / XPC_EXIT_REASON_FAULT，
+    /// 也就是「控制台注入 → 闪退」的现场）。所以解析一律在块里做完。
     private final class Box {
-        var reply: xpc_object_t?
+        var result: [String: Any]?
         var error: String?
         var done = false
     }
@@ -186,19 +192,21 @@ enum XosviXPC {
         let lock = NSLock()
         let sem = DispatchSemaphore(value: 0)
 
-        /// 回调里交付结果：只有第一个到者生效；超时后到的直接丢掉并cancel。
-        func deliver(_ obj: xpc_object_t?, _ err: String?) {
+        /// 回调里交付结果：只有第一个到者生效；超时后到的直接丢掉。
+        /// 参数必须已经是从 xpc 对象里读出来的 Swift 值——对象不能跨块保存（见 Box 注释）。
+        func deliver(_ result: [String: Any]?, _ err: String?) {
             lock.lock()
             if box.done { lock.unlock(); return }
-            box.reply = obj
+            box.result = result
             box.error = err
             box.done = true
             lock.unlock()
             sem.signal()
         }
 
+        // 非监听连接的事件回调只会收到错误事件；没有错误描述也不能当成回复。
         xpc_connection_set_event_handler(conn) { event in
-            if let e = errorText(event) { deliver(nil, e) } else { deliver(event, nil) }
+            deliver(nil, errorText(event) ?? "xpc 事件未带描述")
         }
         xpc_connection_resume(conn)
 
@@ -217,8 +225,9 @@ enum XosviXPC {
         }
 
         // 发送也要走同一个连接；连接不可用时这里常常是**同步**回调错误事件。
+        // 修复（XPC reply 存活期，见 docs/TROUBLESHOOTING.md 案例 1）：解析必须在这个块里做完（块外对象已回收，见 Box 注释）。
         xpc_connection_send_message_with_reply(conn, msg, nil) { reply in
-            if let e = errorText(reply) { deliver(nil, e) } else { deliver(reply, nil) }
+            if let e = errorText(reply) { deliver(nil, e) } else { deliver(replyDict(reply), nil) }
         }
 
         let waited = sem.wait(timeout: .now() + timeout)
@@ -226,7 +235,7 @@ enum XosviXPC {
         lock.lock()
         let finished = box.done
         if !box.done { box.done = true }           // 超时：先占位，之后到的回调一律丢弃
-        let replyObj = box.reply
+        let result = box.result
         let err = box.error
         lock.unlock()
 
@@ -237,16 +246,15 @@ enum XosviXPC {
             return ["ok": false, "error": "等待 xosvid 回复超时（\(Int(timeout))s）",
                     "hint": "守护已把 helper 移出监听队列；长时间无回复通常是命令本身还在跑（例如安装/构建）。先看 root command:status 的 running_helpers，再等或缩短命令。"]
         }
-        if replyObj == nil, let e = err {
-            // v7.17.1：错误事件就是闸门该落下的地方。本机对任何 MachService 都回
-            // "Connection invalid"，那正是 libxpc → launchd 的回复路径（roothide basebin
-            // 替换了 xpc_pipe_routine_reply / xpc_dictionary_create_reply），也就是
-            // EXC_GUARD/LIBXPC fault 的现场。记一次冷却，后面几步不再各打一次 create。
+        if result == nil, let e = err {
+            // 修复（XPC reply 存活期，见 docs/TROUBLESHOOTING.md 案例 1）：这条分支以前被误读成「本机 XPC 不通」。真相是回复对象在块外被读了
+            // （use-after-free）→ LIBXPC fault；守护其实一直在正常回包，见 Box 的注释。
+            // 现在这里只剩真正的通道层失败：守护没加载、连接被拒、或回复前就断了。
             markChannelFailure(e)
             return ["ok": false, "error": "xosvid 不可达：\(e)",
-                    "hint": "服务 \(serviceName) 未在 launchd 注册；Connection invalid 是本机对任何 MachService 都出现的返回，需要先让守护在 system 域加载"]
+                    "hint": "服务 \(serviceName) 未在 launchd 注册或被拒。先 root command:status 看 daemon_domain / launchd_problem；守护需在 system 域加载（icli svc bootstrap）"]
         }
-        guard var out = replyObj.map({ replyDict($0) }) else {
+        guard var out = result else {
             return ["ok": false, "error": "xosvid 没有返回字典"]
         }
         // 真的收到守护的字典 = 通道通着，把可能残留的冷却清掉（force 探测成功后立刻恢复常态）。
