@@ -1151,13 +1151,9 @@ final class InjectionManager {
         guard FileManager.default.fileExists(atPath: zipPath) else {
             throw MCPError.failed("CydiaSubstrate.framework.zip not bundled")
         }
-        let data = try Data(contentsOf: URL(fileURLWithPath: zipPath))
-        let entries = try ZIPReader.extractEntries(from: data)
-        for e in entries {
-            let dest = tmpRoot + "/" + e.name
-            try? FileManager.default.createDirectory(atPath: (dest as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
-            try e.data.write(to: URL(fileURLWithPath: dest))
-        }
+        // 流式解包，边解边写盘——旧版 Data(contentsOf:) + 全部条目同时驻留内存，
+        // 内置 zip 一大就顶着进程上限走。
+        try ZIPReader.extractAll(from: URL(fileURLWithPath: zipPath), to: tmpRoot)
         let fwk = tmpRoot + "/" + Self.substrateFwkName
         guard FileManager.default.fileExists(atPath: fwk) else { throw MCPError.failed("substrate extraction failed") }
         _ = runAsRoot("touch", args: [fwk + "/.troll-fools"])
@@ -1604,15 +1600,8 @@ final class InjectionManager {
                 try? FileManager.default.createDirectory(atPath: assetTmpRoot, withIntermediateDirectories: true)
                 let tmpURL = URL(fileURLWithPath: assetTmpRoot)
                 if ext == "zip" {
-                    let entries = try ZIPReader.extractEntries(from: Data(contentsOf: URL(fileURLWithPath: src)))
-                    for e in entries {
-                        let lower = e.name.lowercased()
-                        guard lower.hasSuffix(".dylib") || lower.hasSuffix(".framework") || lower.hasSuffix(".bundle") else { continue }
-                        let dest = tmpURL.appendingPathComponent(e.name)
-                        try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-                        try e.data.write(to: dest)
-                        preparedAssets.append(dest.path)
-                    }
+                    // 流式只取插件资产，不再把整个 zip 读进 Data 再全量 inflate
+                    preparedAssets = try ZIPReader.extractAssets(from: URL(fileURLWithPath: src), to: assetTmpRoot)
                 } else {
                     try DebReader.extractDylibAndBundles(at: URL(fileURLWithPath: src), to: tmpURL)
                     if let items = try? FileManager.default.contentsOfDirectory(atPath: assetTmpRoot) {

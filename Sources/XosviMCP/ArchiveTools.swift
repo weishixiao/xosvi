@@ -1,11 +1,20 @@
 //
 //  ArchiveTools.swift
 //  Xosvi — 对齐 TrollFools preprocessAssets 的 zip/deb 解压能力
-//  纯系统库实现：libz（raw deflate / gzip）+ Compression.framework（bzip2/lzma）+ liblzma dlsym（xz）
+//  纯系统库实现：libz（raw deflate / gzip）+ Compression.framework（lzma）+ liblzma dlsym（xz）
 //  + 手写 ZIP/ar/tar 解析
+//
+//  内存收敛（解包重写，改动前务必读完这段）：
+//  旧实现把整个包拷成 `[UInt8](data)`、每个条目再拷一份压缩片、所有解压结果同时攒在
+//  `entries` 里，`inflateRaw` 还是个解两遍的空转实现（第一遍结果直接丢掉）。
+//  一个 300MB 的 ipa/deb 很容易同时持有 4~6 份整包副本，实测把 Xosvi 顶到 3.0GiB，
+//  被 jetsam 以 per-process-limit 杀掉（JetsamEvent 2026-11-07 09:24:37）。
+//  现在一律「读一个条目 → 流式解压 → 立刻写盘 → 释放」，常驻内存只剩 64KB 级窗口；
+//  另外加了 os_proc_available_memory 水位守卫，余额不够时提前给人话报错，而不是等系统开枪。
 //
 
 import Foundation
+import Darwin
 import zlib
 import Compression
 
@@ -18,298 +27,528 @@ enum ArchiveError: Error, CustomStringConvertible {
     }
 }
 
-/// ZIP 读取器（local file header 顺序遍历，支持 store/deflate）
-enum ZIPReader {
-    static func extractEntries(from data: Data) throws -> [(name: String, data: Data)] {
-        var entries: [(String, Data)] = []
-        var offset = 0
-        let bytes = [UInt8](data)
-        while offset + 30 <= bytes.count {
-            let sig = UInt32(bytes[offset]) | (UInt32(bytes[offset+1]) << 8) | (UInt32(bytes[offset+2]) << 16) | (UInt32(bytes[offset+3]) << 24)
-            if sig == 0x04034b50 { // local file header
-                let method = Int(bytes[offset+8]) | (Int(bytes[offset+9]) << 8)
-                let compSize = Int(bytes[offset+18]) | (Int(bytes[offset+19]) << 8) | (Int(bytes[offset+20]) << 16) | (Int(bytes[offset+21]) << 24)
-                let nameLen = Int(bytes[offset+26]) | (Int(bytes[offset+27]) << 8)
-                let extraLen = Int(bytes[offset+28]) | (Int(bytes[offset+29]) << 8)
-                let dataStart = offset + 30 + nameLen + extraLen
-                guard dataStart + compSize <= bytes.count else { break }
-                let name = String(data: Data(bytes[offset+30 ..< offset+30+nameLen]), encoding: .utf8) ?? ""
-                let comp = Data(bytes[dataStart ..< dataStart+compSize])
-                let out: Data
-                switch method {
-                case 0: out = comp
-                case 8: out = try inflateRaw(comp)
-                default: throw ArchiveError.format("zip method \(method) unsupported")
+// MARK: - 内存水位守卫
+
+/// 解包前先看还有多少可用内存：javas 报告里 Xosvi 是被 per-process-limit 打死的，
+/// 与其让系统静默 SIGKILL，不如在余额不足时抛一条能看懂的错。
+enum MemoryBudget {
+    /// 本进程还能申请到多少字节（离 dirty memory 上限的余量）。
+    /// 非 App 进程或系统查不到时返回 0，调用方按「未知」处理，不阻断。
+    static var available: UInt {
+        #if os(iOS) || os(tvOS) || os(watchOS)
+        let n = os_proc_available_memory()   // <os/proc.h>，iOS 13+
+        return n > 0 ? UInt(n) : 0
+        #else
+        return 0
+        #endif
+    }
+
+    static func require(_ need: UInt, context: String) throws {
+        let left = available
+        guard left > 0 else { return }   // 查不到就不拦，避免误伤
+        if left < need {
+            throw ArchiveError.format("内存不足：\(context) 预计需要 \(need / 1_048_576)MB，当前可用 \(left / 1_048_576)MB。请先关掉后台 App 再试，或改用更小的包。")
+        }
+    }
+}
+
+// MARK: - 小工具
+
+enum FileIO {
+    static func size(_ url: URL) -> Int {
+        let n = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? NSNumber
+        return n?.intValue ?? 0
+    }
+
+    /// 从 offset 精确读 count 字节（不够就返回 nil）——只用于头部，不用于整个文件
+    static func readExactly(_ fh: FileHandle, at offset: UInt64, count: Int) throws -> Data? {
+        guard count > 0 else { return Data() }
+        try fh.seek(toOffset: offset)
+        var buf = Data()
+        buf.reserveCapacity(count)
+        while buf.count < count {
+            guard let c = try fh.read(upToCount: count - buf.count), !c.isEmpty else { return nil }
+            buf.append(c)
+        }
+        return buf
+    }
+
+    /// 把 fh 的某一段原样拷到目标文件（64KB 一块，不整段进内存）
+    static func copy(from fh: FileHandle, at offset: UInt64, count: Int, to dest: URL) throws {
+        FileManager.default.createFile(atPath: dest.path, contents: nil)
+        let out = try FileHandle(forWritingTo: dest)
+        defer { try? out.close() }
+        try fh.seek(toOffset: offset)
+        var left = count
+        while left > 0 {
+            guard let c = try fh.read(upToCount: min(left, 1 << 16)), !c.isEmpty else { break }
+            left -= c.count
+            try out.write(contentsOf: c)
+        }
+    }
+}
+
+private extension Data {
+    func le16(_ off: Int) -> Int {
+        guard off + 2 <= count else { return 0 }
+        return withUnsafeBytes { Int($0[off]) | (Int($0[off + 1]) << 8) }
+    }
+    func le32(_ off: Int) -> UInt32 {
+        guard off + 4 <= count else { return 0 }
+        return withUnsafeBytes {
+            UInt32($0[off]) | (UInt32($0[off + 1]) << 8) | (UInt32($0[off + 2]) << 16) | (UInt32($0[off + 3]) << 24)
+        }
+    }
+}
+
+// MARK: - zlib 流式解压（raw deflate / gzip）
+
+enum ZStream {
+    /// 从 src 读压缩字节，解出来的块立刻写进 out；常驻只要两个 64KB 缓冲。
+    /// windowBits: 15+32 = 自动识别 gzip/zlib；-15 = raw deflate。
+    static func expand(from src: FileHandle, byteCount: Int, windowBits: Int32,
+                       maxOutput: Int, into out: FileHandle) throws {
+        var stream = z_stream()
+        let initRet = inflateInit2_(&stream, windowBits, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
+        guard initRet == Z_OK else { throw ArchiveError.format("inflateInit2 失败 (\(initRet))") }
+        defer { inflateEnd(&stream) }
+
+        var outBuf = [UInt8](repeating: 0, count: 1 << 16)
+        var remaining = byteCount
+        var total = 0
+        var ended = false
+
+        while remaining > 0 && !ended {
+            guard let chunk = try src.read(upToCount: min(remaining, 1 << 16)), !chunk.isEmpty else { break }
+            remaining -= chunk.count
+            ended = try chunk.withUnsafeBytes { raw -> Bool in
+                stream.next_in = UnsafeMutablePointer(mutating: raw.bindMemory(to: UInt8.self).baseAddress)
+                stream.avail_in = uInt(raw.count)
+                return try pump(&stream, &outBuf, out, &total, maxOutput)
+            }
+        }
+        if !ended {
+            stream.next_in = nil
+            stream.avail_in = 0
+            // 输入读完但还没见到 stream end：用 Z_FINISH 把尾块逼出来
+            _ = try pump(&stream, &outBuf, out, &total, maxOutput, flush: Z_FINISH)
+        }
+    }
+
+    private static func pump(_ stream: inout z_stream, _ outBuf: inout [UInt8],
+                             _ out: FileHandle, _ total: inout Int, _ maxOutput: Int,
+                             flush: Int32 = Z_NO_FLUSH) throws -> Bool {
+        while true {
+            let r: Int32 = outBuf.withUnsafeMutableBufferPointer { b -> Int32 in
+                stream.next_out = b.baseAddress
+                stream.avail_out = uInt(b.count)
+                return inflate(&stream, flush)
+            }
+            let produced = outBuf.count - Int(stream.avail_out)
+            if produced > 0 {
+                total += produced
+                guard total <= maxOutput else {
+                    throw ArchiveError.format("解压结果超过 \(maxOutput / 1_048_576)MB 上限（包内单个文件过大或 zip bomb）")
                 }
-                if !name.hasSuffix("/") { entries.append((name, out)) }
-                offset = dataStart + compSize
+                try out.write(contentsOf: Data(bytes: outBuf, count: produced))
+            }
+            if r == Z_STREAM_END { return true }
+            if r == Z_OK {
+                if stream.avail_in == 0 && produced == 0 { return false }
                 continue
-            } else if sig == 0x02014b50 || sig == 0x06054b50 { // central dir / EOCD
-                break
-            } else {
-                break
             }
-        }
-        return entries
-    }
-
-    /// raw deflate 解压（zip method 8）
-    static func inflateRaw(_ data: Data) throws -> Data {
-        var stream = z_stream()
-        let src = [UInt8](data)
-        let ret = src.withUnsafeBufferPointer { buf -> Int32 in
-            stream.next_in = UnsafeMutablePointer(mutating: buf.baseAddress)
-            stream.avail_in = uInt(buf.count)
-            var out = Data()
-            var chunk = [UInt8](repeating: 0, count: 1 << 16)
-            let initRet = inflateInit2_(&stream, -15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
-            guard initRet == Z_OK else { return initRet }
-            defer { inflateEnd(&stream) }
-            while stream.avail_in > 0 {
-                stream.next_out = UnsafeMutablePointer(&chunk)
-                stream.avail_out = uInt(chunk.count)
-                let r = inflate(&stream, Z_NO_FLUSH)
-                if r != Z_OK && r != Z_STREAM_END { return r }
-                out.append(chunk, count: chunk.count - Int(stream.avail_out))
-                if r == Z_STREAM_END { break }
+            if r == Z_BUF_ERROR {
+                if produced == 0 { return false }
+                continue
             }
-            return Z_OK
+            throw ArchiveError.format("inflate 失败 (\(r))")
         }
-        guard ret == Z_OK || ret == Z_STREAM_END else { throw ArchiveError.format("deflate error \(ret)") }
-        return try inflateRawRest(data) // 重新解压以收集全部输出
-    }
-
-    private static func inflateRawRest(_ data: Data) throws -> Data {
-        var stream = z_stream()
-        var out = Data()
-        var chunk = [UInt8](repeating: 0, count: 1 << 16)
-        let ret = data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int32 in
-            stream.next_in = UnsafeMutablePointer(mutating: raw.bindMemory(to: UInt8.self).baseAddress)
-            stream.avail_in = uInt(data.count)
-            let initRet = inflateInit2_(&stream, -15, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
-            guard initRet == Z_OK else { return initRet }
-            defer { inflateEnd(&stream) }
-            while stream.avail_in > 0 {
-                stream.next_out = UnsafeMutablePointer(&chunk)
-                stream.avail_out = uInt(chunk.count)
-                let r = inflate(&stream, Z_NO_FLUSH)
-                if r != Z_OK && r != Z_STREAM_END { return r }
-                out.append(chunk, count: chunk.count - Int(stream.avail_out))
-                if r == Z_STREAM_END { break }
-            }
-            return Z_OK
-        }
-        guard ret == Z_OK || ret == Z_STREAM_END else { throw ArchiveError.format("deflate error \(ret)") }
-        return out
     }
 }
 
-/// gzip 解压（deb data.tar.gz）
-enum Gzip {
-    static func decompress(_ data: Data) throws -> Data {
-        var stream = z_stream()
-        var out = Data()
-        var chunk = [UInt8](repeating: 0, count: 1 << 16)
-        let ret = data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Int32 in
-            stream.next_in = UnsafeMutablePointer(mutating: raw.bindMemory(to: UInt8.self).baseAddress)
-            stream.avail_in = uInt(data.count)
-            let initRet = inflateInit2_(&stream, 15 + 32, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
-            guard initRet == Z_OK else { return initRet }
-            defer { inflateEnd(&stream) }
-            while stream.avail_in > 0 {
-                stream.next_out = UnsafeMutablePointer(&chunk)
-                stream.avail_out = uInt(chunk.count)
-                let r = inflate(&stream, Z_NO_FLUSH)
-                if r != Z_OK && r != Z_STREAM_END { return r }
-                out.append(chunk, count: chunk.count - Int(stream.avail_out))
-                if r == Z_STREAM_END { break }
-            }
-            return Z_OK
+// MARK: - Compression.framework 流式解压（raw lzma）
+
+enum CompressionStream {
+    static func expand(from src: FileHandle, byteCount: Int,
+                       algorithm: compression_algorithm, into out: FileHandle) throws {
+        var dummy: UInt8 = 0
+        var stream = compression_stream(dst_ptr: &dummy, dst_size: 0, src_ptr: &dummy, src_size: 0, state: nil)
+        guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, algorithm) != COMPRESSION_STATUS_ERROR else {
+            throw ArchiveError.format("Compression 初始化失败")
         }
-        guard ret == Z_OK || ret == Z_STREAM_END else { throw ArchiveError.format("gzip error \(ret)") }
-        return out
+        defer { compression_stream_destroy(&stream) }
+
+        var outBuf = [UInt8](repeating: 0, count: 262_144)
+        var remaining = byteCount
+        var ended = false
+
+        while remaining > 0 && !ended {
+            guard let chunk = try src.read(upToCount: min(remaining, 1 << 16)), !chunk.isEmpty else { break }
+            remaining -= chunk.count
+            ended = try chunk.withUnsafeBytes { raw -> Bool in
+                stream.src_ptr = raw.bindMemory(to: UInt8.self).baseAddress!
+                stream.src_size = raw.count
+                // 后面还有输入时绝不能带 FINALIZE：Compression 会当成「输入到此为止」提前收尾
+                return try pump(&stream, &outBuf, out, finalize: false)
+            }
+        }
+        if !ended {
+            stream.src_ptr = &dummy
+            stream.src_size = 0
+            _ = try pump(&stream, &outBuf, out, finalize: true)
+        }
+    }
+
+    private static func pump(_ stream: inout compression_stream, _ outBuf: inout [UInt8],
+                             _ out: FileHandle, finalize: Bool) throws -> Bool {
+        let flags = finalize ? Int32(COMPRESSION_STREAM_FINALIZE.rawValue) : 0
+        while true {
+            outBuf.withUnsafeMutableBufferPointer { b in
+                stream.dst_ptr = b.baseAddress!
+                stream.dst_size = b.count
+            }
+            let status = compression_stream_process(&stream, flags)
+            let produced = outBuf.count - stream.dst_size
+            if produced > 0 { try out.write(contentsOf: Data(bytes: outBuf, count: produced)) }
+            switch status {
+            case COMPRESSION_STATUS_END:
+                return true
+            case COMPRESSION_STATUS_ERROR:
+                throw ArchiveError.format("Compression 解压失败")
+            default:
+                if stream.src_size == 0 && produced == 0 { return false }
+            }
+        }
     }
 }
 
-/// ar 归档（deb 外壳）
-enum ArReader {
-    static func member(_ data: Data, name target: String) -> Data? {
-        let bytes = [UInt8](data)
-        guard bytes.count >= 8, String(data: Data(bytes[0..<8]), encoding: .ascii) == "!<arch>\n" else { return nil }
-        var offset = 8
-        while offset + 60 <= bytes.count {
-            let name = String(data: Data(bytes[offset..<offset+16]), encoding: .ascii)?.trimmingCharacters(in: .whitespaces) ?? ""
-            let sizeStr = String(data: Data(bytes[offset+48..<offset+58]), encoding: .ascii) ?? "0"
-            let size = Int(sizeStr.trimmingCharacters(in: .whitespaces)) ?? 0
-            let dataStart = offset + 60
-            guard dataStart + size <= bytes.count else { break }
-            if name == target {
-                return Data(bytes[dataStart..<dataStart+size])
+// MARK: - liblzma 流式解压（xz 容器）
+
+enum XZStream {
+    typealias DecoderFn = @convention(c) (UnsafeMutableRawPointer, UInt64, UInt32) -> Int32
+    typealias CodeFn = @convention(c) (UnsafeMutableRawPointer, Int32) -> Int32
+    typealias EndFn = @convention(c) (UnsafeMutableRawPointer) -> Void
+
+    /// lzma_stream 是 C ABI 固定布局（xz 5.x 64 位）：
+    ///   0:next_in 8:avail_in 16:total_in 24:next_out 32:avail_out 40:total_out 48:allocator 56:internal
+    /// 用 UInt64 索引固定偏移读写（不用 Swift struct——布局不保证与 C 一致）。
+    static func expand(from src: FileHandle, byteCount: Int, into out: FileHandle) throws {
+        guard let handle = dlopen("/usr/lib/liblzma.dylib", RTLD_LAZY) else {
+            throw ArchiveError.format("liblzma 不可用，无法解 xz 包")
+        }
+        defer { dlclose(handle) }
+        guard let sDec = dlsym(handle, "lzma_stream_decoder"),
+              let sCode = dlsym(handle, "lzma_code"),
+              let sEnd = dlsym(handle, "lzma_end") else {
+            throw ArchiveError.format("liblzma 符号缺失，无法解 xz 包")
+        }
+        let decoder = unsafeBitCast(sDec, to: DecoderFn.self)
+        let code = unsafeBitCast(sCode, to: CodeFn.self)
+        let end = unsafeBitCast(sEnd, to: EndFn.self)
+
+        let raw = UnsafeMutableRawPointer.allocate(byteCount: 256, alignment: 16)
+        memset(raw, 0, 256)
+        defer { end(raw); raw.deallocate() }
+        guard decoder(raw, UInt64.max, 0x001 /* LZMA_CONCATENATED */) == 0 else {
+            throw ArchiveError.format("lzma_stream_decoder 初始化失败")
+        }
+
+        var outBuf = [UInt8](repeating: 0, count: 262_144)
+        var remaining = byteCount
+        var ended = false
+
+        while remaining > 0 && !ended {
+            guard let chunk = try src.read(upToCount: min(remaining, 1 << 16)), !chunk.isEmpty else { break }
+            remaining -= chunk.count
+            ended = try chunk.withUnsafeBytes { buf -> Bool in
+                let words = raw.assumingMemoryBound(to: UInt64.self)
+                words[0] = UInt64(UInt(bitPattern: buf.bindMemory(to: UInt8.self).baseAddress))
+                words[1] = UInt64(buf.count)
+                return try pump(raw, code, &outBuf, out, action: 0 /* LZMA_RUN */)
             }
-            offset = dataStart + size + (size % 2 == 1 ? 1 : 0)
+        }
+        if !ended {
+            let words = raw.assumingMemoryBound(to: UInt64.self)
+            words[0] = 0
+            words[1] = 0
+            _ = try pump(raw, code, &outBuf, out, action: 3 /* LZMA_FINISH */)
+        }
+    }
+
+    private static func pump(_ raw: UnsafeMutableRawPointer, _ code: CodeFn,
+                             _ outBuf: inout [UInt8], _ out: FileHandle, action: Int32) throws -> Bool {
+        let words = raw.assumingMemoryBound(to: UInt64.self)
+        while true {
+            outBuf.withUnsafeMutableBufferPointer { b in
+                words[3] = UInt64(UInt(bitPattern: b.baseAddress))
+                words[4] = UInt64(b.count)
+            }
+            let r = code(raw, action)
+            let produced = outBuf.count - Int(words[4])
+            if produced > 0 { try out.write(contentsOf: Data(bytes: outBuf, count: produced)) }
+            if r == 1 { return true }                                   // LZMA_STREAM_END
+            if r != 0 { throw ArchiveError.format("xz 解码失败 (\(r))") }  // 非 LZMA_OK
+            if words[1] == 0 && produced == 0 { return false }
+        }
+    }
+}
+
+// MARK: - ZIP
+
+/// ZIP 读取器（local file header 顺序遍历，支持 store/deflate）
+/// 逐条目解压直接落盘，不再返回 [(name, data)]——那个 API 是 3.0GiB 的元凶。
+enum ZIPReader {
+    private static let sigLocal: UInt32 = 0x04034b50
+
+    /// 解整个 zip 到目录（保持包内路径），返回解出的条目名。
+    @discardableResult
+    static func extractAll(from url: URL, to dir: String,
+                           maxEntryBytes: Int = 256 * 1_048_576) throws -> [String] {
+        try extract(from: url, to: dir, maxEntryBytes: maxEntryBytes) { _ in true }
+    }
+
+    /// 只解插件资产（.dylib / .framework / .bundle），返回落盘的资产顶层路径。
+    @discardableResult
+    static func extractAssets(from url: URL, to dir: String,
+                              maxEntryBytes: Int = 256 * 1_048_576) throws -> [String] {
+        let names = try extract(from: url, to: dir, maxEntryBytes: maxEntryBytes) { name in
+            pluginAssetTop(name) != nil
+        }
+        var seen = Set<String>()
+        var paths: [String] = []
+        for n in names {
+            guard let top = Self.pluginAssetTop(n), seen.insert(top).inserted else { continue }
+            paths.append((dir as NSString).appendingPathComponent(top))
+        }
+        return paths
+    }
+
+    /// 插件资产顶层名：
+    /// - 路径里有 `Foo.framework/` / `Foo.bundle/` → 资产是那个目录（取最浅一层）
+    /// - 文件名本身以 .dylib 结尾 → 资产就是这个文件（保留其相对路径）
+    static func pluginAssetTop(_ name: String) -> String? {
+        let comps = name.split(separator: "/").map(String.init)
+        guard !comps.isEmpty else { return nil }
+        for (i, c) in comps.enumerated() {
+            let lower = c.lowercased()
+            if lower.hasSuffix(".framework") || lower.hasSuffix(".bundle") {
+                return comps[0...i].joined(separator: "/")
+            }
+        }
+        let lower = name.lowercased()
+        if lower.hasSuffix(".dylib") {
+            let base = comps.last ?? ""
+            if !base.isEmpty && !base.hasPrefix(".") { return name }
         }
         return nil
     }
-}
 
-/// tar 读取器（USTAR，对齐 TarReader：提取 .dylib 与 .bundle 目录）
-enum TarReader {
-    struct Entry { let name: String; let isDir: Bool; let data: Data? }
+    /// 核心：顺着头读，一个条目解完立刻写盘。
+    @discardableResult
+    static func extract(from url: URL, to dir: String,
+                        maxEntryBytes: Int = 256 * 1_048_576,
+                        select: (String) -> Bool) throws -> [String] {
+        try MemoryBudget.require(48 * 1_048_576, context: "解压 \(url.lastPathComponent)")
+        let total = FileIO.size(url)
+        guard total > 0 else { throw ArchiveError.format("空文件：\(url.path)") }
+        let src = try FileHandle(forReadingFrom: url)
+        defer { try? src.close() }
+        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
 
-    static func entries(_ data: Data) -> [Entry] {
-        let bytes = [UInt8](data)
-        var result: [Entry] = []
         var offset = 0
-        while offset + 512 <= bytes.count {
-            let block = Array(bytes[offset..<offset+512])
-            if block.allSatisfy({ $0 == 0 }) { break }
-            let name = String(data: Data(block[0..<100]), encoding: .utf8)?.trimmingCharacters(in: CharacterSet(charactersIn: "\0")) ?? ""
-            let sizeStr = String(data: Data(block[124..<136]), encoding: .ascii)?.trimmingCharacters(in: CharacterSet(charactersIn: " \0")) ?? "0"
-            let size = Int(sizeStr, radix: 8) ?? 0
-            let typeflag = block[156]
-            let isDir = typeflag == 53 || name.hasSuffix("/") // '5'
-            let dataStart = offset + 512
-            let entryData: Data? = (!isDir && dataStart + size <= bytes.count) ? Data(bytes[dataStart..<dataStart+size]) : nil
-            if !name.isEmpty {
-                result.append(Entry(name: name, isDir: isDir, data: entryData))
+        var written: [String] = []
+        while offset + 30 <= total {
+            guard let hdr = try FileIO.readExactly(src, at: UInt64(offset), count: 30) else { break }
+            guard hdr.le32(0) == sigLocal else { break }   // 中央目录 / EOCD：结束
+            let method = hdr.le16(8)
+            let compSize = Int(hdr.le32(18))
+            let nameLen = hdr.le16(26)
+            let extraLen = hdr.le16(28)
+            let dataStart = offset + 30 + nameLen + extraLen
+            guard compSize >= 0, dataStart + compSize <= total,
+                  let nameData = try FileIO.readExactly(src, at: UInt64(offset + 30), count: nameLen) else { break }
+            let name = String(decoding: nameData, as: UTF8.self)
+            offset = dataStart + compSize
+            guard !name.isEmpty, !name.hasSuffix("/") else { continue }
+            guard !name.split(separator: "/").contains("..") else { continue }   // 路径穿越
+            guard select(name) else { continue }
+
+            let destPath = (dir as NSString).appendingPathComponent(name)
+            try FileManager.default.createDirectory(atPath: (destPath as NSString).deletingLastPathComponent,
+                                                    withIntermediateDirectories: true)
+            FileManager.default.createFile(atPath: destPath, contents: nil)
+            let out = try FileHandle(forWritingTo: URL(fileURLWithPath: destPath))
+            do {
+                try src.seek(toOffset: UInt64(dataStart))
+                switch method {
+                case 0:
+                    var left = compSize
+                    while left > 0 {
+                        guard let c = try src.read(upToCount: min(left, 1 << 16)), !c.isEmpty else { break }
+                        left -= c.count
+                        try out.write(contentsOf: c)
+                    }
+                case 8:
+                    try ZStream.expand(from: src, byteCount: compSize, windowBits: -15,
+                                       maxOutput: maxEntryBytes, into: out)
+                default:
+                    try? out.close()
+                    try? FileManager.default.removeItem(atPath: destPath)
+                    throw ArchiveError.format("zip 压缩方式 \(method) 不支持（只支持 store/deflate）：\(name)")
+                }
+                try? out.close()
+            } catch {
+                try? out.close()
+                try? FileManager.default.removeItem(atPath: destPath)
+                throw error
             }
-            offset = dataStart + size + (size % 512 == 0 ? 0 : 512 - (size % 512))
+            written.append(name)
         }
-        return result
+        return written
     }
 }
 
-/// deb 解包（对齐 extractDebianPackage：data.tar.gz/bz2/lzma/xz/zst/lz4；
-/// v2.9.126 支持 gzip + bzip2 + raw lzma + xz 容器；zst/lz4 明确报错并给出重打包指引）
-enum DebReader {
-    /// 用 Compression.framework 解 bzip2 / raw lzma 流（无容器包装，逐块 streaming）
-    private static func decompressCompression(_ data: Data, algorithm: compression_algorithm) -> Data? {
-        var out = Data()
-        let src = (data as NSData).bytes.bindMemory(to: UInt8.self, capacity: data.count)
-        var dummyDst: UInt8 = 0
-        var stream = compression_stream(dst_ptr: &dummyDst, dst_size: 0, src_ptr: src, src_size: data.count, state: nil)
-        guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, algorithm) != COMPRESSION_STATUS_ERROR else {
-            return nil
-        }
-        defer { compression_stream_destroy(&stream) }
-        var dst = [UInt8](repeating: 0, count: 65536)
-        let dstBuf = dst.withUnsafeMutableBytes { $0.bindMemory(to: UInt8.self).baseAddress! }
-        var status = COMPRESSION_STATUS_OK
-        stream.src_ptr = src
-        stream.src_size = data.count
-        var guardCount = 0
-        while status == COMPRESSION_STATUS_OK {
-            stream.dst_ptr = dstBuf
-            stream.dst_size = dst.count
-            status = compression_stream_process(&stream, Int32(COMPRESSION_STREAM_FINALIZE.rawValue))
-            let produced = dst.count - stream.dst_size
-            if produced > 0 { out.append(dstBuf, count: produced) }
-            if status == COMPRESSION_STATUS_END { break }
-            if status == COMPRESSION_STATUS_ERROR { return nil }
-            // 防死循环：输入耗尽且无进展（异常流）时退出
-            guardCount += 1
-            if guardCount > 1_000_000 || (stream.src_size == 0 && produced == 0) { break }
+// MARK: - ar（deb 外壳）
+
+enum ArReader {
+    struct Member { let name: String; let offset: Int; let size: Int }
+
+    /// 只记偏移和长度，不把 member 内容读进内存
+    static func members(_ fh: FileHandle, total: Int) throws -> [Member] {
+        guard total >= 8, let magic = try FileIO.readExactly(fh, at: 0, count: 8),
+              String(decoding: magic, as: UTF8.self) == "!<arch>\n" else { return [] }
+        var out: [Member] = []
+        var offset = 8
+        while offset + 60 <= total {
+            guard let hdr = try FileIO.readExactly(fh, at: UInt64(offset), count: 60) else { break }
+            let name = String(decoding: hdr[0..<16], as: UTF8.self).trimmingCharacters(in: .whitespaces)
+            let sizeStr = String(decoding: hdr[48..<58], as: UTF8.self).trimmingCharacters(in: .whitespaces)
+            let size = Int(sizeStr) ?? 0
+            let dataStart = offset + 60
+            guard dataStart + size <= total else { break }
+            out.append(Member(name: name, offset: dataStart, size: size))
+            offset = dataStart + size + (size % 2 == 1 ? 1 : 0)
         }
         return out
     }
+}
 
-    /// 解 xz 容器：dlsym /usr/lib/liblzma.dylib（iOS 系统自带；Debian deb 默认 data.tar.xz 是 XZ 容器格式，
-    /// Compression.framework 的 COMPRESSION_LZMA 只解 raw lzma 流、解不了 xz 帧，必须走 liblzma）。
-    /// lzma_stream 是 C ABI 固定布局（xz 5.x 64 位，字段顺序/偏移 liblzma 保证稳定）：
-    ///   0:next_in  8:avail_in  16:total_in  24:next_out  32:avail_out  40:total_out  48:allocator  56:internal
-    /// 用固定偏移读写（不用 Swift struct——Swift 结构体布局不保证与 C 一致）。
-    private static func decompressXZ(_ data: Data) -> Data? {
-        typealias LzmaStreamDecoderFn = @convention(c) (UnsafeMutableRawPointer, UInt64, UInt32) -> Int32
-        typealias LzmaCodeFn = @convention(c) (UnsafeMutableRawPointer, Int32) -> Int32
-        typealias LzmaEndFn = @convention(c) (UnsafeMutableRawPointer) -> Void
+// MARK: - tar
 
-        guard let handle = dlopen("/usr/lib/liblzma.dylib", RTLD_LAZY) else { return nil }
-        defer { dlclose(handle) }
-        guard let symDecoder = dlsym(handle, "lzma_stream_decoder"),
-              let symCode = dlsym(handle, "lzma_code"),
-              let symEnd = dlsym(handle, "lzma_end") else { return nil }
-        let decoderFn = unsafeBitCast(symDecoder, to: LzmaStreamDecoderFn.self)
-        let codeFn = unsafeBitCast(symCode, to: LzmaCodeFn.self)
-        let endFn = unsafeBitCast(symEnd, to: LzmaEndFn.self)
+/// 只走表头，成员内容留在文件里（用到哪段拷哪段）
+enum TarReader {
+    struct Entry { let name: String; let isDir: Bool; let size: Int; let dataOffset: Int }
+    private static let blockSize = 512
 
-        // 零初始化一块足够大的 stream buffer（liblzma 只写它认识的字段）
-        let stream = UnsafeMutableRawPointer.allocate(byteCount: 256, alignment: 16)
-        memset(stream, 0, 256)
-        defer { endFn(stream); stream.deallocate() }
+    static func walk(_ fh: FileHandle, total: Int, _ body: (Entry) throws -> Void) throws {
+        var offset = 0
+        while offset + blockSize <= total {
+            guard let hdr = try FileIO.readExactly(fh, at: UInt64(offset), count: blockSize) else { break }
+            if hdr.allSatisfy({ $0 == 0 }) { break }
+            let rawName = String(decoding: hdr[0..<100], as: UTF8.self)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+            let sizeStr = String(decoding: hdr[124..<136], as: UTF8.self)
+                .trimmingCharacters(in: CharacterSet(charactersIn: " \0"))
+            let size = Int(sizeStr, radix: 8) ?? 0
+            let typeflag = hdr[156]
+            // ustar 长名前缀
+            var name = rawName
+            let prefix = String(decoding: hdr[345..<500], as: UTF8.self)
+                .trimmingCharacters(in: CharacterSet(charactersIn: "\0"))
+            if !prefix.isEmpty && hdr[257] != 0 { name = prefix + "/" + rawName }
+            let isDir = typeflag == 53 || name.hasSuffix("/")   // '5'
+            let dataStart = offset + blockSize
+            guard dataStart + size <= total else { break }
+            let step = dataStart + size + (size % blockSize == 0 ? 0 : blockSize - (size % blockSize))
+            if !name.isEmpty {
+                try body(Entry(name: name, isDir: isDir, size: size, dataOffset: dataStart))
+            }
+            offset = step
+        }
+    }
+}
 
-        let ret = decoderFn(stream, UInt64.max, 0x001 /* LZMA_CONCATENATED */)
-        guard ret == 0 /* LZMA_OK */ else { return nil }
+// MARK: - deb 解包
 
-        var out = Data()
-        var dstBuf = [UInt8](repeating: 0, count: 262144)
-        return data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) -> Data? in
-            guard let base = raw.bindMemory(to: UInt8.self).baseAddress else { return nil }
-            let bytes = stream.assumingMemoryBound(to: UInt64.self)
-            bytes[0] = UInt64(UInt(bitPattern: base))          // next_in
-            bytes[1] = UInt64(data.count)                       // avail_in
-            while true {
-                bytes[3] = UInt64(UInt(bitPattern: dstBuf.withUnsafeMutableBytes { $0.baseAddress! }))  // next_out
-                bytes[4] = UInt64(dstBuf.count)                                                          // avail_out
-                let r = codeFn(stream, 3 /* LZMA_FINISH */)
-                let produced = dstBuf.count - Int(bytes[4])
-                if produced > 0 { out.append(dstBuf, count: produced) }
-                if r == 1 /* LZMA_STREAM_END */ { return out }
-                if r != 0 /* LZMA_OK */ { return nil }
+/// deb 解包（对齐 extractDebianPackage：data.tar.gz/bz2/lzma/xz；
+/// bzip2/zst/lz4 明确报错并给出重打包指引）
+enum DebReader {
+    static func extractDylibAndBundles(at url: URL, to targetDir: URL) throws {
+        try MemoryBudget.require(64 * 1_048_576, context: "解包 \(url.lastPathComponent)")
+        let total = FileIO.size(url)
+        guard total > 0 else { throw ArchiveError.format("空文件：\(url.path)") }
+        let fh = try FileHandle(forReadingFrom: url)
+        defer { try? fh.close() }
+
+        let members = try ArReader.members(fh, total: total)
+        guard let dataMember = members.first(where: { $0.name.hasPrefix("data.tar") }) else {
+            throw ArchiveError.format("deb 里没有 data.tar.*")
+        }
+        let ext = (dataMember.name as NSString).pathExtension.lowercased()
+
+        // data.tar 落到临时文件，内存里只过 64KB 窗口
+        let tmpDir = NSTemporaryDirectory() + "XosviDeb-" + UUID().uuidString
+        try FileManager.default.createDirectory(atPath: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: tmpDir) }
+        let tarURL = URL(fileURLWithPath: tmpDir).appendingPathComponent("data.tar")
+        FileManager.default.createFile(atPath: tarURL.path, contents: nil)
+        let tarOut = try FileHandle(forWritingTo: tarURL)
+        try fh.seek(toOffset: UInt64(dataMember.offset))
+        do {
+            switch ext {
+            case "gz":
+                try ZStream.expand(from: fh, byteCount: dataMember.size, windowBits: 15 + 32,
+                                   maxOutput: 2 * 1_024 * 1_048_576, into: tarOut)
+            case "xz":
+                try XZStream.expand(from: fh, byteCount: dataMember.size, into: tarOut)
+            case "lzma":
+                try CompressionStream.expand(from: fh, byteCount: dataMember.size,
+                                             algorithm: COMPRESSION_LZMA, into: tarOut)
+            case "bz2":
+                try? tarOut.close()
+                throw ArchiveError.format("data.tar.bz2 不支持（SDK 无 COMPRESSION_BZIP2），请用 gzip 打包的 deb")
+            case "zst", "lz4":
+                try? tarOut.close()
+                throw ArchiveError.format("deb 用的是 \(dataMember.name)，iOS 侧没有 \(ext) 解压器。请用 dpkg-deb -Zgzip 重打包后再注入。")
+            default:
+                try? tarOut.close()
+                throw ArchiveError.format("未知的 data.tar 格式：\(dataMember.name)")
+            }
+        } catch {
+            try? tarOut.close()
+            throw error
+        }
+        try? tarOut.close()
+
+        let tarTotal = FileIO.size(tarURL)
+        guard tarTotal > 0 else { throw ArchiveError.format("deb 解出的 data.tar 为空") }
+        let tar = try FileHandle(forReadingFrom: tarURL)
+        defer { try? tar.close() }
+        try FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
+
+        try TarReader.walk(tar, total: tarTotal) { e in
+            guard !e.isDir else { return }
+            if let idx = bundleComponentIndex(e.name) {
+                // <...>/Foo.bundle/<rest> → targetDir/Foo.bundle/<rest>
+                let comps = e.name.split(separator: "/").map(String.init)
+                let rest = comps[(idx + 1)...].joined(separator: "/")
+                guard !rest.isEmpty, rest != "", !comps[(idx + 1)...].contains("..") else { return }
+                let dest = targetDir.appendingPathComponent(comps[idx]).appendingPathComponent(rest)
+                try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(),
+                                                        withIntermediateDirectories: true)
+                try FileIO.copy(from: tar, at: UInt64(e.dataOffset), count: e.size, to: dest)
+            } else if e.name.lowercased().hasSuffix(".dylib") {
+                let base = (e.name as NSString).lastPathComponent
+                guard !base.isEmpty, !base.hasPrefix(".") else { return }
+                try FileIO.copy(from: tar, at: UInt64(e.dataOffset), count: e.size,
+                                to: targetDir.appendingPathComponent(base))
             }
         }
     }
 
-    static func extractDylibAndBundles(at url: URL, to targetDir: URL) throws {
-        let data = try Data(contentsOf: url)
-        var tarData: Data?
-        if let member = ArReader.member(data, name: "data.tar.gz") {
-            tarData = try Gzip.decompress(member)
-        } else if let member = ArReader.member(data, name: "data.tar.bz2") {
-            // 构建环境 Compression SDK 无 COMPRESSION_BZIP2 常量，明确降级（bzip2 deb 极少见）
-            _ = member
-            throw ArchiveError.format("data.tar.bz2 not supported (SDK lacks COMPRESSION_BZIP2); use a gzip-packed deb")
-        } else if let member = ArReader.member(data, name: "data.tar.lzma") {
-            guard let d = decompressCompression(member, algorithm: COMPRESSION_LZMA) else {
-                throw ArchiveError.format("data.tar.lzma extraction failed (raw lzma)")
-            }
-            tarData = d
-        } else if let member = ArReader.member(data, name: "data.tar.xz") {
-            guard let d = decompressXZ(member) else {
-                throw ArchiveError.format("data.tar.xz extraction failed (liblzma)")
-            }
-            tarData = d
-        } else {
-            for alt in ["data.tar.zst", "data.tar.lz4"] {
-                if ArReader.member(data, name: alt) != nil {
-                    throw ArchiveError.format("deb contains \(alt), no built-in extractor on iOS. Repack the deb with gzip (dpkg-deb -Zgzip) before injection.")
-                }
-            }
-            throw ArchiveError.format("no data.tar.gz/bz2/lzma/xz found in deb")
-        }
-        guard let tar = tarData else { throw ArchiveError.format("deb empty after extraction") }
-        let entries = TarReader.entries(tar)
-        var processedBundles = Set<String>()
-        for entry in entries {
-            let lower = entry.name.lowercased()
-            if !entry.isDir, lower.hasSuffix(".dylib"), let d = entry.data {
-                let name = URL(fileURLWithPath: entry.name).lastPathComponent
-                if name.hasPrefix(".") { continue }
-                try d.write(to: targetDir.appendingPathComponent(name))
-            } else if entry.isDir, lower.hasSuffix(".bundle") {
-                let bundleName = URL(fileURLWithPath: entry.name).lastPathComponent
-                guard !processedBundles.contains(bundleName) else { continue }
-                processedBundles.insert(bundleName)
-                let bDir = targetDir.appendingPathComponent(bundleName)
-                try FileManager.default.createDirectory(at: bDir, withIntermediateDirectories: true)
-                for e in entries where e.name.hasPrefix(entry.name) && !e.name.hasSuffix("/") {
-                    if let d = e.data {
-                        let rel = String(e.name.dropFirst(entry.name.count))
-                        let dest = bDir.appendingPathComponent(rel)
-                        try FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-                        try d.write(to: dest)
-                    }
-                }
-            }
-        }
+    private static func bundleComponentIndex(_ name: String) -> Int? {
+        let comps = name.split(separator: "/")
+        for (i, c) in comps.enumerated() where c.lowercased().hasSuffix(".bundle") { return i }
+        return nil
     }
 }
