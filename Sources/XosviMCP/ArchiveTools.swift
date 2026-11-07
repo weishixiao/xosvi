@@ -89,14 +89,26 @@ enum FileIO {
 }
 
 private extension Data {
+    // 注意：闭包必须显式标注 UnsafeRawBufferPointer——Data 还有一个
+    // 已废弃的 withUnsafeBytes<Result, ContentType>((UnsafePointer<ContentType>) -> Result) 重载，
+    // 不标注时 $0[off] 的两个候选下标会撞成 "ambiguous use of 'subscript(_:)'"，
+    // 四连移位则会触发 "unable to type-check this expression in reasonable time"。
     func le16(_ off: Int) -> Int {
         guard off + 2 <= count else { return 0 }
-        return withUnsafeBytes { Int($0[off]) | (Int($0[off + 1]) << 8) }
+        return withUnsafeBytes { (b: UnsafeRawBufferPointer) -> Int in
+            let lo = Int(b[off])
+            let hi = Int(b[off + 1])
+            return lo | (hi << 8)
+        }
     }
     func le32(_ off: Int) -> UInt32 {
         guard off + 4 <= count else { return 0 }
-        return withUnsafeBytes {
-            UInt32($0[off]) | (UInt32($0[off + 1]) << 8) | (UInt32($0[off + 2]) << 16) | (UInt32($0[off + 3]) << 24)
+        return withUnsafeBytes { (b: UnsafeRawBufferPointer) -> UInt32 in
+            let b0 = UInt32(b[off])
+            let b1 = UInt32(b[off + 1]) << 8
+            let b2 = UInt32(b[off + 2]) << 16
+            let b3 = UInt32(b[off + 3]) << 24
+            return b0 | b1 | b2 | b3
         }
     }
 }
@@ -171,8 +183,13 @@ enum ZStream {
 enum CompressionStream {
     static func expand(from src: FileHandle, byteCount: Int,
                        algorithm: compression_algorithm, into out: FileHandle) throws {
-        var dummy: UInt8 = 0
-        var stream = compression_stream(dst_ptr: &dummy, dst_size: 0, src_ptr: &dummy, src_size: 0, state: nil)
+        // dummy 缓冲区：dst_ptr/src_ptr 在 init 时不能为 nil，但 dst_size/src_size 都是 0，
+        // 实际不会被读写。必须用 allocate 出的指针——`&dummy` 只在调用期有效，传进结构体
+        // 会报 "cannot use inout expression here"，赋值 src_ptr 时还会直接编译失败。
+        let zero = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)
+        zero.initialize(to: 0)
+        defer { zero.deinitialize(count: 1); zero.deallocate() }
+        var stream = compression_stream(dst_ptr: zero, dst_size: 0, src_ptr: zero, src_size: 0, state: nil)
         guard compression_stream_init(&stream, COMPRESSION_STREAM_DECODE, algorithm) != COMPRESSION_STATUS_ERROR else {
             throw ArchiveError.format("Compression 初始化失败")
         }
@@ -193,7 +210,7 @@ enum CompressionStream {
             }
         }
         if !ended {
-            stream.src_ptr = &dummy
+            stream.src_ptr = zero
             stream.src_size = 0
             _ = try pump(&stream, &outBuf, out, finalize: true)
         }
@@ -224,7 +241,9 @@ enum CompressionStream {
 
 // MARK: - liblzma 流式解压（xz 容器）
 
-enum XZStream {
+/// 名字别叫 XZStream：PackageTools.swift 里已有一个 private enum XZStream（xz-embedded 的
+/// 一次性 decode），同模块顶层重名会让两者都失效（invalid redeclaration + 各处 no member 'decode'）。
+enum XZFileStream {
     typealias DecoderFn = @convention(c) (UnsafeMutableRawPointer, UInt64, UInt32) -> Int32
     typealias CodeFn = @convention(c) (UnsafeMutableRawPointer, Int32) -> Int32
     typealias EndFn = @convention(c) (UnsafeMutableRawPointer) -> Void
@@ -500,7 +519,7 @@ enum DebReader {
                 try ZStream.expand(from: fh, byteCount: dataMember.size, windowBits: 15 + 32,
                                    maxOutput: 2 * 1_024 * 1_048_576, into: tarOut)
             case "xz":
-                try XZStream.expand(from: fh, byteCount: dataMember.size, into: tarOut)
+                try XZFileStream.expand(from: fh, byteCount: dataMember.size, into: tarOut)
             case "lzma":
                 try CompressionStream.expand(from: fh, byteCount: dataMember.size,
                                              algorithm: COMPRESSION_LZMA, into: tarOut)
