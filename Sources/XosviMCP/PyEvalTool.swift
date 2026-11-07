@@ -17,16 +17,23 @@ final class PyEvalTool: MCPTool {
             "command": "eval / script / status",
             "code": "Python source (for eval)",
             "path": "absolute .py path (for script)",
+            "timeout": "wall-clock 秒数（默认 120）：到点放弃等待并返回；解释器停不下来，脚本仍在跑",
             "limit": "max output chars (default 200000)"
         ],
         verified: true, category: "terminal", prerequisites: [
             "首次调用会初始化解释器（约 1 秒）；之后常驻进程",
-            "解释器与 App 同进程：死循环会卡住调用线程，且没有安全的超时强杀"
+            "解释器与 App 同进程：死循环杀不掉——超时只是放弃等待，此后调用报 PY_BUSY，直到它结束或重启 App"
         ])
 
     private static let lock = NSLock()
     private static var initialized = false
     private static var initError = ""
+
+    // 解释器只有一个、且停不下来：上一次调用（可能已被超时放弃）还没返回时，
+    // 绝不能再进去——pyx_run_file 会做进程级 fd 重定向、用同一块代码缓冲，
+    // 交叉执行会把两次调用一起挂死。所以这里做单实例闸门。
+    private static let runLock = NSLock()
+    private static var running = false
 
     private var frameworkPath: String { Bundle.main.bundlePath + "/Frameworks/Python.framework/Python" }
     private var homePath: String { Bundle.main.bundlePath + "/python" }
@@ -69,6 +76,48 @@ final class PyEvalTool: MCPTool {
         return ""
     }
 
+    /// 拿执行权：已有调用在跑就立刻报错，不排队（排队会变成第二个 180s 卡死）
+    private func beginRun() throws {
+        PyEvalTool.runLock.lock()
+        defer { PyEvalTool.runLock.unlock() }
+        if PyEvalTool.running {
+            throw MCPError.classified("py: 解释器仍被上一次调用占用", code: "PY_BUSY", reason: "tool",
+                                      nextStep: "上一次 python 还没返回（多半已超时被放弃）。等它结束，或重启 App 再试；别原样重试")
+        }
+        PyEvalTool.running = true
+    }
+
+    private func endRun() {
+        PyEvalTool.runLock.lock()
+        PyEvalTool.running = false
+        PyEvalTool.runLock.unlock()
+    }
+
+    /// 带墙钟上限的执行：到点放弃等待（脚本停不下来，线程继续跑）
+    private func runBounded(code: String, limit: Int, timeout: TimeInterval) throws -> String {
+        final class Box: @unchecked Sendable {
+            var value: Result<String, Error>?
+        }
+        let box = Box()
+        let sem = DispatchSemaphore(value: 0)
+        DispatchQueue.global(qos: .userInitiated).async {
+            do { box.value = Result<String, Error>.success(try self.run(code: code, limit: limit)) }
+            catch { box.value = Result<String, Error>.failure(error) }
+            sem.signal()
+        }
+        if sem.wait(timeout: .now() + max(1, timeout)) == .timedOut {
+            throw MCPError.classified("py: 超过 \(Int(timeout))s 未返回，已放弃等待", code: "TIMEOUT", reason: "tool",
+                                      nextStep: "脚本可能仍在跑并占着解释器（下一次调用会报 PY_BUSY）。缩小范围或换成更便宜的写法，别原样重试")
+        }
+        guard let result = box.value else {
+            throw MCPError.failed("py: 无结果（内部错误）")
+        }
+        switch result {
+        case .success(let out): return out
+        case .failure(let e): throw e
+        }
+    }
+
     private func run(code: String, limit: Int) throws -> String {
         let e = ensureInit()
         if !e.isEmpty {
@@ -89,6 +138,9 @@ final class PyEvalTool: MCPTool {
         try code.write(toFile: codePath, atomically: true, encoding: .utf8)
         // v6.6.19：用户环境变量注入 os.environ
         try? EnvVars.pythonEnvJSON().write(toFile: envPath, atomically: true, encoding: .utf8)
+
+        try beginRun()
+        defer { endRun() }
 
         var err = [CChar](repeating: 0, count: 1024)
         let rc = codePath.withCString { cp in
@@ -111,6 +163,8 @@ final class PyEvalTool: MCPTool {
             throw MCPError.invalidParams("py: missing command (eval / script / status)")
         }
         let limit = max(1000, (params["limit"] as? Int) ?? 200_000)
+        let timeoutRaw = (params["timeout"] as? NSNumber)?.doubleValue ?? 120
+        let timeout = min(max(timeoutRaw, 1), 600)
 
         switch command {
         case "status":
@@ -128,7 +182,7 @@ final class PyEvalTool: MCPTool {
             guard let code = params["code"] as? String, !code.isEmpty else {
                 throw MCPError.invalidParams("py eval: missing code")
             }
-            let out = try run(code: code, limit: limit)
+            let out = try runBounded(code: code, limit: limit, timeout: timeout)
             return ["command": "eval", "ok": true, "stdout": out, "runtime": "in-process CPython"]
 
         case "script":
@@ -139,7 +193,7 @@ final class PyEvalTool: MCPTool {
                 throw MCPError.classified("py: 读不到脚本 \(path)", code: "NOT_FOUND",
                                           reason: "path", nextStep: "确认路径与编码（UTF-8）")
             }
-            let out = try run(code: code, limit: limit)
+            let out = try runBounded(code: code, limit: limit, timeout: timeout)
             return ["command": "script", "ok": true, "path": path, "stdout": out, "runtime": "in-process CPython"]
 
         default:

@@ -42,7 +42,7 @@ final class ShellExecTool: MCPTool {
         summary: "Run shell command (terminal/CLI). Params: command(必填), timeout(默认20s/max120), runtime(auto/ios/alpine). 自动路由(auto默认): 装包/解包/工具链/复杂脚本→Alpine(自动apk add, bind /ios_workspace /ios_containers); 纯文件/系统/网络→iOS原生. Use for: file ops, system info, network, text processing.",
         parameters: [
             "command": "Shell command to execute (required)",
-            "timeout": "Timeout seconds (default 20, max 120)",
+            "timeout": "Timeout seconds (default 20, max 120). python3 也按此超时返回（121/124=到点放弃等待；进程内解释器停不下来，脚本可能仍在跑）",
             "runtime": "Optional String: force execution environment. 'auto'(默认)=按命令类型自动判断；'ios'=强制iOS原生(FileManager直连整个文件系统)；'alpine'=强制Alpine Linux(完整工具链，只能访问绑定目录). 选择原则: ①读iOS文件/统计缓存/系统信息→ios; ②装包/解包/编译/复杂脚本→alpine; ③不确定就auto，结果里看runtime_actual字段确认实际环境; ④裸命令默认走iOS原生路由，只有 apk/pip/pip3/npm/npx 会自动转Alpine; ⑤python3 无论 runtime 都走进程内CPython(3.14)，装进Alpine的包不会出现在它里面.",
             "reset_cwd": "Optional Bool: reset working dir to default (default false)",
             "limit": "Optional Int: result string truncation cap (default 16000 chars——覆盖多数分析输出；仍不够用 full=true). If diagnostics output is trimmed and the body is invisible, pass limit=20000 或更大；full=true 则不截断返回完整结果",
@@ -582,7 +582,8 @@ final class ShellExecTool: MCPTool {
         // (3.12)，与提示词"python3 首词走原生 ARM64 CPython(3.14+numpy/pandas)"矛盾。要 Alpine 版仍用 sh -c 'python3 ...'。
         if iosCmd == "python3" || iosCmd.hasPrefix("python3 ") || iosCmd == "python" || iosCmd.hasPrefix("python ") {
             // v7.8.0：一律走 PyEvalTool 进程内解释器（更省内存、启动更快）；bin/python3 是 69KB 坏壳，不再 exec
-            let result = PythonInProcessBridge.run(command: iosCmd, limit: outLimit)
+            // 超时必须交给桥：解释器停不下来，不设上限就一路卡到外层 180s 看门狗
+            let result = PythonInProcessBridge.run(command: iosCmd, limit: outLimit, timeout: timeout)
             AuditLog.shared.log("shell.exec (in-process python)", detail: String(trimmed.prefix(100)))
             return result
         }

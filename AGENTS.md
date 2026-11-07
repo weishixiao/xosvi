@@ -261,6 +261,18 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
 - 设备上没有 python3，所以「附：契约检查」（`check_tool_registration.py`、`lint_tool_descriptions.py`）
   只在 CI/有 python3 的环境里跑；本机门禁纯 bash + awk。
 
+## 进程内解释器（`PyEvalTool` / `PythonInProcessBridge`）
+
+- 解释器只有一个、跑在 App 进程里，**杀不掉**：死循环/长扫描只能「放弃等待」，脚本线程会继续占着它。
+- 所以每个入口都必须带墙钟上限：`PyEvalTool.invoke` 的 `timeout`（默认 120s，上限 600s）→
+  到点抛 `TIMEOUT`；`ShellTool` 的 `timeout` 参数已经一路传到 `PythonInProcessBridge.run(timeout:)`，
+  超时返回 `exit_code 124` + `timed_out: true`。**新增 python 调用点也要传 timeout，别再无限等。**
+- 单实例闸门：上一次没返回时再调会立刻报 `PY_BUSY`，不排队（排队就是第二个 180s 卡死）。
+  真遇到 `PY_BUSY` → 等它结束或重启 App，别原样重试同一段脚本。
+- `CPyEmbed/py_shim.c` 的 `pyx_run_file` 会做**进程级 fd 1/2 重定向**，代码缓冲也不能跨调用复用（已改栈上）。
+- 事故（2026-11-07）：`python3 .../extract_ad_domains.py` 卡满 180s 看门狗报 `TOOL_TIMEOUT`；
+  除了脚本自身扫 26MB 二进制慢，「上一次调用还占着解释器 → 这一次卡在 GIL」也会这样——闸门就是为它加的。
+
 ## Xosvi 运行期日志桥（`watch.sh` + `wiki.qaq.xosvi.watch`）
 
 给排查“Xosvi 卡在某个工具”用，**不改 Xosvi 本身**。一个 launchd 常驻服务每 2 秒采样，把三层日志

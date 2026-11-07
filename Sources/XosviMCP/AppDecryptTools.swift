@@ -422,7 +422,7 @@ final class AppInjectPackageTool: MCPTool {
             var po = ""
             var pc: Int32 = 0
             do {
-                _ = try PyEvalTool().invoke(["command": "eval", "code": py, "limit": 4000])
+                _ = try PyEvalTool().invoke(["command": "eval", "code": py, "limit": 4000, "timeout": 300])
             } catch {
                 pc = 1
                 po = "进程内解释器不可用：" + String(describing: error)

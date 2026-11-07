@@ -139,7 +139,8 @@ int pyx_run_file(const char *codePath, const char *outPath, const char *envPath,
     if (!pyx_ready()) { seterr(err, errCap, "解释器未初始化"); return -1; }
 
     // 用文件路径传代码/环境/输出，避免把用户内容拼进字符串字面量（转义地狱）。
-    static char code[8192];
+    // 缓冲放栈上：static 会被后续调用覆盖（超时放弃后脚本仍在跑时尤其危险）。
+    char code[8192];
     snprintf(code, sizeof code,
         "import sys, io, os, json, traceback\n"
         "_code_path = %c%s%c\n"
