@@ -6,6 +6,7 @@ set -u
 # launchd 会注入 XPC_SERVICE_NAME 等变量，可能导致 icli 行为异常；用一个干净环境自重启一次。
 if [ -n "${XOSVI_WATCH_CLEAN:-}" ]; then :; else
   JB=$(ls -d /rootfs/private/var/containers/Bundle/Application/.jbroot-* 2>/dev/null | head -1)
+  [ -n "${JB:-}" ] || { echo "no roothide bootstrap found under /rootfs" >&2; exit 1; }
   exec env -i PATH="$JB/usr/bin:$JB/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
        XOSVI_WATCH_CLEAN=1 "$JB/usr/bin/sh" "$0"
 fi
@@ -14,7 +15,9 @@ D=/rootfs/private/var/mobile/Containers/Data/Application/ED5E0D3D-E92C-48E4-BE7E
 TOOL=$D/Documents/audit/tool_log.jsonl
 USAGE=$D/Documents/xosvi_usage.jsonl
 XLOG=$(ls -d /rootfs/private/var/containers/Bundle/Application/.jbroot-*/var/log/xosvid.log 2>/dev/null | head -1)
-[ -n "${XLOG:-}" ] || XLOG=/rootfs/private/var/containers/Bundle/Application/.jbroot-EBADCA1A548C0C42/var/log/xosvid.log
+# 不写死 .jbroot-<hash>：roothide 每次重启都可能改名，写死就指向不存在的文件。
+# 探测不到就让这一节的日志为空，循环照跑（其它三路日志仍然工作）。
+[ -n "${XLOG:-}" ] || echo "warning: xosvid.log not found, section 4 stays empty" >&2
 CRASHDIR=/rootfs/private/var/mobile/Library/Logs/CrashReporter
 OUT=$W/timeline.log
 

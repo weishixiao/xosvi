@@ -4,6 +4,7 @@
 set -euo pipefail
 
 OUT="${1:-out}"
+: "${OUT:?}"; : "${1:-out}"   # 递归删除前必须非空：空值会落到 $APP/ 之外
 # fix3cy27c: 先把 OUT 解析为绝对路径（按调用方 cwd 解析），再 cd 进本目录——
 #   本脚本 cd "$(dirname "$0")"（vpnxcode/）后，相对 OUT 会落到 vpnxcode/Xosvi.app/PlugIns/，
 #   而调用方 build-ipa.sh 检查的是仓库根的 Xosvi.app/PlugIns，导致"复制成功但检查 MISSING→被删"。

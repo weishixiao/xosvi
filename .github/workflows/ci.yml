@@ -40,6 +40,10 @@ jobs:
       - name: Python 语法自检
         run: python3 -m py_compile scripts/*.py tests/**/*.py 2>/dev/null || python3 -m py_compile scripts/*.py
 
+      # 与下面 shell-gate 同脚本：CI 里装了 python3，所以会额外跑既有契约检查。
+      - name: 静态门禁（脚本语法 / 路径 / 删除变量 / 持久化回退）
+        run: bash scripts/check.sh -v
+
   swift-syntax:
     name: Swift 语法门禁（ubuntu swiftc -parse，快速失败）
     # 钉在 24.04：ubuntu-latest 已升到 26.04，镜像不再预装 swiftc，

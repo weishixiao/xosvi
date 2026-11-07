@@ -240,6 +240,27 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   `XOSVID_IDLE_SECS`（0.2.5 起支持覆盖）；验证完记得改回 900 并重装。
   已验证过一次：4 秒时空闲到点出现 `stay alive`，12 秒长任务返回 `exit_code: 0`。
 
+## 静态门禁（`scripts/check.sh`，改完先跑）
+
+从 Apelin 借来的做法：**设备上踩过的坑要变成可执行的检查**，而不是留在文档里等下一次会话记住。
+`bash scripts/check.sh`（`-v` 打印通过项）→ 有 FAIL 退出码 1；CI 的 `tool-contract` 任务也跑它。
+
+| 项 | 拦什么 | 对应事故 |
+|---|---|---|
+| 1 shell 语法 | `bash -n` / `sh -n` 全部第一方脚本（跳过 `Resources/`、`.runtime/`、`debs/`） | 脚本坏在半路 |
+| 2 递归删除守卫 | `scripts/check-rm.awk` 分析 `rm -rf "$X"` 的 X 可能为空 | 变量为空 → 删到 bootstrap 根 |
+| 3 写死 jbroot 路径 | `.jbroot-<hash>` 出现在第一方文件里 | roothide 重启改名后指向别处 |
+| 4 launchd 占位符 | plist 里出现 `@PREFIX@`/`__ROOTFS__` | 本机 launchd 当相对路径，服务起不来 |
+| 5 持久化读取回退 | `try? JSONDecoder().decode` 后 `return [:]`（提示级） | 一条坏数据被下一次保存永久清空 |
+
+- 第 2 项的判定：`${VAR:?}`、文件级 `: "${VAR:?}"`、脚本内派生的常量赋值算安全；
+  `$1`/`$@`/`$( )`/反引号右侧算不安全。修法优先加最小守卫，别重构构建脚本。
+- 第 5 项若文件里已有留档逻辑（`setAsideIfUnreadable`/`backupKey` 等）就算已处理。
+  参考 `Sources/XosviMCP/EnvVars.swift`：解不出来先原样另存到 `xosvi.env.vars.unreadable`，
+  再返回空集合，`persist()` 覆盖前也会先留档。
+- 设备上没有 python3，所以「附：契约检查」（`check_tool_registration.py`、`lint_tool_descriptions.py`）
+  只在 CI/有 python3 的环境里跑；本机门禁纯 bash + awk。
+
 ## Xosvi 运行期日志桥（`watch.sh` + `wiki.qaq.xosvi.watch`）
 
 给排查“Xosvi 卡在某个工具”用，**不改 Xosvi 本身**。一个 launchd 常驻服务每 2 秒采样，把三层日志

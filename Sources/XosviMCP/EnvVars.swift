@@ -21,7 +21,11 @@ final class EnvVarsStore: ObservableObject {
     private init() { reload() }
 
     func reload() {
-        vars = EnvVars.current()
+        vars = EnvVars.load().vars
+        if EnvVars.load().unreadable {
+            // 读不出来的数据不覆盖：用户下次 set 时，先把原样数据留档再写新值。
+            AuditLog.shared.log("env.load_failed", detail: "已留档原始数据，暂不覆盖")
+        }
     }
 
     func set(_ value: String, for key: String) {
@@ -37,6 +41,7 @@ final class EnvVarsStore: ObservableObject {
     }
 
     private func persist() {
+        EnvVars.setAsideIfUnreadable()
         if let d = try? JSONEncoder().encode(vars) {
             UserDefaults.standard.set(d, forKey: Self.storageKey)
         }
@@ -48,10 +53,38 @@ final class EnvVarsStore: ObservableObject {
 
 /// 工具线程安全读取（同 GHConfig：直接读 UserDefaults，不依赖 UI 层）
 enum EnvVars {
+    struct Loaded {
+        var vars: [String: String]
+        /// 存过数据但解析不出来：调用方不能拿空集合覆盖它
+        var unreadable: Bool
+    }
+
+    private static let setAsideKey = "xosvi.env.vars.unreadable"
+
+    static func load() -> Loaded {
+        guard let d = UserDefaults.standard.data(forKey: EnvVarsStore.storageKey) else {
+            return Loaded(vars: [:], unreadable: false)
+        }
+        if let m = try? JSONDecoder().decode([String: String].self, from: d) {
+            return Loaded(vars: m, unreadable: false)
+        }
+        // 一条坏数据不该让下一次保存把全部变量清空（上游丢过整份记忆就是这类问题）：
+        // 先整份留档到另一个键，再返回空集合。
+        setAsideIfUnreadable()
+        return Loaded(vars: [:], unreadable: true)
+    }
+
     static func current() -> [String: String] {
+        load().vars
+    }
+
+    /// 原始数据读不出来时，把它原样另存一份（同键只留最新一次），供排查或人工恢复。
+    static func setAsideIfUnreadable() {
         guard let d = UserDefaults.standard.data(forKey: EnvVarsStore.storageKey),
-              let m = try? JSONDecoder().decode([String: String].self, from: d) else { return [:] }
-        return m
+              (try? JSONDecoder().decode([String: String].self, from: d)) == nil else { return }
+        if UserDefaults.standard.data(forKey: setAsideKey) != d {
+            UserDefaults.standard.set(d, forKey: setAsideKey)
+        }
     }
 
     /// 用户变量作为默认值，显式传入的 env 覆盖同名键

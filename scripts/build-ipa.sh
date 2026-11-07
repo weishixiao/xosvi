@@ -346,6 +346,8 @@ if [ -d "Resources" ]; then
     # v2.9.62：复制子目录（tweaks/ 内置 dylib 等）——用 find 避免 bash glob 尾部斜杠问题
     find Resources -mindepth 1 -maxdepth 1 -type d | while read -r d; do
         dirname=$(basename "$d")
+        # 资源子目录名由仓库内容决定；空值会让 rm -rf 落到 "$APP/" 本身
+        : "${dirname:?}"
         # bin 已在前面单独复制（需要 chmod + 签名），跳过避免重复
         [ "$dirname" = "bin" ] && continue
         rm -rf "$APP/$dirname"
