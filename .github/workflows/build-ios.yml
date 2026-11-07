@@ -6,16 +6,27 @@ name: build-xosvi-ios
 permissions:
   contents: write
 
+# v10.1：Homebrew 在 CI 上每次 `brew install` 都先跑 auto-update（30-60s）并做清理，
+# 而 runner 是干净的、formula 也不需要新鲜度——统一关掉，全流程省几分钟。
+env:
+  HOMEBREW_NO_AUTO_UPDATE: '1'
+  HOMEBREW_NO_INSTALL_CLEANUP: '1'
+  HOMEBREW_NO_ENV_HINTS: '1'
+  HOMEBREW_NO_ANALYTICS: '1'
+
 # v6.6.7：concurrency——同一时间只允许一个 build run 排队执行，
 # 新 run 自动取消旧 run。此前无此配置，多次触发导致多个 run 同时抢 macos runner，
 # native-wheels 排队 15min 超时被 GitHub 自动取消 → build 依赖失败被 skip（连挂 3 次）。
 concurrency:
-  group: build-xosvi-ios
+  # v10.1：group 带上 ref——分支/workflow_dispatch 的出包不再和 main 抢同一个队列；
+  #       main 仍然串行（cancel-in-progress 为 false，理由见下），
+  #       非 main 的重复触发则直接取消上一次，省 runner 分钟数。
+  group: build-xosvi-ios-${{ github.ref }}
   # v7.9.6：改成 false。之前 true 会在新 run 进入时把**正在跑**的旧 run 直接砍掉，
   # 表现就是 native-tools/native-wheels「cancelled」→ build skipped → 整条标红，
   # 但代码其实没问题（同一 commit 另一次 build 是 success 的）。
   # 现在：新 run 排队等旧的跑完，宁可慢，也不要产出红叉和半成品包。
-  cancel-in-progress: false
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 on:
   # v6.6.32：本仓库（Xosvi）是开发主线，push main 自动构建并发布滚动 Release。
@@ -25,6 +36,13 @@ on:
     paths-ignore:
       - '**.md'
       - 'docs/**'
+      # v10.1：仓库站点/展示类文件改动不需要重打 108MB 包
+      - 'Attachments/**'
+      - 'debs/**'
+      - 'depictions/**'
+      - 'index.html'
+      - 'sileo-featured.json'
+      - 'CydiaIcon.png'
   workflow_dispatch:
     # v6.5.9：显式声明 inputs —— App「触发线上编译」会带 {"inputs":{"tweak":<目录名>}}，
     # 若 workflow 未声明任何 input，GitHub 会直接返回 **422 Unexpected inputs provided**
@@ -68,6 +86,9 @@ jobs:
       # continue-on-error：编译失败不影响出包（仅不捆绑 bsdtar，代码侧自动回退）。
       - name: Build libarchive + bsdtar (iOS arm64)
         continue-on-error: true
+        # v10.1：这一步原来无视缓存每次都 ./configure + make（1-2 分钟）。产物落在
+        # native-tools-out/ 里、随缓存一起恢复，命中且 bsdtar 在就跳过；万一旧缓存缺 bsdtar 仍会重编。
+        if: steps.tools-cache.outputs.cache-hit != 'true' || hashFiles('native-tools-out/bsdtar') == ''
         run: |
           mkdir -p native-tools-out
           cd /tmp
@@ -426,6 +447,8 @@ jobs:
     # 下载因账号 egress 限流失败，整个出包就没了。这里改成只校验 native-tools。
     if: always() && needs.native-tools.result == 'success'
     runs-on: macos-latest
+    # v10.1：原来没有 timeout，卡住的构建会耗满默认 360 分钟；正常出包远低于此。
+    timeout-minutes: 150
     steps:
       - uses: actions/checkout@v4
 
@@ -449,7 +472,20 @@ jobs:
           ln -s "$(xcrun --sdk iphoneos --show-sdk-path)" "$THEOS/sdks/iPhoneOS17.5.sdk"
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
 
+      - name: Cache built-in tweaks
+        # v10.1：6 个 tweak 原来每次全量 make package（theos + 交叉编译，1-3 分钟），
+        # 而产物只由 tweaks/** 的源码决定——按源码 hash 缓存 .theos 与已编好的 dylib。
+        # 改了 tweak 源码 → key 变 → 自动重编；要强制重编（例如换了 theos 版本）改这里的 -v1。
+        id: cache-tweaks
+        uses: actions/cache@v4
+        with:
+          path: |
+            tweaks/*/.theos
+            Resources/tweaks
+          key: builtin-tweaks-${{ hashFiles('tweaks/**') }}-v1
+
       - name: Build built-in tweaks
+        if: steps.cache-tweaks.outputs.cache-hit != 'true'
         run: |
           export THEOS="$THEOS"
           export THEOS_PACKAGE_SCHEME=rootless
@@ -468,6 +504,16 @@ jobs:
           cp "Resources/tweaks/ControlAgent.dylib" "Resources/bin/ControlAgent.dylib"
           ls -lh Resources/tweaks/
           # v6.9.14：可爱助手 / 桌面悬浮 HUD 已删除，不再构建 XosviHUD.app
+
+      - name: Stage built-in tweaks
+        # v10.1：缓存命中时上一步整段跳过，这里兜住"产物必须在、ControlAgent 必须进 bin/"。
+        run: |
+          mkdir -p Resources/tweaks Resources/bin
+          for t in ProbeAgent ConfigHook NetworkTweak TLSHook MemoryTweak ControlAgent; do
+            [ -f "Resources/tweaks/$t.dylib" ] || { echo "!! MISSING: Resources/tweaks/$t.dylib（清 tweaks 缓存重跑）"; exit 1; }
+          done
+          cp "Resources/tweaks/ControlAgent.dylib" "Resources/bin/ControlAgent.dylib"
+          ls -lh Resources/tweaks/
 
       - name: Build sqlite_wipe (iOS arm64 root tool)
         run: |
@@ -621,29 +667,46 @@ jobs:
           test -f build/iphoneos/libish.a || { echo "!! libish.a 缺失"; exit 1; }
           test -d build/include/ish || { echo "!! ish 头文件缺失"; exit 1; }
 
+      - name: Cache Alpine rootfs zip
+        # v10.1：rootfs zip 原来每个 run 重新生成（下载 minirootfs + qemu 里 apk 预装 + fakefsify + zip，
+        # 数分钟）。它只由 prepare 脚本/补丁/overlay/VERSION 决定，直接缓存 zip 本身。
+        uses: actions/cache@v4
+        with:
+          path: |
+            Sandbox/resources/alpine-rootfs.zip
+            Sandbox/resources/libvdso.so.elf
+          key: alpine-rootfs-${{ hashFiles('Sandbox/prepare_alpine_rootfs.sh', 'Sandbox/patches/**', 'Sandbox/overlay/**', 'Sandbox/resources/VERSION') }}-v1
+
       - name: Prepare iSH rootfs zip
-        # 缓存命中时 build/ 已就绪，但 rootfs zip 体积大不进缓存 → 每次单独准备
+        # 缓存命中时 build/ 与 rootfs zip 都已就绪：只做拷贝，不装 brew、不跑 fakefsify/rootfs 生成
         run: |
           cd Sandbox
           chmod +x build_ish.sh prepare_alpine_rootfs.sh || true
-          # 缓存命中路径：这个 job 上一步被 skip，没有装 meson/ninja/libarchive，也没有修依赖。
-          # fakefsify 因此会在 rootfs 阶段 Abort trap 6（Library not loaded: libb2.1.dylib，
-          # 由 libarchive.13.dylib 间接依赖）。这里补装 + 统一走依赖自包含脚本。
-          brew install libarchive brotli libb2 xz zstd lz4 openssl@3 >/dev/null 2>&1 || true
-          if [ ! -x build/fakefsify ]; then
-            echo "!! fakefsify 缺失（缓存损坏？）——清缓存或重跑 Build iSH sandbox"
-            exit 1
-          fi
-          bash "$GITHUB_WORKSPACE/scripts/fix-fakefsify-deps.sh"
-          export DYLD_LIBRARY_PATH="$PWD/build/lib:$DYLD_LIBRARY_PATH"
           if [ ! -f resources/alpine-rootfs.zip ]; then
+            brew install libarchive brotli libb2 xz zstd lz4 openssl@3 >/dev/null 2>&1 || true
+            if [ ! -x build/fakefsify ]; then
+              echo "!! fakefsify 缺失（缓存损坏？）——清缓存或重跑 Build iSH sandbox"
+              exit 1
+            fi
+            bash "$GITHUB_WORKSPACE/scripts/fix-fakefsify-deps.sh"
+            export DYLD_LIBRARY_PATH="$PWD/build/lib:$DYLD_LIBRARY_PATH"
             ./prepare_alpine_rootfs.sh
+          else
+            echo ">>> rootfs zip 命中缓存，跳过生成"
           fi
           ls -lh resources/ || true
           # rootfs / vdso 需要进 App bundle（build-ipa.sh 会把 Resources/ 顶层文件拷进 .app）
           cp -f resources/alpine-rootfs.zip Resources/ 2>/dev/null || true
           cp -f resources/libvdso.so.elf Resources/ 2>/dev/null || true
           ls -lh Resources/alpine-rootfs.zip 2>/dev/null || echo "!! rootfs zip 缺失"
+
+      - name: Cache OpenSSL (MITM kernel)
+        # v10.1：原来每个 run 全量编译 OpenSSL（脚本注释写 2-4 分钟）。产物只由脚本内容决定，
+        # 按脚本 hash 缓存 openssl-stage；build-openssl.sh 自带"已有 libssl.a 就跳过"。
+        uses: actions/cache@v4
+        with:
+          path: openssl-stage
+          key: openssl-stage-${{ hashFiles('scripts/build-openssl.sh') }}-v1
 
       - name: Build OpenSSL (MITM kernel)
         # v3.3.0：MITM 抓包内核需要 OpenSSL 静态库（证书签发 + TLS 双端）

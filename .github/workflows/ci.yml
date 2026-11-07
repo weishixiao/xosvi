@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+# v10.1：同一分支的旧 CI run 直接取消——门禁几分钟就出结果，没有保留旧 run 的意义。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tool-contract:
     name: 工具契约检查（注册一致性 / 描述引用 / 快照）
@@ -55,17 +60,18 @@ jobs:
       - name: swift version
         run: swift --version
       - name: Parse all Swift sources
+        # v10.1：原来是逐文件起一个 swiftc（几百个文件 = 几百次进程启动，十几分钟）。
+        # 改成批量解析一次；-parse 不做类型检查，同批多文件不会互相干扰，报错仍带 文件名:行:列。
         run: |
           set -o pipefail
-          fail=0
-          while IFS= read -r f; do
-            if ! swiftc -parse "$f" >/tmp/parse.out 2>&1; then
-              echo "::error file=$f::语法错误"
-              sed -n '1,20p' /tmp/parse.out
-              fail=1
-            fi
-          done < <(find Sources -name '*.swift' | sort)
-          exit $fail
+          find Sources -name '*.swift' -print0 | sort -z | xargs -0 swiftc -parse > /tmp/parse.out 2>&1
+          RC=$?
+          if [ "$RC" -ne 0 ]; then
+            grep -E '\.swift:[0-9]+:[0-9]+: error' /tmp/parse.out | sed -n '1,120p' || true
+            echo "::error::Swift 解析失败（见上方文件:行:列，完整输出 /tmp/parse.out）"
+            exit 1
+          fi
+          echo "OK: $(find Sources -name '*.swift' | wc -l) files parsed"
 
   brace-sanity:
     name: 括号/结构 sanity（存量脚本，暂不阻断）
