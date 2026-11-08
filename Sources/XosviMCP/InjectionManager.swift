@@ -374,15 +374,40 @@ final class InjectionManager {
     /// persona / setuid spawn。走 `xosvi-build --exec <cwd> <命令>`，等价于 `sh -c`。
     /// 返回 nil = 通道不可用（守护没起 / 没装 / 无 entitlement），调用方退回原路径。
     private func runViaRootChannel(_ bin: String, args: [String], timeout: Double) -> (Int32, String)? {
-        let cmd = ([bin] + args).map(shellQuote).joined(separator: " ")
+        // v10.0.1：App 包内的 coreutils（chown/cp/mv/rm/mkdir）链着 @executable_path/libiosexec.1.dylib，
+        // 在 root 身份下首次 exec 时 libiosexec 的 __TEXT 会被运行期映射成 r--/rw- COW，
+        // 随即 SIGBUS（实测 exit=138，崩溃报告 chown-*.ips：EXC_BAD_ACCESS / KERN_PROTECTION_FAILURE）。
+        // bootstrap 里同名工具是原生实现、不链 libiosexec，所以 root 通道一律先换过去。
+        let exec = sanitizedRootExecutable(bin, name: nil)
+        let cmd = ([exec] + args).map(shellQuote).joined(separator: " ")
         let res = XosviXPC.helper("xosvi-build",
                                   args: ["--exec", "/private/var/mobile", cmd],
                                   timeout: Int(min(max(timeout, 1), 120)))
         guard (res["ok"] as? Bool) == true else { return nil }
         let code = Int32((res["exit_code"] as? Int) ?? 0)
         var out = (res["stdout"] as? String) ?? ""
+        if code == 138 || out.contains("Bus error") {
+            out += "（包内工具在 root 下 SIGBUS：libiosexec 只读页被改；已改用 bootstrap 工具执行）"
+        }
         if let err = res["error"] as? String, !err.isEmpty { out += (out.isEmpty ? "" : " ") + err }
         return (code, out)
+    }
+
+    /// 把一份「要交给 root 执行」的工具路径换成这台机器上跑得起来的实现。
+    ///
+    /// 顺序：**bootstrap 的 /usr/bin 同名工具**（roothide 原生，不链 libiosexec）→ 原路径。
+    /// 只在 bootstrap 里确实存在同名可执行文件时才替换，所以 insert_dylib / ct_bypass /
+    /// teamid 这类只存在于 App 包里的工具不受影响（它们不链 libiosexec）。
+    private func sanitizedRootExecutable(_ path: String, name: String?) -> String {
+        guard path.hasPrefix("/"), path.contains("/Xosvi.app/") else { return path }
+        let base = (name ?? (path as NSString).lastPathComponent)
+        // coreutils 的版本变体都归一到同一个名字
+        let wanted = base.hasPrefix("cp") ? "cp" : (base.hasPrefix("mv") ? "mv" : base)
+        for root in Self.bootstrapRoots() {
+            let cand = root + "/usr/bin/" + wanted
+            if FileManager.default.isExecutableFile(atPath: cand) { return cand }
+        }
+        return path
     }
 
     private func shellQuote(_ s: String) -> String {

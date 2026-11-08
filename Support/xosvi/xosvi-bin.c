@@ -267,6 +267,29 @@ int main(int argc, char **argv) {
         fprintf(stderr, "xosvi-bin: %s is not a whitelisted tool\n", real);
         return 2;
     }
+
+    /* v0.2.6：App 包内的 coreutils（chown/cp/mv/rm/mkdir）链 @executable_path/libiosexec.1.dylib。
+     * 实测以 root 首次 exec 时 libiosexec 的 __TEXT 被运行期映射成 r--/rw- COW，随即 SIGBUS
+     * （exit=138；崩溃报告 chown-*.ips 的 EXC_BAD_ACCESS / KERN_PROTECTION_FAILURE）。
+     * bootstrap 的同名工具是原生实现、不链 libiosexec，所以在 execv 前换过去——
+     * 这样即使 App 侧还是旧代码，root 通道也不会崩。 */
+    if (inside_app) {
+        const char *b = base_name(real);
+        const char *wanted = (strncmp(b, "cp", 2) == 0) ? "cp"
+                           : (strncmp(b, "mv", 2) == 0) ? "mv" : b;
+        char ubin[PATH_MAX], cand[PATH_MAX];
+        if (xosvi_bootstrap(prefix, sizeof prefix) && prefix[0]) {
+            snprintf(ubin, sizeof ubin, "%s/usr/bin", prefix);
+            snprintf(cand, sizeof cand, "%s/%s", ubin, wanted);
+            struct stat bst;
+            if ((strcmp(wanted, "chown") == 0 || strcmp(wanted, "cp") == 0 || strcmp(wanted, "mv") == 0 ||
+                 strcmp(wanted, "rm") == 0 || strcmp(wanted, "mkdir") == 0) &&
+                stat(cand, &bst) == 0 && S_ISREG(bst.st_mode) && access(cand, X_OK) == 0) {
+                log_line("swap %s -> %s (root exec)", real, cand);
+                snprintf(real, sizeof real, "%s", cand);
+            }
+        }
+    }
     struct stat st;
     if (stat(real, &st) != 0 || !S_ISREG(st.st_mode) || access(real, X_OK) != 0) {
         fprintf(stderr, "xosvi-bin: %s is not an executable file\n", real);
