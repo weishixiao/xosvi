@@ -9,6 +9,7 @@ import UniformTypeIdentifiers
 struct ChatRootView: View {
     @ObservedObject private var store = ConversationStore.shared
     @State private var chatHome = true
+    @State private var terminalOpen = false
 
     var body: some View {
         Group {
@@ -30,6 +31,13 @@ struct ChatRootView: View {
         .onReceive(NotificationCenter.default.publisher(for: .tmNewConversation)) { _ in
             withAnimation(.easeInOut(duration: 0.2)) { chatHome = true }
         }
+        // v9.13：整页本地终端（顶部栏 「终端」 按钮触发）
+        .onReceive(NotificationCenter.default.publisher(for: .tmOpenTerminal)) { _ in
+            terminalOpen = true
+        }
+        .fullScreenCover(isPresented: $terminalOpen) {
+            TerminalPageView(onClose: { terminalOpen = false })
+        }
     }
 }
 
@@ -38,6 +46,8 @@ extension Notification.Name {
     static let tmOpenConversationList = Notification.Name("xosvi.openConversationList")
     /// 请求新建对话并进入聊天页
     static let tmNewConversation = Notification.Name("xosvi.newConversation")
+    /// v9.13：打开整页本地终端
+    static let tmOpenTerminal = Notification.Name("xosvi.openTerminal")
 }
 
 struct ChatView: View {
@@ -99,12 +109,20 @@ struct ChatView: View {
                         },
                         leftIcon: selectionMode ? nil : "line.3.horizontal",
                         trailing: selectionMode ? nil : AnyView(
-                            // v7.9.5：+ 号 = 直接开一个临时会话（原来弹菜单且只有「联网搜索」→ 打开设置页）
-                            // v7.16.11：按用户要求把 + 号换成匿名（人形剪影）图标
-                            Button {
-                                store.newConversation(title: "临时会话")
-                            } label: {
-                                FloatingCircleButton(icon: "person.crop.circle")
+                            HStack(spacing: 8) {
+                                // v9.13：本地终端整页入口（iSH Alpine 沙盒）
+                                Button {
+                                    NotificationCenter.default.post(name: .tmOpenTerminal, object: nil)
+                                } label: {
+                                    FloatingCircleButton(icon: "terminal")
+                                }
+                                // v7.9.5：+ 号 = 直接开一个临时会话（原来弹菜单且只有「联网搜索」→ 打开设置页）
+                                // v7.16.11：按用户要求把 + 号换成匿名（人形剪影）图标
+                                Button {
+                                    store.newConversation(title: "临时会话")
+                                } label: {
+                                    FloatingCircleButton(icon: "person.crop.circle")
+                                }
                             }
                         )
                     )
