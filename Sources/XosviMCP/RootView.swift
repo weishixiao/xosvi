@@ -135,12 +135,13 @@ struct ConversationDrawerView: View {
     @ObservedObject private var probe = DeviceProbe.shared
     @State private var searchText = ""
     // v6.9.11：侧滑删除——记录当前滑开的会话 id 与位移（同一时间只允许一行滑开）。
-    // 会话列表用 ScrollView+LazyVStack 而非 List（为去掉行间分隔线），
+    // 会话列表用 ScrollView+VStack 而非 List（为去掉行间分隔线），
     // List 的 .swipeActions 用不了，只能自己做手势。
     // 注意：这些状态必须在 ConversationDrawerView 内——会话列表属于本视图，
     // 放到 RootView 里会 cannot find in scope。
+    // v9.15：位移已下放到每一行内部（ConversationRow 的 @State），这里只留「哪一行被滑开」
+    // 这个全局唯一标记——手势过程中不再逐帧改父视图状态，整张列表不会被反复重算。
     @State private var swipedId: UUID?
-    @State private var swipeOffset: CGFloat = 0
     // v2.9.166：deviceReady 改为计算属性直接读 DeviceProbe.shared.lastReport——
     // 旧版 @State 只在 onAppear 读一次：用户点开检测页跑完（全绿）返回后，
     // 左下角仍是旧感叹号，这就是"环境通过了还显示感叹号"的根因。
@@ -242,23 +243,49 @@ struct ConversationDrawerView: View {
 
     private var conversationList: some View {
         // v7.6.2：按日期分组，每组上方一条灰色分组标题（今天 / 昨天 / 30 天内 / 2026 年 9 月 …）
+        // v9.15：由 LazyVStack 换成普通 VStack。
+        // 原实现里滚动会「重影 / 折叠」：延迟容器按可见范围创建、滚出即销毁格子，
+        // 而行上挂着 DragGesture + 行内 offset 动画，格子被回收重建时上一屏的渲染没清干净，
+        // 就叠在新行下面。普通 VStack 一次性布局、格子不复用，从根上不会出现这种叠影。
+        // 代价是会话多时要一次建完（只有标题一行文本，几十上百条的开销可以忽略）。
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 2) {
                 ForEach(groupedConversations, id: \.key) { group in
-                    Text(group.key)
-                        .font(XType.section)
-                        .fontWeight(.medium)
-                        .foregroundColor(.secondary)
-                        .padding(.horizontal, 16)
-                        .padding(.top, 14)
-                        .padding(.bottom, 4)
+                    // 分组标题单独成块，滚动时不会和行混在一起
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(group.key)
+                            .font(XType.section)
+                            .fontWeight(.medium)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal, 16)
+                            .padding(.top, 14)
+                            .padding(.bottom, 4)
 
-                    ForEach(group.items) { conv in
-                        swipableRow(conv)
-                            // v9.14：滚动重影/折叠的根因——延迟容器（LazyVStack）在按住行拖动、
-                            // 行内 offset 改变后复用格子，上一屏渲染的行没被清掉，两层叠在一起。
-                            // 给每行固定一个与内容无关的高度，复用格子的尺寸恒定不变。
-                            .frame(height: 50)
+                        VStack(alignment: .leading, spacing: 2) {
+                            ForEach(group.items) { conv in
+                                DrawerConversationRow(
+                                    title: conv.title,
+                                    selected: store.selectedId == conv.id,
+                                    deleteTitle: L10n.t("drawer_delete"),
+                                    reveal: swipeReveal,
+                                    commit: swipeCommit,
+                                    isSwiped: swipedId == conv.id,
+                                    onSwipeChange: { open in
+                                        if open {
+                                            swipedId = conv.id
+                                        } else if swipedId == conv.id {
+                                            swipedId = nil
+                                        }
+                                    },
+                                    onOpen: {
+                                        store.select(conv.id)
+                                        withAnimation { ui.drawerOpen = false }
+                                    },
+                                    onDelete: { deleteSingle(conv.id) }
+                                )
+                                .id(conv.id)
+                            }
+                        }
                     }
                 }
             }
@@ -297,152 +324,12 @@ struct ConversationDrawerView: View {
     private func deleteSingle(_ id: UUID) {
         guard let idx = store.conversations.firstIndex(where: { $0.id == id }) else { return }
         store.delete(at: IndexSet(integer: idx))
-        if swipedId == id { swipedId = nil; swipeOffset = 0 }
     }
 
-    // MARK: - v6.9.11 侧滑删除行
+    // MARK: - 侧滑删除行的常量
 
-    /// 会话列表用的是 ScrollView+LazyVStack（为去掉 List 的分隔线），
-    /// `.swipeActions` 只对 List 生效，所以这里自己做左滑：
-    /// - 左滑超过阈值 → 停靠到露出删除按钮的位置
-    /// - 再左滑一点或点删除按钮 → 删除
-    /// - 右滑或点其他行 → 收回
-    /// 同一时刻只允许一行滑开（swipedId 全局唯一）。
     private let swipeReveal: CGFloat = 76    // 删除按钮露出宽度
     private let swipeCommit: CGFloat = 132   // 超过则直接触发删除
-
-    @ViewBuilder
-    private func swipableRow(_ conv: ChatConversation) -> some View {
-        let isOpen = swipedId == conv.id
-        let offset = isOpen ? swipeOffset : 0
-
-        ZStack(alignment: .trailing) {
-            // 底层：删除按钮
-            Button {
-                withAnimation(.easeOut(duration: 0.18)) { deleteSingle(conv.id) }
-            } label: {
-                VStack(spacing: 3) {
-                    Image(systemName: "trash.fill").font(.system(size: 15, weight: .semibold))
-                    Text(L10n.t("drawer_delete")).font(.system(size: 10))
-                }
-                .foregroundColor(.white)
-                .frame(width: swipeReveal)
-                .frame(maxHeight: .infinity)
-                .background(Color.red)
-                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
-            }
-            .buttonStyle(PlainButtonStyle())
-            .opacity(offset < -8 ? 1 : 0)
-            .allowsHitTesting(offset < -8)
-
-            // 上层：会话行，可左右拖
-            Button(action: {
-                // 已滑开时点击先收回，不切换会话
-                if isOpen {
-                    withAnimation(.easeOut(duration: 0.2)) { swipedId = nil; swipeOffset = 0 }
-                } else {
-                    store.select(conv.id)
-                    withAnimation { ui.drawerOpen = false }
-                }
-            }) {
-                conversationRow(conv)
-                    .background(
-                        Group {
-                            if store.selectedId == conv.id {
-                                // 选中行：白色卡片叠加一层淡墨色高亮（深色模式自适应）
-                                Color(uiColor: .systemBackground)
-                                    .overlay(Color.primary.opacity(0.07))
-                            } else {
-                                Color(uiColor: .systemBackground)
-                            }
-                        }
-                    )
-                    // 行卡片外框：系统分隔色描边，与设置页卡片观感一致
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(store.selectedId == conv.id
-                                        ? Color.primary.opacity(0.22)
-                                        : Color(uiColor: .separator).opacity(0.6),
-                                    lineWidth: 0.8)
-                    )
-                    .cornerRadius(16)
-            }
-            .buttonStyle(PlainButtonStyle())
-            .offset(x: offset)
-            .highPriorityGesture(
-                DragGesture(minimumDistance: 12, coordinateSpace: .local)
-                    .onChanged { value in
-                        // 只响应水平拖，且左滑为主；右滑用于收回已滑开的行
-                        guard abs(value.translation.width) > abs(value.translation.height) else { return }
-                        let base: CGFloat = isOpen ? -swipeReveal : 0
-                        // 越界阻尼：最多滑到 swipeCommit*1.3
-                        var t = base + value.translation.width
-                        t = min(0, max(t, -swipeCommit * 1.3))
-                        swipedId = conv.id
-                        swipeOffset = t
-                    }
-                    .onEnded { value in
-                        let final = swipeOffset
-                        if final < -swipeCommit {
-                            withAnimation(.easeOut(duration: 0.18)) { deleteSingle(conv.id) }
-                        } else if final < -swipeReveal * 0.5 {
-                            withAnimation(.spring(response: 0.28, dampingFraction: 0.85)) {
-                                swipedId = conv.id
-                                swipeOffset = -swipeReveal
-                            }
-                        } else {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                swipedId = nil
-                                swipeOffset = 0
-                            }
-                        }
-                    }
-            )
-            .contextMenu {
-                // iOS14 兼容：不用 Button(role:)
-                Button(action: { deleteSingle(conv.id) }) {
-                    Label(L10n.t("drawer_delete"), systemImage: "trash")
-                }
-            }
-        }
-        .clipped()
-    }
-
-    /// v7.6.1：会话行只显示标题 + 右侧时间/•••
-    private func conversationRow(_ conv: ChatConversation) -> some View {
-        let isSel = store.selectedId == conv.id
-        return HStack(alignment: .center, spacing: 8) {
-            // v7.6.1：只显示标题（用户要求去掉消息内容预览）
-                Text(conv.title)
-                    .font(XType.body)
-                    .fontWeight(isSel ? .semibold : .regular)
-                    // 标题用系统主文字色（深色模式自适应）
-                    .foregroundColor(.primary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            Spacer(minLength: 6)
-            // v7.6.2：标题右侧不再显示时间（分组标题已表明日期）；选中行保留 ••• 菜单
-            if isSel {
-                Menu {
-                    Button(action: { deleteSingle(conv.id) }) {
-                        Label("删除对话", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.system(size: 15, weight: .semibold))
-                        .foregroundColor(.secondary)
-                        .frame(width: 26, height: 22)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 13)
-        // v9.3：固定行高——选中行多出 ••• 菜单会改变行高，LazyVStack 滚动复用时
-        // 行高突变导致标题重叠；固定高度后复用稳定。
-        .frame(minHeight: 50)
-    }
 
     private func delete(at offsets: IndexSet) {
         let ids = offsets.map { filtered[$0].id }
