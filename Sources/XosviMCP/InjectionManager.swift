@@ -394,7 +394,7 @@ final class InjectionManager {
     /// xosvi-bin 能代跑的工具（与 Support/xosvi/xosvi-bin.c 的 allowed_tools 一致）。
     private static let rootBinTools: Set<String> = [
         "ldid", "cp", "cp-15", "rm", "mv", "mv-15", "mkdir", "chown",
-        "insert_dylib", "optool", "install_name_tool", "ct_bypass", "teamid", "opainject"
+        "insert_dylib", "optool", "install_name_tool", "ct_bypass", "teamid"
     ]
 
     /// 借守护的 root helper 执行一个包内工具，返回（退出码, 输出）；守护不可用时返回 nil。
@@ -563,120 +563,24 @@ final class InjectionManager {
         return (r.code, r.rawStdout)
     }
 
-    /// v3.0.50：设备端注入——多策略签名链依次尝试，哪个能让 opainject dlopen OK用哪个。
-    /// 背景 (真机实测链）：TrollStore 安装签名带 Team ID → dyld 报 "different Team IDs"；
-    /// 设备端 ldid -S 空签 → iOS16 dyld 报 "code signature invalid (errno=1)"。
-    /// 依次试：①ldid -S (空 entitlements adhoc）②ldid -S+platform/no-sandbox entitlements
-    /// ③系统 /usr/bin/codesign adhoc ④不重签直接injected (对照）。返回最优结果 + 全链路诊断。
+    /// 注入方式：**静态 Mach-O 重打包**（Xosvi 唯一的注入方式）。
+    ///
+    /// v10.0：运行时内存注入（opainject + remote dlopen）在 iOS 17 起被系统封堵，
+    /// 项目整体改用 TrollFools 的静态重打包路线——`insert_dylib` 往被测二进制写
+    /// LC_LOAD_DYLIB、`ldid` 伪签、`ct_bypass` 过 CoreTrust（CVE-2023-41991 多签名者），
+    /// 必要时打 IPA 重装。实现在 `inPlaceEnable` / `injectStatic`。
+    ///
+    /// 这个入口只保留给调用方一条明确的降级指引，不再尝试任何内存注入。
     @discardableResult
     func injectDylib(pid: Int, dylib: String, timeout: Double = 25) -> (Int32, String) {
-        let workDir = "/var/mobile/Documents/wiki.qaq.xosvi/Workspace"
-        let entPath = workDir + "/inject-ent.plist"
-        let entXML = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>platform-application</key><true/>
-            <key>com.apple.private.security.no-sandbox</key><true/>
-            <key>get-task-allow</key><true/>
-        </dict>
-        </plist>
-        """
-        _ = try? entXML.data(using: .utf8)?.write(to: URL(fileURLWithPath: entPath))
 
-        // (签名工具, 参数, 描述)。v3.0.58: ctchain 排第一 (真机验证OK路径），failed依次降级。
-        // OK路径 = teamid 提目标 App Team ID + ldid -S 伪签 + ct_bypass CoreTrust (CVE-2023-41991 多签名者）。
-        let signSteps: [(String, [String], String)] = [
-            ("ctchain", [dylib], "ldid -S + ct_bypass CoreTrust"),
-            ("ldid", ["-S", dylib], "ldid -S 空签"),
-            ("ldid", ["-S" + entPath, dylib], "ldid -S platform+no-sandbox"),
-            ("codesign", ["-f", "-s", "-", dylib], "/usr/bin/codesign adhoc"),
-        ]
-        var diag = ""
-        // 先试各种签名方案
-        for (tool, args, desc) in signSteps {
-            var rc: Int32 = -1
-            var ro = ""
-            if tool == "codesign" {
-                let r = spawnRootDetailed("/usr/bin/codesign", args: args, timeout: 20)
-                rc = r.code; ro = r.output
-            } else if tool == "ctchain" {
-                // v3.0.53: 先提目标进程真实 Team ID (teamid 解析其 CodeDirectory TeamID 字段），
-                // 再 ldid -S 伪签 → ct_bypass -r -i -t <teamID> (CoreTrust 多签名者漏洞，CVE-2023-41991）
-                let (tc, to) = runAsRoot("teamid", args: ["\(pid)", "-v"], timeout: 15)
-                var teamID = ""
-                if tc == 0 {
-                    for line in to.components(separatedBy: "\n") where line.hasPrefix("team_id: ") {
-                        teamID = String(line.dropFirst(9)).trimmingCharacters(in: .whitespacesAndNewlines)
-                    }
-                }
-                diag += "[\(desc)] teamid(\(tc)) team=\(teamID.isEmpty ? "(empty)" : teamID)\n"
-                diag += to.prefix(900) + "\n"
-                (rc, ro) = runAsRoot("ldid", args: ["-S", dylib], timeout: 20)
-                if rc != 0 {
-                    diag += "[\(desc)] ldid fake-sign failed (\(rc)) \(ro.prefix(150))\n"
-                    continue
-                }
-                (rc, ro) = runAsRoot("ct_bypass", args: ["-r", "-i", dylib, "-t", teamID], timeout: 30)
-                if rc != 0 {
-                    diag += "【\(desc)】ct_bypass failed(\(rc)) \(ro.prefix(200))\n"
-                    continue
-                }
-            } else {
-                (rc, ro) = runAsRoot(tool, args: args, timeout: 20)
-            }
-            if rc != 0 {
-                diag += "[\(desc)] signing failed (\(rc)) \(ro.prefix(150))\n"
-                continue
-            }
-            let (ic, io) = runAsRoot("opainject", args: ["\(pid)", dylib], timeout: timeout)
-            let ok = io.contains("dlopen succeeded") || io.contains("Injected") || io.contains("injected successfully")
-            diag += "【\(desc)】opainject \(ok ? "OK" : "failed"): " + io.replacingOccurrences(of: "\n", with: " ").suffix(180) + "\n"
-            if ok { return (ic, io) }
-            // v3.0.62：ctchain (OK路径）opainject failed且是"读内存/__LINKEDIT/task port"类环境问题，
-            // 说明 opainject 本身读不到目标进程内存，后续签名变体也救不了——直接停，避免 5 个 opainject 堆在手机上发烫
-            if desc.contains("CoreTrust") {
-                let envIssue = io.contains("Failed to read process memory") || io.contains("__LINKEDIT not found") || io.contains("Failed to find main thread") || io.contains("task port") || io.contains("EBADARCH") || io.contains("spawnRoot failed")
-                if envIssue {
-                    diag += "[v3.0.62] ctchain opainject env-class failed, skipping further signing strategy (avoid opainject pileup)\n"
-                    break
-                }
-            }
-        }
-        // 最后：不重签直接injected (对照 TrollStore 安装签名）
-        let (ic2, io2) = runAsRoot("opainject", args: ["\(pid)", dylib], timeout: timeout)
-        let ok2 = io2.contains("dlopen succeeded") || io2.contains("Injected") || io2.contains("injected successfully")
-        diag += "[no-resign direct inject] opainject \(ok2 ? "OK" : "failed"): " + io2.replacingOccurrences(of: "\n", with: " ").suffix(180) + "\n"
-        if ok2 { return (ic2, io2) }
-        // v3.0.62：智能failed归因——不是干巴巴的错误，告诉用户为什么failed+怎么办
-        var reason = "未知"
-        var advice = ""
-        if diag.contains("team=(空)") {
-            reason = "目标 App 无 Team ID (Apple 系统 App 常见)"
-            advice = "系统 App 签名里没有 Team ID 字段，ct_bypass 无法匹配。这类 App 暂不支持内存注入。"
-        } else if diag.contains("Failed to read process memory") || diag.contains("__LINKEDIT not found") {
-            reason = "opainject 读不到目标进程内存"
-            advice = "目标 App 有安全 SDK 防护 (字节/腾讯/阿里系常见)，或进程处于冻结/挂起态。试试：先手动打开目标 App 到前台，再注入。"
-        } else if diag.contains("Failed to find main thread") || diag.contains("task port") {
-            reason = "opainject 获取 task port failed"
-            advice = "目标 App 有反调试/反注入保护 (如聚安全/安全 SDK)，或进程已崩溃。换无防护 App 测试。"
-        } else if diag.contains("EBADARCH") {
-            reason = "opainject 架构不兼容"
-            advice = "opainject 二进制与 Xosvi 主二进制架构不匹配。检查 Resources/bin/opainject 架构。"
-        } else if diag.contains("spawnRoot failed (85") || diag.contains("ENOSYS") {
-            // v6.6.7: 85 = ENOSYS = persona spawn 被内核拒（不是架构问题）
-            reason = "persona spawn 被内核拒绝 (ENOSYS)"
-            advice = "posix_spawn 返回 85 (ENOSYS)：persona-mgmt entitlement 未生效或被 iOS AMFI 拒绝。用 inject diagnose 看完整链路：① Xosvi 主二进制是否含 com.apple.private.persona-mgmt；② TSRootBinaries helper 的 setuid 位是否被 TrollStore 打上；③ TrollStore 版本是否 ≥ 1.1.1。iOS 17+ 该问题高发——Xosvi 需双架构原生运行 (arm64+arm64e)。已自动尝试 setuid fallback。"
-        } else if diag.contains("spawnRoot failed (2)") {
-            reason = "/usr/bin/codesign 不存在 (预期)"
-            advice = "TrollStore 环境没有 codesign，正常。ct_bypass 应该能替代。"
-        } else if diag.contains("ldid") || diag.contains("ct_bypass") {
-            reason = "签名工具failed"
-            advice = "ldid 或 ct_bypass 执行failed，检查 bin/ 目录下二进制完整性。"
-        }
-        diag += "\n【智能归因】failed原因：\(reason)\n【建议】\(advice)\n"
-        return (1, diag)
+        _ = timeout
+        return (1, """
+            [unsupported] 内存注入（opainject）已从 Xosvi 移除。
+            pid=\(pid) dylib=\(dylib)
+            改用静态注入：injection command:enable（insert_dylib 写 LC_LOAD_DYLIB、ldid 伪签、ct_bypass 过 CoreTrust，必要时重装 IPA）。
+            加密 App（cryptid=1）先 app command:decrypt 砸壳再注入。
+            """)
     }
 
     /// 非 root 版 posix_spawn (部分场景需要 mobile 身份执行）。
@@ -1696,43 +1600,21 @@ final class InjectionManager {
             }
         }
         guard let targetMachO else {
-            // v3.0.59：智能降级——无静态可注入目标 (全加密/无 framework）时自动转内存注入，
-            // 免砸壳免改文件 (用户点名"以内存注入方式实现 trollfools 注入"）
-            if smartFallback {
-                let memDylib = preparedAssets.first ?? ProcessHelper.tweakPath("ControlAgent.dylib") ?? ""
-                if !memDylib.isEmpty {
-                    var pid = findPidByExecutable(bundlePath: app.path)
-                    if pid <= 0 {
-                        _ = ProcessHelper.launchApp(bundleId: bundleId)
-                        for _ in 0..<10 {
-                            usleep(500_000)
-                            pid = findPidByExecutable(bundlePath: app.path)
-                            if pid > 0 { break }
-                        }
-                    }
-                    guard pid > 0 else {
-                        throw MCPError.failed("static injection has no candidate and App not running, memory fallback unavailable (open the App manually first)")
-                    }
-                    let (mc, mo) = injectDylib(pid: Int(pid), dylib: memDylib)
-                    let ok = mo.contains("dlopen succeeded")
-                    let alive = findPidByExecutable(bundlePath: app.path) > 0
-                    AuditLog.shared.log("injection.mem_fallback", detail: "\(bundleId) ok=\(ok) alive=\(alive)")
-                    return [
-                        "status": ok ? "injected" : "failed",
-                        "mode": "memory_fallback",
-                        "reason": "no statically injectable target (all candidates encrypted/no framework), auto-switched to memory injection",
-                        "bundle_id": bundleId,
-                        "app": app.name,
-                        "pid": pid,
-                        "dylib": memDylib,
-                        "app_alive": alive,
-                        "exit": mc,
-                        "output": mo,
-                        "note": ok ? "memory injection OK: no decrypt, zero residue, instant; re-inject after App restart" : "memory injection failed, see output"
-                    ]
-                }
+            // v10.0：内存注入降级通道已删除（opainject 从项目移除）。
+            // 无静态可注入目标 = 候选全加密 → 只能先砸壳；不再尝试运行时 dlopen。
+            var candidates: [String] = []
+            if !fwCandidates.isEmpty {
+                candidates.append("Frameworks/ 下 \(fwCandidates.count) 个候选全部加密 (cryptid!=0)")
+            } else {
+                candidates.append("App 没有 Frameworks/ 目录，主二进制加密 (cryptid!=0)")
             }
-            throw MCPError.failed("no injectable Mach-O: all candidates encrypted. Decrypt first (app.decrypt).")
+            if let mainInfo = MachOAnalyzer.analyze(executablePath(app)) {
+                candidates.append("主二进制 cryptid=\(mainInfo.cryptID)")
+            }
+            throw MCPError.failed("""
+                no injectable Mach-O: \(candidates.joined(separator: "；"))。
+                先用 app command:decrypt 砸壳，再 injection command:enable（静态重打包是 Xosvi 唯一的注入方式，内存注入已移除）。
+                """)
         }
         let targetIsMain = targetMachO == executablePath(app)
 

@@ -52,8 +52,9 @@ enum SeedKnowledgeData {
 ## 代码注入方式
 - 静态注入（LC_LOAD_DYLIB）：在目标 Mach-O 增加一条 LC_LOAD_DYLIB 指向我们的 dylib，重签。
   需同步改 __LINKEDIT（扩大或用空闲空间），改前自动备份 .bak_macho，可一键 restore。
-- 内存注入（opainject）：运行时用 task_for_pid + remote dlopen/线程创建，不改文件、重开即失效。
-  可用 enable_persisted 配合静态注入实现持久化。
+  这是 Xosvi 唯一的注入方式：insert_dylib → ldid 伪签 → ct_bypass 过 CoreTrust → 必要时重装 IPA。
+- 内存注入（opainject 运行时 remote dlopen）：v10.0 已整体移除。iOS 17 起 task_for_pid + 线程创建被封堵
+  （root 下 createRemotePthread 挂死，mobile 下 spawnPacChild 拿不到 task port），不要再尝试。
 - TrollFools（ChOma 漏洞）：在非越狱/TrollStore 环境对其他 App 注入，利用签名链构造。
 - 注入 dylib 必须与目标同架构/兼容 SDK；用 otool -L 检查 dylib 自身依赖。
 - 失败常见：Killed: 9（签名）、Library not loaded（路径/依赖）、image not found（@rpath 不对）。

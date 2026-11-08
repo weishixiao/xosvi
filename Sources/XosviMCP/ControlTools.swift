@@ -358,7 +358,7 @@ final class ControlAgentTools {
 final class ControlInjectTool: MCPTool {
     let definition = ToolDefinition(
         name: "control.inject",
-        summary: "Inject ControlAgent into an app to enable UI control (tap/swipe/type/screenshot). Use for: start controlling an app's UI, before using other control.* tools. Don't use for: inject other dylibs (use injection.enable), memory injection (use injection.mem). Example: user says 'I want to control 小红书' → inject ControlAgent first.",
+        summary: "Inject ControlAgent into an app to enable UI control (tap/swipe/type/screenshot). Use for: start controlling an app's UI, before using other control.* tools. Don't use for: injecting other dylibs (use injection.enable); memory injection was removed in v10.0 and cannot be used. Example: user says 'I want to control 小红书' → inject ControlAgent first.",
         parameters: [
             "bundle_id": "Target App bundle ID (required)",
             "target": "Specific framework to inject (optional, auto)",

@@ -692,7 +692,7 @@ final class CrashReproTool: MCPTool {
 
 }
 
-// MARK: - v2.9.90 高级工具组（opainject 内存注入 / ProbeEngine 类探测 / 配置化 Hook）
+// MARK: - v2.9.90 高级工具组（v10.0：opainject 内存注入已移除，只剩 ProbeEngine 静态探测 / 配置化 Hook）
 
 // MARK: - 进程/启动辅助
 
@@ -859,112 +859,47 @@ enum ProcessHelper {
     }
 }
 
-// MARK: - injection.mem：内存injected (opainject）
+// MARK: - injection.mem：已移除（内存注入不再支持）
 
+/// v10.0：运行时内存注入（opainject + remote dlopen）已从项目移除。
+/// 保留这个工具名只为让旧调用拿到一条明确的迁移指引，不再执行任何注入。
 final class InjectionMemTool: MCPTool {
     let definition = ToolDefinition(
         name: "injection.mem",
-        summary: "Memory injection: inject dylib into a running app WITHOUT modifying its files. Use for: temporary testing, probing app internals. Don't use for: permanent injection (use injection.enable, survives restart). Note: dies when app restarts. Example: user says 'temporarily inject 小红书 for testing' → memory inject.",
+        summary: "REMOVED — runtime memory injection (opainject) is no longer supported. Injection is static re-packaging only: use injection.enable (insert_dylib + ldid + ct_bypass). Example: user says 'inject 小红书' → injection.enable, not injection.mem.",
         parameters: [
-            "bundle_id": "Target App bundle ID (required)",
-            "dylib_path": "Dylib path (optional, default: ProbeAgent)",
-            "auto_launch": "Auto-launch app if not running (default: true)"
+            "bundle_id": "Target App bundle ID (required, only used for the message)",
+            "dylib_path": "Ignored (kept for compatibility)",
+            "auto_launch": "Ignored (kept for compatibility)"
         ],
         returns: [
-            "status": "injected_alive_http / injected_alive_nohttp / injected_crashed / failed",
-            "pid": "Target App process id",
-            "app_alive": "true if App still running after injection",
-            "http_ready": "true if localhost:4791 HTTP server is up",
-            "note": "Human-readable result explanation"
+            "error": "always set: memory injection removed",
+            "next_step": "injection.enable (static re-packaging)"
         ],
         verified: true
     )
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let bundleId = params["bundle_id"] as? String, !bundleId.isEmpty else {
-            throw MCPError.invalidParams("bundle_id required")
-        }
-        guard let app = AppCatalog.find(bundleId) else {
-            return ["error": "app not found: \(bundleId)", "hint": "use injection.list to search"]
-        }
-
-        // v3.0.89：iOS 17+ 不支持内存injected (opainject 依赖 ct_bypass，已失效）
-        let majorVer = ProcessInfo.processInfo.operatingSystemVersion.majorVersion
-        if majorVer >= 17 {
-            return [
-                "error": "iOS 17+ does not support memory injection (opainject/ct_bypass deprecated)",
-                "hint": "use injection.static (static injection: insert_dylib + trollstorehelper reinstall)",
-                "ios_version": majorVer
-            ]
-        }
-
-        let exeName = ProcessHelper.executableName(for: app)
-        var dylibPath = params["dylib_path"] as? String ?? ""
-        if dylibPath.isEmpty {
-            dylibPath = ProcessHelper.tweakPath("ProbeAgent.dylib") ?? ""
-        }
-        guard !dylibPath.isEmpty, FileManager.default.fileExists(atPath: dylibPath) else {
-            return ["error": "dylib does not exist: \(dylibPath)", "hint": "pass dylib_path or ensure built-in tweaks/ProbeAgent.dylib exists"]
-        }
-
-        var pid = ProcessHelper.pidOf(executableName: exeName)
-        if pid == nil {
-            let autoLaunch = (params["auto_launch"] as? Bool) ?? true
-            if autoLaunch {
-                _ = ProcessHelper.launchApp(bundleId: bundleId)
-                for _ in 0..<10 {
-                    usleep(500_000)
-                    pid = ProcessHelper.pidOf(executableName: exeName)
-                    if pid != nil { break }
-                }
-            }
-        }
-        guard let targetPid = pid else {
-            return ["error": "target App not running, cannot memory-inject", "hint": "open target App first, or pass auto_launch=true"]
-        }
-
-        AuditLog.shared.log("injection.mem", detail: "\(bundleId) pid=\(targetPid)")
-        let (exit, output) = InjectionManager.shared.injectDylib(pid: targetPid, dylib: dylibPath)
-        let success = output.contains("dlopen succeeded") || (exit == 0 && output.contains("handle"))
-        // v3.0.59：注入后确认进程存活 (一键闭环：启动→注入→存活确认）
-        let alive = ProcessHelper.pidOf(executableName: exeName) != nil
-        // v3.0.65：注入后 HTTP ready检查 (ProbeAgent/ControlAgent localhost:4791）
-        var httpReady = false
-        if success && alive {
-            for _ in 0..<10 {
-                usleep(500_000)  // 0.5s × 10 = 5s
-                if let url = URL(string: "http://127.0.0.1:4791/"),
-                   let resp = try? Data(contentsOf: url, options: .alwaysMapped),
-                   !resp.isEmpty {
-                    httpReady = true
-                    break
-                }
-            }
-        }
+        let bundleId = (params["bundle_id"] as? String) ?? ""
         return [
-            "status": success ? (alive ? (httpReady ? "injected_alive_http" : "injected_alive_nohttp") : "injected_crashed") : "failed",
-            "mode": "memory",
+            "status": "removed",
+            "error": "内存注入（opainject 运行时 dlopen）已从 Xosvi 移除，iOS 17 起系统也封堵了这条路",
             "bundle_id": bundleId,
-            "app": app.name,
-            "pid": targetPid,
-            "app_alive": alive,
-            "http_ready": httpReady,
-            "dylib": dylibPath,
-            "exit": exit,
-            "output": output,
-            "note": success
-                ? (alive ? (httpReady ? "Memory injection OK: process alive + HTTP ready. Ready for probe.inspect." : "Memory injection OK: process alive but HTTP not ready (dylib loaded, service not up. Check dylib deps/port conflict).") : "Memory injection OK but App crashed (dylib caused crash. Try different dylib or rollback).")
-                : "opainject failed. See output for reason (permission/arch/process state)."
+            "next_step": "injection.enable：静态重打包——insert_dylib 写 LC_LOAD_DYLIB + ldid 伪签 + ct_bypass 过 CoreTrust，越狱环境下原地改目标 Mach-O，必要时打 IPA 重装",
+            "hint": "加密 App（cryptid=1）先 app command:decrypt 砸壳；静态注入一次生效、重开仍在，不需要内存注入"
         ]
     }
 }
 
-// MARK: - probe.inspect：运行时类探测 (ProbeAgent）
+// MARK: - probe.inspect：运行时类探测 (ProbeAgent）——v10.0 已下线
 
+/// 注意：本工具在 v10.0 随内存注入一起下线（dispatch 直接抛 UNSUPPORTED，不会再到这里）。
+/// 它把 ProbeAgent 塞进目标进程的前提是 opainject 运行时注入，项目已不再提供。
+/// 需要类/方法清单请用 `inject binary_symbols` 静态提取，或 `app command:decrypt` 砸壳后离线分析。
 final class ProbeInspectTool: MCPTool {
     let definition = ToolDefinition(
         name: "probe.inspect",
-        summary: "Inspect running app internals: list ObjC classes, see class methods/properties, read UserDefaults. Use for: reverse engineer an app, understand how it works internally, find classes to hook. Don't use for: static binary analysis (use binary.symbols), AI-powered analysis (use `subagent` for AI-assisted analysis). Prerequisite: inject ProbeAgent first. Example: user says 'what ViewController classes does 小红书 have' → probe classes.",
+        summary: "REMOVED (v10.0) — runtime class probing needed opainject memory injection, which is gone. Use inject binary_symbols (static class/method/string extraction, no running App needed) or app command:decrypt then offline analysis instead. Do not retry this tool.",
         parameters: [
             "bundle_id": "Target App bundle ID (required)",
             "query": "What to inspect: classes (list all) / class (details of one) / userdefaults / info",
@@ -1039,7 +974,7 @@ final class ProbeInspectTool: MCPTool {
         guard probeInjected else {
             let running = ProcessHelper.pidOf(executableName: exeName) != nil
             return ["error": "ProbeAgent injection failed (\(running ? "opainject rejected/anti-debug blocked" : "App not running"))",
-                    "next_step": running ? "target has anti-injection/anti-debug detection; try injection.mem memory-injection bypass" : "start target App with app.start bundle_id first, or open manually then retry",
+                    "next_step": running ? "memory injection is gone (opainject removed); use inject binary_symbols for a static class/method dump instead" : "start target App with app.start bundle_id first, or open manually then retry",
                     "hint": "injection failure does not mean the App is broken; follow next_step first"]
         }
 

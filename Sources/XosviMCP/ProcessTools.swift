@@ -90,7 +90,7 @@ final class AppStartTool: MCPTool {
         return ["bundle_id": bundleId, "started": false, "pid": 0,
                 "launch_ms": Int(Date().timeIntervalSince(start) * 1000),
                 "errors": errors,
-                "next_step": "check app.encrypt_info (decrypt if encrypted) -> app.status to confirm process; consider injection.mem memory injection when anti-debug blocks",
+                "next_step": "check app.encrypt_info (decrypt if encrypted) -> app.status to confirm process; memory injection no longer exists, fall back to injection.enable static re-packaging",
                 "hint": "all three launch methods failed, see errors detail (no longer a Bundle ID false report)"]
     }
 }

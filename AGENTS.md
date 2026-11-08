@@ -131,7 +131,7 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
   | `ENV_PERMISSION` | 权限 / entitlement / setuid 问题 | 去 TrollStore 开启「编辑 Entitlements」并**卸载重装**；重试无意义 |
   | `TARGET_INCOMPATIBLE` | 加密（cryptid=1）/ 架构 / 兼容性 | 先砸壳或换目标；不要硬注 |
   | `PARAM_INVALID` | 参数名或取值错 | 按返回的 usage 修正后重试一次 |
-  | `INJECT_MEM_FAILED` | 内存注入被拒（反调试/权限） | 改走文件注入（`inject command:static`）或先砸壳 |
+  | `INJECT_MEM_REMOVED` | 请求了内存注入（opainject），该能力已整体移除 | 改走静态重打包 `injection.enable`；加密先 `app command:decrypt`；不要重试 |
   | `TOOL_FAILED` | 工具自身执行失败 | 看 detail / 日志，或换等价工具 |
   | `UNKNOWN` | 未归类 | 看完整日志后再决定 |
 

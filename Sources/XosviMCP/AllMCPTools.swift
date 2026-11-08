@@ -180,8 +180,8 @@ final class VerifyAppRunningTool: MCPTool {
 // MARK: - M3 注入工具
 
 final class InjectionEnableTool: MCPTool {
-    let definition = ToolDefinition(name: "injection.enable", summary: "Inject a dylib/plugin into an app permanently. Use for: persistent injection that survives app restart. Don't use for: temporary testing (use injection.mem), check injection status (use injection.status). Note: only works on iOS ≤17.0 with ct_bypass; iOS 17.0.1+ uses static injection. Example: user says 'inject ControlAgent into 小红书' → enable injection.",
-        parameters: ["bundle_id": "Target App bundle_id (required)", "dylib_path": "Local plugin path (.dylib/.framework/.zip/.deb, e.g. Workspace/downloads/.../xxx.deb). Default: built-in ControlAgent.dylib", "weak_reference": "Optional Bool: weak reference injection (default false, matches TrollFools)", "inject_strategy": "Optional String: injection target strategy lexicographic (default)/fast (smallest file first)/preorder/postorder, matches TrollFools Strategy", "smart_fallback": "Optional Bool: auto-fallback to memory injection if no static target (default true)"],
+    let definition = ToolDefinition(name: "injection.enable", summary: "Inject a dylib/plugin into an app permanently (static re-packaging: insert_dylib writes LC_LOAD_DYLIB + ldid fake-sign + ct_bypass for CoreTrust, reinstall IPA if needed). Use for: any injection — it is the only injection method Xosvi has. Don't use for: checking injection status (use injection.status). Note: memory/temporary injection was removed in v10.0; encrypted Apps need app command:decrypt first. Example: user says 'inject ControlAgent into 小红书' → enable injection.",
+        parameters: ["bundle_id": "Target App bundle_id (required)", "dylib_path": "Local plugin path (.dylib/.framework/.zip/.deb, e.g. Workspace/downloads/.../xxx.deb). Default: built-in ControlAgent.dylib", "weak_reference": "Optional Bool: weak reference injection (default false, matches TrollFools)", "inject_strategy": "Optional String: injection target strategy lexicographic (default)/fast (smallest file first)/preorder/postorder, matches TrollFools Strategy", "smart_fallback": "Deprecated Bool, no effect since v10.0 (memory injection removed): a target with no injectable Mach-O now fails with a decrypt hint"],
         verified: true,
         category: "injection",
         maxIOSMajor: 17  // ct_bypass 只支持到 iOS 17.0
@@ -979,24 +979,13 @@ final class InjectionExecTool: MCPTool {
             return try HookApplyTool().invoke(hookP)
 
         case "probe_inspect":
-            guard let bundleId = params["bundle_id"] as? String else {
-                throw MCPError.invalidParams("bundle_id required")
-            }
-            // v6.6.21：iOS 17+ 直接拒绝，不再让模型试到熔断。
-            // probe_inspect 依赖 opainject / ct_bypass 的内存注入，17 起被系统封堵；
-            // 真机上模型拿同一参数连试 13 次才被熔断。
-            if #available(iOS 17.0, *) {
-                throw MCPError.classified(
-                    "probe_inspect 在 iOS 17+ 不可用：它依赖 opainject/ct_bypass 的内存注入，系统已封堵（与包、权限无关）。",
-                    code: "UNSUPPORTED_ON_IOS17", reason: "environment",
-                    nextStep: "改用 inject binary_symbols（静态提类/方法/字符串，不需要运行目标 App），或 app.decrypt 后离线分析；不要重复本命令")
-            }
-            // v4.3.11: 透传 query/class_name/prefix——之前只传bundle_id丢查询参数
-            var probeP: [String: Any] = ["bundle_id": bundleId]
-            if let q = params["query"] as? String { probeP["query"] = q }
-            if let cn = params["class_name"] as? String { probeP["class_name"] = cn }
-            if let pfx = params["prefix"] as? String { probeP["prefix"] = pfx }
-            return try ProbeInspectTool().invoke(probeP)
+            // v10.0：probe_inspect 依赖内存注入（opainject 运行时加载 ProbeAgent + 4791 端口），
+            // 随内存注入一起移除。静态分析走 inject binary_symbols，或砸壳后离线分析。
+            throw MCPError.classified(
+                "probe_inspect 已移除：它依赖内存注入（opainject 运行时把 ProbeAgent 塞进目标进程），Xosvi 现在只做静态重打包。",
+                code: "UNSUPPORTED",
+                reason: "environment",
+                nextStep: "改用 inject binary_symbols（静态提取类/方法/字符串，不需要运行目标 App），或 app command:decrypt 砸壳后离线分析；不要重复本命令")
 
         case "plugin_list":
             return try PluginTool().invoke([:])

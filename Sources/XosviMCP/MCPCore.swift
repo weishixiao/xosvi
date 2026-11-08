@@ -319,10 +319,10 @@ public enum MCPError: Error, CustomStringConvertible {
 enum FailureKind {
     static func classify(_ message: String) -> (code: String, reason: String, nextStep: String) {
         let m = message.lowercased()
-        // 0) opainject 内存注入专项：被拒 (反调试/架构/权限）→ 明确降级路径
-        if m.contains("opainject") || m.contains("dlopen") || m.contains("memory injection") {
-            return ("INJECT_MEM_FAILED", "target",
-                    "memory injection rejected (anti-debug/arch/permission). Try injection.enable file injection (auto backup, rollback OK), manual injection with TrollFools, or run app.decrypt for big-company Apps")
+        // 0) 内存注入请求：v10.0 已从项目移除 → 引导到静态重打包，别让模型反复重试
+        if m.contains("opainject") || m.contains("[unsupported]") || m.contains("内存注入") {
+            return ("INJECT_MEM_REMOVED", "environment",
+                    "memory injection (opainject) is gone: Xosvi injects by static re-packaging only. Use injection.enable (insert_dylib writes LC_LOAD_DYLIB + ldid fake-sign + ct_bypass for CoreTrust), and app.decrypt first for encrypted Apps. Do not retry memory injection.")
         }
         // 1) 环境：权限 / Entitlements / setuid / 容器写 / 未开权限
         if m.contains("operation not permitted") || m.contains("entitlement")

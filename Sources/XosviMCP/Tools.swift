@@ -108,7 +108,7 @@ final class MemoryTweakTool: MCPTool {
                 throw MCPError.classified(
                     "legacy 后端不可用：当前档位 \(ExecutionStrategy.tier().rawValue) 不支持 dylib 注入式内存后端",
                     code: "ENV_PERMISSION",
-                    reason: "iOS 17.1+Relaxin：MemoryTweak 需静态注入目标 App，rootHide 下不可行",
+                    reason: "内存注入（opainject）已从 Xosvi 移除，legacy 后端不可用",
                     nextStep: "移除 backend:legacy，使用默认 native 引擎（进程内 VansonMod，attach 用 pid/bundle_id）")
             }
             return try legacyInvoke(action: action, params: params)

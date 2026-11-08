@@ -55,7 +55,7 @@
 ## 操作安全（SHOULD）
 
 - 涉及系统级操作（注入、签名、抓包证书、内核辅助）前，先做**只读探测**（`status` / 文件元数据 / 日志），确认当前状态再动手。
-- 用 `Resources/bin/` 下 helper（ldid / insert_dylib / ct_bypass / opainject 等）时确认其依赖与可执行权限；
+- 用 `Resources/bin/` 下 helper（ldid / insert_dylib / ct_bypass / install_name_tool 等）时确认其依赖与可执行权限；
   shell 无法直接执行 bundle 内工具时，从 App 进程或经桥接处理。
 - 优先采用进程内方案（LZMA 解码、反汇编、Python、SQLite 读取均已内置），避免依赖被子进程拦截的路径。
 - 跨环境读写遵循单向桥语义：Alpine 只认 iOS 侧早于它写入的文件。

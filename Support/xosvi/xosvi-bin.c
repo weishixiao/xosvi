@@ -31,7 +31,7 @@ extern char **environ;
 static const char *allowed_tools[] = {
     "ldid", "cp", "cp-15", "rm", "mv", "mv-15", "mkdir", "chown",
     "insert_dylib", "optool", "install_name_tool", "ct_bypass", "teamid",
-    "opainject", NULL
+    NULL
 };
 
 static const char *base_name(const char *p) {

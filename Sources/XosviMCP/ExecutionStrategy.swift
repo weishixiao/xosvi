@@ -267,10 +267,11 @@ enum ExecutionStrategy {
         }
     }
 
-    /// 内存注入（opainject）可用性
-    static var memoryInjectionUsable: Bool {
-        staticInjectionUsable && DeviceFacts.iosMajor <= 17
-    }
+    /// 内存注入：v10.0 起永久不可用。
+    /// opainject 的 remote dlopen 依赖 task_for_pid + 线程创建，iOS 17 起被内核封堵
+    /// （root 下 createRemotePthread 挂死、mobile 下 spawnPacChild 拿不到 task port = 5），
+    /// 且项目已把 opainject 整个移除。注入只有静态重打包一条路。
+    static var memoryInjectionUsable: Bool { false }
 
     /// kfd 可用性（R⑨ VPN 信任注入守卫）
     static var kfdUsable: Bool { DeviceFacts.kfdUsable }

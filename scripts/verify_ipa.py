@@ -28,7 +28,7 @@ checks = [
     ('tweaks/FakeDevice.dylib', 160000),
     ('tweaks/ControlAgent.dylib', None),
     ('tweaks/MemoryTweak.dylib', None),
-    ('bin/opainject', 150000),
+    ('bin/ct_bypass', 150000),
     ('devices.json', 3000),
     ('blueIcon-1024x1024.png', None),
     ('whiteIcon-1024x1024.png', None),
@@ -54,4 +54,4 @@ print('display:', d.get('CFBundleDisplayName'))
 print('bundle_id:', d.get('CFBundleIdentifier'))
 alt = d.get('CFBundleIcons', {}).get('CFBundleAlternateIcons', {})
 print('altIcons:', list(alt.keys()))
-print('opainject in TSRootBinaries:', any('opainject' in s for s in d.get('TSRootBinaries', [])))
+print('ct_bypass in TSRootBinaries:', any('ct_bypass' in s for s in d.get('TSRootBinaries', [])))

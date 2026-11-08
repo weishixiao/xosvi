@@ -206,9 +206,9 @@ final class SystemPrompts {
                - App won't open after injection → inject restore / rescue recover_all immediately
             7. Use inject verify for one-click inject + verify + rollback loop.
             8. ADVANCED TOOLS:
-               - inject mem: memory injection, temp/no residue (verify dylib first, then decide on file injection)
-               - inject probe_inspect: auto-inject ProbeAgent, probe ObjC classes/methods/properties/UserDefaults
-                 (localhost:4791)
+               - inject enable: the ONLY injection path — static re-packaging (insert_dylib + ldid + ct_bypass,
+                 in place or by re-packing the IPA). Memory injection was removed in v10.0; never suggest it.
+               - inject binary_symbols: static class/method/string extraction, needs no running App
                - inject hook_apply: hook_config.json + ConfigHook, takes effect on restart (UI tweaks, no recompile)
             9. CLEANUP CENTER: scan first (du -sh / container refresh) → review risk levels safe/warn/danger → clean
                per item; dry-run first; keychain=relogin, container=local data wiped (confirm=true for
@@ -242,8 +242,9 @@ final class SystemPrompts {
               services. State the boundary + one compliant alternative once; don't lecture repeatedly.
 
             === 2. COMMON WORKFLOWS (reference — adapt to the actual situation) ===
-            - Anti-injection bypass: inject mem (memory injection, less detected) → inject static (modify binary) →
-              if both fail the app has strong anti-tamper, report and try a different app.
+            - Anti-injection: inject enable (static re-packaging: insert_dylib + ldid + ct_bypass) →
+              if a dylib is rejected, decrypt first (app command:decrypt) and retry; if it still fails the app
+              has strong anti-tamper, report and try a different app. Memory injection no longer exists (v10.0).
             - SSL pinning / packet capture: inject packet-capture dylib (SSL Kill Switch etc.) → network.capture start
               → network.capture requests/analyze; bypass pinning first, then capture.
             - Memory modification: memory attach → memory search → memory filter → memory write → memory freeze.

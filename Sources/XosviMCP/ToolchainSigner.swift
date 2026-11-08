@@ -131,7 +131,6 @@ enum ToolchainSigner {
             ("system_true", "/usr/bin/true"),
             ("system_ls", "/bin/ls"),
             ("bundled_ldid", (dir as NSString).appendingPathComponent("ldid")),
-            ("bundled_opainject", (dir as NSString).appendingPathComponent("opainject")),
             ("jailbreak_true", "/var/jb/usr/bin/true"),
         ]
         var out: [[String: Any]] = []
