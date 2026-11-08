@@ -27,6 +27,15 @@ enum TermBackend: String, CaseIterable, Identifiable {
         case .ios: return L10n.t("term_backend_ios")
         }
     }
+    /// 分段条上的短标签（宽顶栏放不下整句译名）
+    var shortTitle: String {
+        switch self {
+        case .alpine: return "Alpine"
+        case .ios: return "本机"
+        }
+    }
+    /// 该后端的家目录：切换后端时 cwd 必须跟着走，否则提示符会停在另一个根里
+    var home: String { self == .ios ? "/var/mobile" : "/root" }
 }
 
 final class TermLine: Identifiable, Equatable {
@@ -293,8 +302,15 @@ final class TermSession: Identifiable, ObservableObject {
         syncCwd()
     }
 
-    /// 命令里可能含 cd（如 `cd /tmp && ls`）：跑完从 guest 取一次真实 pwd
+    /// 命令里可能含 cd（如 `cd /tmp && ls`）：跑完取一次真实 pwd
     private func syncCwd() {
+        if backend == .ios {
+            // v9.14：原先不论后端都去问 guest 要 pwd，本机后端跑完拿回来的是
+            // Alpine 的路径，提示符就跳回沙盒了。本机后端自己算。
+            resolveCwdNative("cd '\(cwd.replacingOccurrences(of: "'", with: "'\\''"))' 2>/dev/null && pwd",
+                             original: "")
+            return
+        }
         _ = KelivoISHExecutor.startCommand(
             "pwd",
             runId: UUID().uuidString,
@@ -327,6 +343,23 @@ final class TermSession: Identifiable, ObservableObject {
         guard let runId = runId else { return }
         _ = KelivoISHExecutor.cancelRunId(runId)
         running = false
+    }
+
+    /// v9.14：切换后端。
+    ///
+    /// 旧实现只是把 `backend` 改掉：cwd 还停在上一个后端的路径上（/root 在本机视图里
+    /// 不存在、/var/mobile 在 guest 里也不存在），于是「cd 失败 → 命令照跑」，
+    /// 看上去就像切换没生效；正在跑的进程也不会被收掉。
+    /// 这里一次做完三件事：停掉当前进程、cwd 归位到新后端的家目录、写一行提示。
+    func switchBackend(to target: TermBackend) {
+        guard backend != target else { return }
+        if running {
+            stop()
+            append(L10n.t("term_stopped") + "\n", kind: .notice)
+        }
+        backend = target
+        cwd = target.home
+        append(L10n.t("term_backend_switched", target.title) + "\n", kind: .notice)
     }
 
     // MARK: cd

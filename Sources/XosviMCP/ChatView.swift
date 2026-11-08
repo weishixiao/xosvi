@@ -110,18 +110,11 @@ struct ChatView: View {
                         leftIcon: selectionMode ? nil : "line.3.horizontal",
                         trailing: selectionMode ? nil : AnyView(
                             HStack(spacing: 8) {
-                                // v9.13：本地终端整页入口（iSH Alpine 沙盒）
+                                // v9.14：匿名会话键已删除，右上角只留终端（整页本地终端）一个键
                                 Button {
                                     NotificationCenter.default.post(name: .tmOpenTerminal, object: nil)
                                 } label: {
                                     FloatingCircleButton(icon: "terminal")
-                                }
-                                // v7.9.5：+ 号 = 直接开一个临时会话（原来弹菜单且只有「联网搜索」→ 打开设置页）
-                                // v7.16.11：按用户要求把 + 号换成匿名（人形剪影）图标
-                                Button {
-                                    store.newConversation(title: "临时会话")
-                                } label: {
-                                    FloatingCircleButton(icon: "person.crop.circle")
                                 }
                             }
                         )

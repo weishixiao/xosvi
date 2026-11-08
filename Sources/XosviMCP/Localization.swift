@@ -283,6 +283,7 @@ enum L10n {
     "term_spawn_failed": ["zh": "无法启动 shell：%@", "en": "Cannot start shell: %@"],
     "term_backend_alpine": ["zh": "Alpine 沙盒", "en": "Alpine sandbox"],
     "term_backend_ios": ["zh": "本机原生", "en": "iOS native"],
+    "term_backend_switched": ["zh": "后端已切换到 %@（工作目录重置为该后端的家目录）", "en": "Backend switched to %@ (cwd reset to that backend's home)"],
 
     "ui_0": ["zh": "AI 可读网页全文", "en": "AI can read full page text"],
     "ui_1": ["zh": "AI 联网检索并引用来源", "en": "AI searches the web and cites sources"],

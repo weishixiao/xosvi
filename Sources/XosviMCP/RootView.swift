@@ -255,6 +255,10 @@ struct ConversationDrawerView: View {
 
                     ForEach(group.items) { conv in
                         swipableRow(conv)
+                            // v9.14：滚动重影/折叠的根因——延迟容器（LazyVStack）在按住行拖动、
+                            // 行内 offset 改变后复用格子，上一屏渲染的行没被清掉，两层叠在一起。
+                            // 给每行固定一个与内容无关的高度，复用格子的尺寸恒定不变。
+                            .frame(height: 50)
                     }
                 }
             }

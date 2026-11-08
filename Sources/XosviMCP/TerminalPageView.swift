@@ -57,32 +57,10 @@ struct TerminalPageView: View {
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundColor(TermTheme.fg)
             Spacer()
-            // 后端切换：Alpine 沙盒 / 本机原生
-            Menu {
-                ForEach(TermBackend.allCases) { b in
-                    Button {
-                        session?.backend = b
-                    } label: {
-                        if session?.backend == b {
-                            Label(b.title, systemImage: "checkmark")
-                        } else {
-                            Text(b.title)
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "shippingbox")
-                        .font(.system(size: 10, weight: .semibold))
-                    Text(session?.backend.title ?? "")
-                        .font(.system(size: 11, weight: .medium))
-                }
-                .foregroundColor(TermTheme.dim)
-                .padding(.horizontal, 8)
-                .frame(height: 26)
-                .background(Capsule().fill(TermTheme.surface))
-                .overlay(Capsule().stroke(TermTheme.stroke, lineWidth: 0.6))
-            }
+            // 后端切换（v9.14）：原先用 Menu，切换后菜单收起、会话没有重新绑定，
+            // 提示符/cwd 还是旧后端那一套 —— 看起来「不是实时切换」。改成始终可见的分段条：
+            // 点一下立刻生效，并把 cwd 归位到该后端的家目录。
+            backendSwitch
             if let s = session, s.running {
                 Button(action: { s.stop() }) {
                     Image(systemName: "stop.circle")
@@ -107,6 +85,40 @@ struct TerminalPageView: View {
         .padding(.horizontal, 10)
         .frame(height: 46)
         .background(TermTheme.bg)
+    }
+
+    /// 后端分段条：一眼看到当前后端，点另一个键立刻切换
+    private var backendSwitch: some View {
+        HStack(spacing: 2) {
+            ForEach(TermBackend.allCases) { b in
+                let active = (session?.backend ?? .alpine) == b
+                Button(action: {
+                    guard let s = session, s.backend != b else { return }
+                    s.switchBackend(to: b)
+                    focused = true
+                }) {
+                    Text(b.shortTitle)
+                        .font(.system(size: 11, weight: active ? .semibold : .regular))
+                        .foregroundColor(active ? TermTheme.bg : TermTheme.dim)
+                        .padding(.horizontal, 9)
+                        .frame(height: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .fill(active ? TermTheme.fg : Color.clear)
+                        )
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(PlainButtonStyle())
+            }
+        }
+        .padding(2)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous).fill(TermTheme.surface)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(TermTheme.stroke, lineWidth: 0.6)
+        )
     }
 
     // MARK: 会话标签
