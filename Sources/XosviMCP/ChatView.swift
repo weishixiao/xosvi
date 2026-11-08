@@ -591,9 +591,8 @@ struct ChatView: View {
                             .cornerRadius(14)
                             .padding(.leading, 16)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            if store.isLoading, !store.liveTrail.isEmpty {
-                                LiveTrailCard(steps: store.liveTrail)
-                            }
+                            // v9.16：执行轨迹卡片（「AI 选择调用 N 个工具 / shell_exec 执行中…」）按用户要求不再展示；
+                            // 轨迹数据仍在 store.liveTrail 里累积，只是不渲染。
                             if let status = store.statusText {
                                 Text(status)
                                     .font(.caption)
@@ -2243,6 +2242,7 @@ struct TypingIndicator: View {
 // MARK: - v2.9.127 执行轨迹组件（豆包工作任务/Codex 式过程流）
 
 /// 实时轨迹卡片：请求进行中，在"正在思考"下方竖排显示步骤流
+/// v9.16：已从聊天区摘除（用户要求不再显示「AI 选择调用 N 个工具」这类过程块），保留类型以免其它视图需要时复用
 struct LiveTrailCard: View {
     let steps: [TrailStep]
 
