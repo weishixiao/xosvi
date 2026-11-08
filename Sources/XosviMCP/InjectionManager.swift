@@ -238,6 +238,8 @@ final class InjectionManager {
         if geteuid() == 0, let native = nativeFileOp(name, args) {
             return native
         }
+        // v0.2.7：目标在守护视图里是新建的，先把它的父目录补出来（纯 App 侧写，不影响旧行为）
+        prepareDaemonTargetDir(name, args, timeout: timeout)
         // v6.9.4：只读命令直接执行，不经过提权。
         //
         // `ldid -e <bin>` 只是读签名里的 entitlements blob——普通用户就能读，
@@ -429,8 +431,12 @@ final class InjectionManager {
     private func runViaBinHelper(_ name: String, bin: String, args: [String], timeout: Double) -> (Int32, String)? {
         guard Self.rootBinTools.contains(name) else { return nil }
         let trusted = prepareTrustedToolForRoot(name, path: bin)
+        // v0.2.7：参数里的路径要翻成守护视图（/rootfs 前缀），否则新建目标全是 ENOENT(2)
+        let daemonArgs = args.map {
+            !Self.isDaemonVisible($0) && Self.isPathLiteral($0) ? Self.daemonVisiblePath($0) : $0
+        }
         let res = XosviXPC.helper("xosvi-bin",
-                                  args: [name, trusted, "--"] + args,
+                                  args: [name, trusted, "--"] + daemonArgs,
                                   timeout: Int(min(max(timeout, 1), 120)))
         guard (res["ok"] as? Bool) == true else { return nil }
         // helper 不在白名单 = 守护版本太旧（< 0.2.5），让调用方退回老路径
@@ -462,6 +468,70 @@ final class InjectionManager {
             if FileManager.default.isExecutableFile(atPath: cand) { return cand }
         }
         return path
+    }
+
+    /// v0.2.7：把 App 侧路径翻成守护（root）视图里的路径。
+    ///
+    /// 本机实测（iOS 17.1 / roothide）：xosvid 跑在自己的根目录视图里——共享视图的
+    /// `/var/mobile/...` 在它那儿是 `/rootfs/var/mobile/...`。直接把 App 侧路径交给
+    /// helper，任何**新建**的目标都会 ENOENT(2)（父目录在守护视图里不存在），
+    /// 表现为 `Copy app failed ... No such file or directory`。
+    /// 例：`cp -a <app> /var/mobile/.../static_inject/X.app`
+    ///     → `cp: cannot create directory '...': No such file or directory`；
+    /// 换成 `/rootfs` 前缀后同一条命令成功。
+    ///
+    /// 只加前缀、不改其余部分；已经是守护视图写法（`/rootfs/`、bootstrap、App 容器）的原样返回。
+    private static func daemonVisiblePath(_ path: String) -> String {
+        guard path.hasPrefix("/") else { return path }
+        if isDaemonVisible(path) { return path }
+        let rf = JBEnvironment.rootfsPrefix
+        guard !rf.isEmpty else { return path }
+        return rf + path
+    }
+
+    /// v0.2.7：共享视图里目标目录/文件清不掉的残骸（root 属主、rmdir 权限不足），
+    /// 交给 helper 的 rm 再清一次——那条路径要走 `/rootfs` 写法。
+    private func clearStaleTarget(name: String, _ args: [String]) {
+        guard name == "cp", args.count >= 2 else { return }
+        let dest = args[args.count - 1]
+        guard dest.hasPrefix("/"), FileManager.default.fileExists(atPath: dest) else { return }
+        let viaHelper = runViaBinHelper("rm", bin: binaryPath("rm") ?? "",
+                                        args: ["-rf", Self.daemonVisiblePath(dest)], timeout: 60)
+        if viaHelper?.0 == 0 {
+            Self.removeIfPresent(dest)
+        }
+    }
+
+    /// 删一个 App 视图里的路径（删不掉就算了）。
+    private static func removeIfPresent(_ path: String) {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: path) else { return }
+        try? fm.removeItem(atPath: path)
+    }
+
+    /// 该路径是否已经是守护视图的写法（不需要再加 `/rootfs`）。
+    private static func isDaemonVisible(_ path: String) -> Bool {
+        if path == "/rootfs" || path.hasPrefix("/rootfs/") { return true }
+        let passthrough = ["/private/var/containers/", "/var/containers/",
+                           "/private/var/mobile/Containers/", "/var/mobile/Containers/"]
+        if passthrough.contains(where: { path.hasPrefix($0) }) { return true }
+        if let jb = JBEnvironment.jbrootPath, !jb.isEmpty, path.hasPrefix(jb + "/") { return true }
+        return false
+    }
+
+    /// v0.2.7：字符集路径字面量（`cp`/`mv`/`rm`/`mkdir` 的参数）：以 `/` 开头的一定是路径。
+    ///
+    /// 同一个函数也用来判定「哪些参数要翻成守护视图」。
+    private static func isPathLiteral(_ arg: String) -> Bool {
+        arg.hasPrefix("/")
+    }
+
+    /// v0.2.7：两个视图写法里挑一个真存在的（App 视图优先）。
+    private static func existingPath(_ preferred: String, fallback: String) -> String {
+        let fm = FileManager.default
+        if fm.fileExists(atPath: preferred) { return preferred }
+        if fm.fileExists(atPath: fallback) { return fallback }
+        return preferred
     }
 
     /// 本机上 bootstrap 的候选根：共享视图里的 .jbroot-* 目录。
@@ -517,6 +587,31 @@ final class InjectionManager {
         let bundled = Bundle.main.bundleURL.appendingPathComponent("bin/" + name).path
         if fm.isExecutableFile(atPath: bundled) { return bundled }
         return path
+    }
+
+    /// v0.2.7：给**不存在的目标**补出守护视图里的父目录。
+    ///
+    /// 守护只解析 `/rootfs` 前缀这一层，所以指向不存在的目标时，唯一能解析到的祖先
+    /// 是 `/rootfs` 本身——`cp -a X /rootfs/.../static_inject/X.app` 于是被当成
+    /// 「把 X 拷进 /rootfs」，exit 0 却什么都没建（本机实测）。
+    /// 凡是目标在守护视图里的父目录还不存在，就先 `mkdir -p` 它（走同一套提权链）。
+    /// 只针对把最后一项当目标的 cp/mv，其余工具的历史行为不变。
+    private func prepareDaemonTargetDir(_ name: String, _ args: [String], timeout: Double) {
+        // v0.2.7：只剩纯共享视图下的「父目录还不存在」，才预建它的守护视图写法。
+        // 另外 rmdir 清不掉、App 视图里也看不到的残骸，交给 helper 的 rm 再清一次。
+        if name == "cp" || name == "mv" {
+            let dest = args[args.count - 1]
+            if dest.hasPrefix("/"), !FileManager.default.fileExists(atPath: dest) {
+                let parent = (dest as NSString).deletingLastPathComponent
+                let visible = Self.daemonVisiblePath(parent)
+                if visible != parent, !FileManager.default.fileExists(atPath: visible) {
+                    _ = runAsRoot("mkdir", args: ["-p", visible], timeout: 30)
+                }
+            } else if dest.hasPrefix("/"), !FileManager.default.isWritableFile(atPath: dest) {
+                // 目标还在但清不掉（上一轮留下的 root 属主残骸）→ 先借 helper 删干净
+                clearStaleTarget(name: name, args)
+            }
+        }
     }
 
     /// v2.9.126：root 环境下 FileManager 原生映射 (对齐 TrollFools isPrivileged 快路径）。
@@ -1024,11 +1119,17 @@ final class InjectionManager {
         return newBase
     }
     private func persistAsset(name: String, src: String, bid: String) {
+        // v0.2.7：守护视图下的 `cp -r` 退化（见 daemonVisiblePath 注释），父目录要先建好，
+        // 复制走前面那条「先直写、失败再借 root」的链，最后再补一次属主。
         let base = Self.persistentPluginsRoot + "/" + bid
         let dst = (base as NSString).appendingPathComponent(name)
-        let (mc, _) = runAsRoot("mkdir", args: ["-p", base])
-        guard mc == 0 else { return }
-        _ = runAsRoot("rm", args: ["-rf", dst])
+        let fm = FileManager.default
+        for dir in [Self.persistentPluginsRoot, base, Self.daemonVisiblePath(Self.persistentPluginsRoot),
+                    Self.daemonVisiblePath(base)] where !fm.fileExists(atPath: dir) {
+            _ = runAsRoot("mkdir", args: ["-p", dir])
+        }
+        _ = runAsRoot("rm", args: ["-rf", Self.daemonVisiblePath(dst)])
+        if fm.fileExists(atPath: dst) { _ = try? fm.removeItem(atPath: dst) }
         let (cc, _) = runAsRoot("cp", args: ["--reflink=auto", "-rfp", src, dst])
         if cc == 0 {
             _ = runAsRoot("chown", args: ["-R", "501:501", dst])
@@ -2679,8 +2780,18 @@ final class InjectionManager {
         // xosvi-bin helper → 越狱 spawn，每一步的真实原因都带回结果里。
         let appDirName = (app.path as NSString).lastPathComponent
         let destApp = injectRoot + "/" + appDirName
+        // v0.2.7：目标按**共享视图**写（不是 /rootfs）。App 自己就在共享视图里，
+        // 它刚建出来的 static_inject 在守护视图里同样可见（本机实测：xosvid 以 uid=0
+        // 能直接复制 /private/var/containers/... 下的 App Bundle，说明两条路径都通）。
+        // rmdir 只是清掉上次的残骸；rm -r 走 helper 时目标**必须**带 /rootfs，
+        // 否则 rpm 的 `-r` 在守护那种映射/字符设备视图上 exit 0 却什么都不做（本机实测）。
         _ = try? fm.removeItem(atPath: destApp)
-        let (cpRc, cpOut) = runAsRoot("cp", args: ["-a", app.path, destApp], timeout: 180)
+        if fm.fileExists(atPath: destApp) {
+            _ = runAsRoot("rm", args: ["-rf", Self.daemonVisiblePath(destApp)], timeout: 60)
+        }
+        let cpSrc = Self.existingPath(Self.daemonVisiblePath(app.path), fallback: app.path)
+        let cpArgs = ["-a", cpSrc, destApp]
+        let (cpRc, cpOut) = runAsRoot("cp", args: cpArgs, timeout: 180)
         guard cpRc == 0 else {
             return (false, "Copy app failed (rc=\(cpRc)): \(cpOut.prefix(300))")
         }
