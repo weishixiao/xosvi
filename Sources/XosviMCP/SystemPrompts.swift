@@ -469,13 +469,14 @@ final class SystemPrompts {
     - shell.exec has built-in iOS native commands on the REAL iOS FS (v4.4.x native toolchain, run directly on the
       iPhone chip): ls/cat/find/grep/echo/mkdir/rm/mv/cp/tail/head/sed/pwd/touch/wc/df/free/uname/uptime/hostname/ps/
       top/kill/ifconfig/netstat/nslookup/curl/plutil/sqlite3/unzip/tar/gzip/md5sum/sha256sum/diff/hexdump/base64/
-      strings/nm/kfd_diag + python3 + objdump + class-dump.  Pipes/semicolons/redirection/&&/|| supported.
+      strings/nm/kfd_diag + python3 + objdump + class-dump + otool.  Pipes/semicolons/redirection/&&/|| supported.
     - NATIVE PYTHON (v4.4.x): App-bundled ARM64 CPython 3.14 (iPhone chip, NOT iSH/Alpine). python3 -c/script.py/module;
       has numpy/pandas/matplotlib (native C extensions). CANNOT fork/exec subprocess (Errno 45); pandas lacks
       pyarrow/fsspec (use CSV/JSON). iSH/Alpine python3 has NO numpy/pandas — import there segfaults (guard blocks).
       New packages install via Alpine only; native python3 has no pip.
     - NATIVE REVERSE TOOLS (in-process): objdump -d <mach-o> (ARM64 disasm), class-dump <mach-o> (ObjC classes/methods),
-      nm, strings — read huge files directly, no 2MB limit.
+      otool -h/-l/-L/-t/-tv (Mach-O 头/依赖库/反汇编兼容层), nm, strings — read huge files directly, no 2MB limit.
+      这些名字都真的能调：`<tool> --version` 返回内置版本说明，不再报 127 未知命令。
     - BUNDLED NATIVE BINARIES (v4.4.x, no install): lua / node / r2 (radare2) / cstool (capstone) — App-bundled arm64
       iOS binaries; call by command name, route native automatically.
     - 实测边界结论(cstool 架构模式名 / tree 参数 / jtool2 空输出 / git(dulwich) 用法 / nscan / llvm / installer /
@@ -518,7 +519,7 @@ final class SystemPrompts {
     - 读 App 数据容器: `bind_app bundle_id:<id>` 后 python3/原生读小文件; 【写】用 `app_write_file`(原生直写, 写前自动备份)。
     - Native `grep -a` on binary/Mach-O content is UNRELIABLE (returns 0 even for literal class names) — don't grep a
       binary; use `inject binary_symbols` or grep only extracted text (already-copied .txt / decrypted payload).
-    - `file` 走 Alpine(auto-bind)可读 iOS 文件。`otool`/`class-dump` 是 macOS-only 不在 Alpine; nm/strings 未打包进 App(靠 binary_symbols 原生 fallback)。
+    - `otool`/`class-dump`/`nm`/`strings`/`objdump`/`hexdump` 都是 App 内置原生实现（进程内直读，无 2MB 限制）——不要因为"macOS-only"而绕开，直接调名字即可。路径写 roothide 的 `/usr/bin/x` 也行，会自动回落到 jbroot 里的同名文件。
     - LOCALIZATION files (Localizable.strings): if they are BINARY plists, run `plutil -convert json -o <out> <in>` /
       `plutil -p <in>` FIRST, then grep the converted text. Don't grep binary .strings directly.
     - IAP / in-app-purchase analysis: search product-ID patterns (`com.<bundle>.[a-z_]+`) and StoreKit method names
@@ -551,7 +552,7 @@ final class SystemPrompts {
       中危：keychain/SecItem 读写、cookie/令牌提取、大量 base64 数据、socket 自建连接。
       低危提示：仅读自身 bundle 路径、正常系统 SDK 依赖、标准 UI 库。
       判定输出：先列"命中清单+证据行(哪个字符串/哪个类/哪条依赖)"，再给结论（可信/需真机验证/可疑/恶意特征）；不下无证据的结论；命中要引用提取到的原文。
-    【4 边界（App 内 vs 电脑侧）】App 内无 otool/class-dump/Ghidra——深度反汇编/反编译/许可逻辑还原交给电脑侧(Ghidra/rizin/llvm)；App 内完成 侦察+静态提取+动态观察+风险判定，需要更深的结论时明确说"需电脑侧 Ghidra 深挖"。
+    【4 边界（App 内 vs 电脑侧）】App 内有 otool -h/-l/-L/-t 兼容层、objdump（含 -d ARM64 反汇编）、class-dump、nm、strings；没有的是 Ghidra 级反编译/伪代码与整个二进制的语义还原。深度逆向、许可逻辑还原交给电脑侧(Ghidra/rizin)；App 内完成 侦察+静态提取+动态观察+风险判定，需要更深的结论时明确说"需电脑侧 Ghidra 深挖"。
 
     === ENGINE (Alpine/iSH 运行时已移除) ===
     本版本已把 Alpine/iSH 运行时整体下掉（它在 arm64 真机上会段错误闪退），相应能力一起消失：

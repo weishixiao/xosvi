@@ -102,6 +102,18 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 
 - **iOS 原生 shell**：支持 head/tail/grep/wc/sed/awk/uniq/cut/tr/echo/cat/base64 等过滤；
   但**不支持通配符展开、`cd` 后相对路径、二进制 grep**（`grep -a` 对 Mach-O 不可靠）——一律用绝对路径。
+- **内置原生逆向工具（v9.15）**：`otool`（-h/-l/-L/-t/-tv）、`objdump`（含 -d ARM64 反汇编）、
+  `class-dump`、`nm`、`strings`、`hexdump`（-C 风格）都是**进程内实现**，直接调名字即可，
+  `<tool> --version` 返回内置版本说明。主入口的路由与 `runIOSNativeSegment` 的 switch 由
+  `iosNativeCommands` 集合统一驱动，不再出现「实现里有、入口 127」的两套账。
+  「进程内实现」与「bin/ 里的文件」由 `ShellExecTool.inProcessNativeCommands` 区分：
+  自检报告（`tool.install` / `ShimDetector`）先认这个集合，才不会把没有磁盘文件的
+  `otool`/`class-dump`/`sqlite3`/`plutil` 报成「未内置」。
+- **路径解析统一走 `ShellExecTool.resolveExistingPath`**：原样 → `/rootfs` 前缀 → roothide jbroot 前缀；
+  只用于**只读**命令（grep/strings/nm/objdump/class-dump/hexdump/otool）。写操作
+  （`mv`/`cp`/`rm`/`mkdir`/重定向）**不**做这层回落，否则会写进 jbroot。
+- **127 的语义**：`runtime_actual: ainot_available` 现在明确列出「未知命令名」+ 原生可用清单 + App `bin/` 自带清单；
+  它表示**没有执行环境**，不表示文件不存在——后者是各命令自己的 exit 1/2 加 `No such file or directory`。
 - **iSH Alpine**：Linux 工具链（strings/file/sqlite3/nm/otool 等），通过自动桥接读取 iOS 文件；
   **只走 `http://` 源**（HTTPS/TLS 握手会挂死）；`apk` 报锁错误时删 `/lib/apk/db/lock`。
 - **缺工具时**：Alpine 环境可让 AI 自行安装（`tool.install` / `apk add`）；iOS 原生环境不行。

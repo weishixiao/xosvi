@@ -47,6 +47,13 @@ final class ToolInstallTool: MCPTool {
     // MARK: - 按名单个安装（内置 → Alpine apk → pip → CI）
 
     private func installByName(_ name: String, params: [String: Any]) -> [String: Any] {
+        // v9.15：先认「进程内实现」——otool/class-dump/nm/strings/objdump/sqlite3/plutil 等没有
+        // 磁盘文件，旧逻辑只 stat bin/ 于是报「未内置」，AI 转而去装不存在的 Alpine 包。
+        if ShellExecTool.inProcessNativeCommands.contains(name) {
+            return ["ok": true, "tool": name, "status": "ready", "source": "in_process",
+                    "path": "\(name)（App 进程内）",
+                    "hint": "App 内置进程内实现，直接调命令名即可；`\(name) --version` 返回内置版本说明。"]
+        }
         // 1. 已就绪？——内置原生 bin / Alpine 已有
         // v4.4.9-fix3bv: 就绪≠可用——二进制存在/apk exit 0 都可能是"装了但调不动/输出不可见"
         // (pandas 误报、python3/r2 空输出、BusyBox tree 缺参数)。统一冒烟：命令名调 --version/-v/--help/-h，
@@ -101,6 +108,13 @@ final class ToolInstallTool: MCPTool {
         var okCount = 0
         for pkg in pkgs {
             if ConversationStore.shared.stopRequested { break }
+            // v9.15：进程内实现没有 bin/ 文件，别报「未内置」
+            if ShellExecTool.inProcessNativeCommands.contains(pkg) {
+                okCount += 1
+                results.append(["package": pkg, "ok": true,
+                                "detail": "进程内实现（无需 bin/ 文件）：\(pkg) --version"])
+                continue
+            }
             let bundled = bundledBinPath(pkg)
             let ok = bundled != nil
             if ok { okCount += 1 }

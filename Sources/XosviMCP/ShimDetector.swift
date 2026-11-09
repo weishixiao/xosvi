@@ -15,7 +15,15 @@ enum ShimDetector {
     }
 
     /// 判定规则：--version 输出里出现 Usage/<占位符> → 壳；空输出 → 未响应（不等于壳）
+    /// v9.15：先判「进程内实现」——这类工具磁盘上没有同名文件（sqlite3/plutil/otool/class-dump…），
+    /// 旧逻辑按 binDir 查不到就报「未内置」，自检于是绕路去找不存在的 Alpine 版本。
     static func inspect(_ name: String, binDir: String = Bundle.main.bundlePath + "/bin") -> Verdict {
+        if ShellExecTool.inProcessNativeCommands.contains(name) {
+            let out = ShellExecTool.inProcessVersionProbe(name)
+            return Verdict(name: name, isShim: false,
+                           note: "\(name) 是 App 进程内实现（无 bin/ 同名文件），能力以内置实现为准",
+                           versionOutput: out)
+        }
         let path = binDir + "/" + name
         guard FileManager.default.isExecutableFile(atPath: path) else {
             return Verdict(name: name, isShim: false, note: "\(name) 未内置", versionOutput: "")

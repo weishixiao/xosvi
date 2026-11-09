@@ -176,7 +176,7 @@ final class BinarySymbolsTool: MCPTool {
 
         if result["symbols"] == nil && result["strings"] == nil {
 
-            result["hint"] = "nm/strings not bundled; use otool -ov to view ObjC sections, or ldid -e to view signature"
+            result["hint"] = "nm/strings 是内置原生实现（v9.15 起 `nm <path>` / `strings <path>` 直接可用）；也可用 otool -ov 看 ObjC 段，或 ldid -e 看签名"
 
         }
 

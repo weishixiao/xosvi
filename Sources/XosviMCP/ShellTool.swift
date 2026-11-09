@@ -133,7 +133,13 @@ final class ShellExecTool: MCPTool {
         
         // v3.1.32: iOS 原生命令拦截——直接用 iOS FileManager 执行，不经过 Alpine
         // 这样就能访问整个 iOS 文件系统了！
-        let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        var trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+        // v9.15：绝对路径 → 命令名归一。AI 直接写 `<Xosvi.app>/bin/llvm-objdump --version` 时，
+        // 首词含 "/" 被原生路由排除、也不匹配任何前缀分支 → 一路掉到 127 ainot_available，
+        // 自检报告因此把"磁盘上有的工具"判成"调不动"。这里把 App 自带 bin 的路径折回命令名。
+        if let alias = ShellExecTool.bundledCommandAlias(trimmed) {
+            trimmed = alias
+        }
         
         // v3.3.4: 旧版 Native Offload（`ta` 前缀入口）——已弃用，仅为兼容老脚本保留。
         // 新契约要求直接调用真实工具名（大工具 + command 子命令），禁止使用 `ta` 前缀。
@@ -622,6 +628,21 @@ final class ShellExecTool: MCPTool {
             }
         }
         
+        // v9.15：通用原生兜底——命令首词属于 iosNativeCommands 就直接交给原生分发。
+        // 之前 nm/strings/objdump/class-dump/hexdump/otool 等只在 runIOSNativeSegment 的 switch
+        // 里有实现，主入口却没有对应的 hasPrefix 分支 → 单段命令一路掉到最后的 127
+        // "ainot_available"，被自检读成"工具不在"。这里补上分发，路由与实现不再两套。
+        // llvm-*/jtool2 没有进程内实现（只可能在 bin/ 里，上面的 gen 路由已覆盖），
+        // 交给它们只会得到"不支持该命令"，所以在此排除，仍旧落 127。
+        let nativeWord = ShellExecTool.firstWord(iosCmd)
+        if !nativeWord.isEmpty, !nativeWord.contains("/"), !nativeWord.contains(".."),
+           !nativeWord.hasPrefix("llvm-"), nativeWord != "jtool2",
+           ShellExecTool.iosNativeCommands.contains(nativeWord) {
+            let result = ShellExecTool.runIOSNativeSegment(iosCmd)
+            AuditLog.shared.log("shell.exec (ios native fallback)", detail: String(trimmed.prefix(100)))
+            return result
+        }
+
         // v8（P1-5）：分段执行——`id -u`、`B=/tmp id -u`、`for …; do …; done`、
         // `/var/.../bin/jq --version` 这类不再整串判死；能跑的段跑，不支持的段单独报。
         if let segmented = ShellSegmenter.execute(trimmed) {
@@ -629,11 +650,21 @@ final class ShellExecTool: MCPTool {
             return segmented
         }
 
-        // v7.3.0：iSH 引擎已移除，这里不再有任何"兜底到 Alpine"的路径
+        // v9.15：127 要能区分"命令名不认"和"文件不在"——自检脚本靠这条判工具可用性
+        let bundled = ShellExecTool.bundledCommandNames()
+        let nativePreview = ["ls", "cat", "stat", "find", "grep", "sed", "wc", "plutil", "sqlite3",
+                             "strings", "nm", "objdump", "otool", "class-dump", "hexdump",
+                             "python3", "bsdtar", "r2", "cstool", "llvm-objdump", "jtool2"]
+            .filter { ShellExecTool.iosNativeCommands.contains($0) || bundled.contains($0) }
         return ["command": trimmed, "exit_code": 127, "ios_native": false,
                 "runtime_actual": "ainot_available",
-                "stdout": "该命令没有可用的执行环境（Alpine/iSH 运行时已移除，且不是内置原生命令）。\n可用：ls/cat/stat/find/du/grep/sed/wc/plutil/sqlite3/strings/nm/hexdump/objdump/python3/bsdtar 及 App 内置工具。",
-                "hint": "改用原生命令或 App 内置工具"]
+                "stdout": "未知命令：\(nativeWord.isEmpty ? trimmed : nativeWord)\n"
+                    + "没有可用的执行环境跑它（iSH/Alpine 只在 apk/pip/npm 或 runtime=alpine 时启动，且要引擎能 boot）。\n"
+                    + "原生可用：\(nativePreview.joined(separator: "/"))\n"
+                    + "App bin/ 自带：\(bundled.isEmpty ? "(未探测到)" : bundled.prefix(30).joined(separator: " "))\n"
+                    + "等价替代：otool→objdump（-h/-l/-L/-t）、class-dump/nm/strings 为内置原生实现。",
+                "hint": "先用 `ls` 确认路径存在；roothide 下 /usr/bin/x 会自动回落到 jbroot 里的同名文件。"]
+
     }
     
     // MARK: - v3.1.33 shell 语法识别 + iOS 原生管道执行器
@@ -1180,7 +1211,8 @@ final class ShellExecTool: MCPTool {
     }
 
     /// 提取命令首词 (跳过引号），用于判断是否 iOS 原生命令
-    private static func firstWord(_ segment: String) -> String {        let t = segment.trimmingCharacters(in: .whitespaces)
+    private static func firstWord(_ segment: String) -> String {
+        let t = segment.trimmingCharacters(in: .whitespaces)
         guard !t.isEmpty else { return "" }
         var word = ""
         for c in t {
@@ -1198,7 +1230,7 @@ final class ShellExecTool: MCPTool {
         "sha256sum", "diff", "hexdump", "curl", "wget", "plutil", "sqlite3",
         "unzip", "df", "du", "free", "uname", "sw_vers", "uptime", "hostname", "ps", "top",
         "kill", "ifconfig", "netstat", "nslookup", "tar", "gzip", "gunzip",
-        "ta", "base64", "strings", "nm", "kfd_diag", "python3", "objdump", "class-dump",
+        "ta", "base64", "strings", "nm", "kfd_diag", "python3", "objdump", "class-dump", "otool",
         // fix3q: 内置原生工具链（native-tools 交叉编译进 App bin/）——AI 直接调用走原生 ARM64
         "lua", "node", "r2", "cstool",
         // fix3v: nmap（native-nmap job 交叉编译，进 App bin/nmap）——原生直跑，无需 Alpine
@@ -1206,6 +1238,29 @@ final class ShellExecTool: MCPTool {
         // fix3w: LLVM 工具链 + jtool2（native-llvm job）——llvm-objdump 等原生直跑
         "llvm-objdump", "llvm-nm", "llvm-readelf", "llvm-size", "llvm-strings", "jtool2"
     ]
+
+    /// v9.15：**进程内**实现的原生工具——跑在 App 进程里，磁盘上没有同名二进制。
+    /// `iosNativeCommands` 里还混着「交叉编译进 bin/ 的二进制」(lua/node/r2/cstool/llvm-*/jtool2)
+    /// 和 `ta` 路由别名；自检与安装报告必须区分「进程内实现」和「bin/ 里的文件」，
+    /// 否则 `otool`/`class-dump`/`sqlite3` 会被报成「未内置」——它们只是没有磁盘文件。
+    static let inProcessNativeCommands: Set<String> = [
+        "ls", "cat", "find", "grep", "echo", "mkdir", "rm", "mv", "cp",
+        "tail", "head", "sed", "pwd", "cd", "touch", "wc", "md5sum", "sha256sum",
+        "diff", "hexdump", "curl", "wget", "plutil", "sqlite3",
+        "unzip", "df", "du", "free", "uname", "sw_vers", "uptime", "hostname", "ps", "top",
+        "kill", "ifconfig", "netstat", "nslookup", "tar", "gzip", "gunzip",
+        "base64", "strings", "nm", "objdump", "otool", "class-dump", "kfd_diag", "python3"
+    ]
+
+    /// 进程内工具的版本/用法探针（自检与 diagnose 用）：只有带 `nativeToolProbe` 的实现会回
+    /// 版本说明，其余回一句固定说明，避免把 `ls --version` 这类无意义调用当成「工具坏了」。
+    static func inProcessVersionProbe(_ name: String) -> String {
+        let r = runIOSNativeSegment(name + " --version")
+        if let out = r["stdout"] as? String, (r["exit_code"] as? Int) == 0, !out.isEmpty {
+            return out
+        }
+        return "\(name)（进程内实现，随 App 一起加载，无需 bin/ 文件）"
+    }
     
     /// v4.3.9: 反向路径翻译——iOS 原生命令收到 Alpine 挂载路径时翻译回 iOS 真实路径。
     /// 原生侧路径映射（原来正向 iOS→Alpine 由引擎的 autoBind 完成，已移除）; 曾缺反向, 导致 grep/cat/ls
@@ -1277,6 +1332,7 @@ final class ShellExecTool: MCPTool {
         case "strings": return runIOSStrings(iosCmd)
         case "nm": return runIOSNm(iosCmd)
         case "objdump": return runIOSObjdump(iosCmd)
+        case "otool": return runIOSOtool(iosCmd)
         case "class-dump": return runIOSClassDump(iosCmd)
         case "python3": return PythonInProcessBridge.run(command: iosCmd)
         case "kfd_diag": return runIOSKfdDiag(iosCmd)
@@ -1542,6 +1598,78 @@ final class ShellExecTool: MCPTool {
             return "/var" + p.dropFirst("/private/var".count)
         }
         return p
+    }
+
+    // MARK: - v9.15 路径与内置工具解析（自检报告暴露的两类"假缺失"）
+
+    /// 把 App 自带 bin 的绝对/相对路径折回命令名：
+    /// `/private/var/containers/Bundle/Application/<uuid>/Xosvi.app/bin/llvm-objdump -v` → `llvm-objdump -v`。
+    /// 只认真正 MH_EXECUTE；别的路径（用户下载的工具、JB 侧工具）原样返回 nil，交给原有路由。
+    static func bundledCommandAlias(_ command: String) -> String? {
+        let t = command.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        let word = firstWord(t)
+        guard word.contains("/"), !word.contains("..") else { return nil }
+        let path = (word as NSString).standardizingPath
+        let dir = (path as NSString).deletingLastPathComponent
+        let base = (path as NSString).lastPathComponent
+        guard !base.isEmpty, !base.hasPrefix(".") else { return nil }
+        func slim(_ s: String) -> String {
+            s.hasPrefix("/private/var/") ? String(s.dropFirst("/private".count)) : s
+        }
+        let target = slim(dir)
+        let targetTail = (target as NSString).pathComponents.suffix(2).joined(separator: "/")
+        // 命中时返回**当前** bundle 下的目录——提示词里的容器 UUID 可能已随重装变化，
+        // 拿旧绝对路径去 isExecutableFile 会假失败。
+        let hitRoot = [Bundle.main.bundlePath + "/bin", Bundle.main.bundlePath + "/Resources/bin"].first { cand in
+            let c = slim(cand)
+            if c == target { return true }
+            // 容器 UUID 变了：比尾部 "…/<App>.app/bin"
+            return !targetTail.isEmpty && (c as NSString).pathComponents.suffix(2).joined(separator: "/") == targetTail
+        }
+        guard let root = hitRoot, FileManager.default.isExecutableFile(atPath: root + "/" + base) else { return nil }
+        let body = String(t.dropFirst(word.count))
+        return base + body
+    }
+
+    /// App bin/ 与 Resources/bin/ 里实际存在的可执行文件名（自检报告用；也喂给 127 的报错文案）
+    static func bundledCommandNames() -> [String] {
+        var names: [String] = []
+        for root in [Bundle.main.bundlePath + "/bin", Bundle.main.bundlePath + "/Resources/bin"] {
+            guard let items = try? FileManager.default.contentsOfDirectory(atPath: root) else { continue }
+            for it in items where !it.hasPrefix(".") {
+                if FileManager.default.isExecutableFile(atPath: root + "/" + it), !names.contains(it) {
+                    names.append(it)
+                }
+            }
+        }
+        return names.sorted()
+    }
+
+    /// 解析用户给的路径：先原样，再按 JB 环境变体（/rootfs、roothide 的 jbroot 前缀）。
+    /// 报告里"同一路径 ls 说有、grep 说没有"就是只有部分命令做了这层回落——统一到这里。
+    /// 返回 nil 表示确实不存在。
+    static func resolveExistingPath(_ raw: String) -> String? {
+        let p = normalizePath((raw as NSString).expandingTildeInPath)
+        if FSStat.exists(p) { return p }
+        if let hit = JBEnvironment.firstExistingPath(p) { return hit }
+        return nil
+    }
+
+    /// `<tool> --version` / `<tool> --help` 这类探针不该回 usage 错误——
+    /// 自检用它们判断工具在不在，报 usage/exit 1 会被读成"工具不可用"。
+    /// 注意：`-h <path>` / `-v <path>` 是**带操作数**的正常用法（如 `otool -h /usr/bin/ls`），
+    /// 只有单独出现时才当探针，否则会把真调用吞掉。
+    static func nativeToolProbe(_ command: String, name: String, version: String, usage: String) -> [String: Any]? {
+        let parts = command.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        let rest = Array(parts.dropFirst())
+        guard !rest.isEmpty else { return nil }
+        let isProbe = rest.contains("--version") || rest.contains("-V") || rest.contains("--help")
+            || (rest.count == 1 && (rest[0] == "-h" || rest[0] == "-v"))
+        guard isProbe else { return nil }
+        return ["command": command, "exit_code": 0,
+                "stdout": "\(name) (Xosvi 内置原生) \(version)\nusage: \(usage)",
+                "ios_native": true, "runtime_actual": "ios_native"]
     }
     
     /// v4.3.13: base64 -d <input> > outFile 辅助——解码后直接以二进制写入目标文件。
@@ -1920,7 +2048,7 @@ final class ShellExecTool: MCPTool {
                 if lower.hasSuffix(".db") || lower.hasSuffix(".sqlite") || lower.hasSuffix(".sqlite3") {
                     hint = "binary SQLite DB (\(data.count) bytes). Analyze it with the built-in native tool: sqlite3 <db_path> \"<SQL>\" — e.g. `sqlite3 \(path) \".tables\"`, `sqlite3 \(path) \"SELECT name FROM sqlite_master WHERE type='table'\"`, then query each table."
                 } else {
-                    hint = "binary file (\(data.count) bytes), not UTF-8 text. Use `sqlite3` for DB files, or hex inspect via `head -c 64 <file> | od -c` (system auto-routes od/hexdump to Alpine); native cat reads text only."
+                    hint = "binary file (\(data.count) bytes), not UTF-8 text. Use `sqlite3` for DB files, or hex inspect with the built-in native `hexdump -C <file>` (add `-s <offset>` / `-n <length>`); native cat reads text only."
                 }
                 return [
                     "command": command,
@@ -1959,8 +2087,9 @@ final class ShellExecTool: MCPTool {
     /// 用 Data(contentsOf:) 原生直读（无 Alpine 2MB 桥接上限），解决"分析大二进制提字符串"卡点。
     /// 语法: strings [-n <minlen>] [-o] <path>  (默认 minlen=4; -o 打印偏移)
     private static func runIOSStrings(_ command: String) -> [String: Any] {
-        let fm = FileManager.default
         let parts = command.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if let probe = ShellExecTool.nativeToolProbe(command, name: "strings", version: "1.0 (Mach-O 字符串扫描)",
+                                                     usage: "strings [-n <minlen>] [-o] <path>") { return probe }
         var minLen = 4, showOff = false
         var pathArg: String?
         var i = 1
@@ -1977,9 +2106,10 @@ final class ShellExecTool: MCPTool {
                     "stdout": "usage: strings [-n <minlen>] [-o] <path> — 从二进制文件提取可打印 ASCII 字符串（默认 minlen=4，-o 显示偏移）",
                     "ios_native": true]
         }
-        let path = ShellExecTool.normalizePath((raw as NSString).expandingTildeInPath)
-        guard fm.fileExists(atPath: path) else {
-            return ["command": command, "exit_code": 1, "stdout": "strings: \(path): No such file or directory", "ios_native": true]
+        guard let path = ShellExecTool.resolveExistingPath(raw) else {
+            return ["command": command, "exit_code": 1,
+                    "stdout": "strings: \(raw): No such file or directory（原路径、/rootfs 前缀与 roothide jbroot 前缀都已试过）",
+                    "ios_native": true]
         }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             return ["command": command, "exit_code": 1, "stdout": "strings: \(path): cannot read", "ios_native": true]
@@ -2023,8 +2153,9 @@ final class ShellExecTool: MCPTool {
     /// 原生直读大文件；支持 fat/thin arm64。默认只输出 __text 段符号（代码函数），-a 输出全部 N_SECT 符号。
     /// 语法: nm [-a] <path>
     private static func runIOSNm(_ command: String) -> [String: Any] {
-        let fm = FileManager.default
         let parts = command.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if let probe = ShellExecTool.nativeToolProbe(command, name: "nm", version: "1.0 (Mach-O 符号表)",
+                                                     usage: "nm [-a] [-g] <path>") { return probe }
         var all = false
         var pathArg: String?
         for a in parts.dropFirst() {
@@ -2036,9 +2167,10 @@ final class ShellExecTool: MCPTool {
                     "stdout": "usage: nm [-a] <path> — 输出 Mach-O 定义的符号 (地址 + 符号名)。默认只输出 __text 段（代码函数），-a 输出全部段符号。",
                     "ios_native": true]
         }
-        let path = ShellExecTool.normalizePath((raw as NSString).expandingTildeInPath)
-        guard fm.fileExists(atPath: path) else {
-            return ["command": command, "exit_code": 1, "stdout": "nm: \(path): No such file or directory", "ios_native": true]
+        guard let path = ShellExecTool.resolveExistingPath(raw) else {
+            return ["command": command, "exit_code": 1,
+                    "stdout": "nm: \(raw): No such file or directory（原路径、/rootfs 前缀与 roothide jbroot 前缀都已试过）",
+                    "ios_native": true]
         }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             return ["command": command, "exit_code": 1, "stdout": "nm: \(path): cannot read", "ios_native": true]
@@ -2135,8 +2267,9 @@ final class ShellExecTool: MCPTool {
     /// 与 nm/kfd_diag 同路线（jtool2 官方仅 macOS 二进制，LLVM 全套交叉编译太重，自研最稳最快）。
     /// 语法: objdump [-d] <path>
     private static func runIOSObjdump(_ command: String) -> [String: Any] {
-        let fm = FileManager.default
         let parts = command.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if let probe = ShellExecTool.nativeToolProbe(command, name: "objdump", version: "1.0 (Mach-O 头/段节/符号)",
+                                                     usage: "objdump [-d] <path>") { return probe }
         var disasm = false
         var pathArg: String?
         for a in parts.dropFirst() {
@@ -2148,9 +2281,10 @@ final class ShellExecTool: MCPTool {
                     "stdout": "usage: objdump [-d] <path> — 输出 Mach-O 头/load commands/段节/符号摘要；-d 追加 __text 基础 ARM64 反汇编。",
                     "ios_native": true]
         }
-        let path = ShellExecTool.normalizePath((raw as NSString).expandingTildeInPath)
-        guard fm.fileExists(atPath: path) else {
-            return ["command": command, "exit_code": 1, "stdout": "objdump: \(path): No such file or directory", "ios_native": true]
+        guard let path = ShellExecTool.resolveExistingPath(raw) else {
+            return ["command": command, "exit_code": 1,
+                    "stdout": "objdump: \(raw): No such file or directory（原路径、/rootfs 前缀与 roothide jbroot 前缀都已试过）",
+                    "ios_native": true]
         }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             return ["command": command, "exit_code": 1, "stdout": "objdump: \(path): cannot read", "ios_native": true]
@@ -2350,12 +2484,175 @@ final class ShellExecTool: MCPTool {
         return "dc\t\(String(format:"0x%08x", w))"
     }
 
+    /// v9.15：内置 otool 兼容层。自检里 `otool -h /usr/bin/ls` 直接 127（仪器不存在），
+    /// 而它是最常用的 Mach-O 入口。这里把四个常用开关映射到进程内解析，不 spawn 外部二进制：
+    ///   -h 文件头 / -l load commands（交给 objdump）/ -L 依赖库 / -t|-tv __text 反汇编（objdump -d）。
+    private static func runIOSOtool(_ command: String) -> [String: Any] {
+        if let probe = ShellExecTool.nativeToolProbe(command, name: "otool", version: "1.0 (Mach-O reader)",
+                                                     usage: "otool -h|-l|-L|-t|-tv <path>") { return probe }
+        let parts = command.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        var flags: [String] = []
+        var pathArg: String?
+        for a in parts.dropFirst() {
+            if a.hasPrefix("-") { flags.append(a) }
+            else if pathArg == nil { pathArg = a }
+        }
+        guard let raw = pathArg, let path = ShellExecTool.resolveExistingPath(raw) else {
+            return ["command": command, "exit_code": 1,
+                    "stdout": "otool: \(pathArg ?? ""): No such file or directory\nusage: otool -h|-l|-L|-t|-tv <path>",
+                    "ios_native": true]
+        }
+        if flags.contains("-L") { return ShellExecTool.runIOSOtoolDylibs(command: command, path: path) }
+        if flags.contains("-t") || flags.contains("-tv") {
+            var r = ShellExecTool.runIOSObjdump("objdump -d " + path)
+            r["command"] = command
+            r["hint"] = "otool -t 兼容层：走内置 objdump -d 的 __text 反汇编（ARM64 常见指令子集）。"
+            return r
+        }
+        if flags.contains("-l") {
+            var r = ShellExecTool.runIOSObjdump("objdump " + path)
+            r["command"] = command
+            r["hint"] = "otool -l 兼容层：走内置 objdump 的 load commands/段节输出。"
+            return r
+        }
+        return ShellExecTool.runIOSOtoolHeader(command: command, path: path)
+    }
+
+    /// otool -h：Mach-O/fat 头。fat 只列举切片，段与符号交给 objdump。
+    private static func runIOSOtoolHeader(command: String, path: String) -> [String: Any] {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            return ["command": command, "exit_code": 1, "stdout": "otool: \(path): cannot read", "ios_native": true]
+        }
+        let b = [UInt8](data)
+        func u32(_ o: Int) -> UInt32 {
+            guard o + 3 < b.count else { return 0 }
+            return UInt32(b[o]) | (UInt32(b[o+1])<<8) | (UInt32(b[o+2])<<16) | (UInt32(b[o+3])<<24)
+        }
+        func be32(_ o: Int) -> UInt32 {
+            guard o + 3 < b.count else { return 0 }
+            return (UInt32(b[o])<<24) | (UInt32(b[o+1])<<16) | (UInt32(b[o+2])<<8) | UInt32(b[o+3])
+        }
+        let magicLE = u32(0)
+        if magicLE == 0xBEBAFECA || magicLE == 0xBFBAFECA {   // FAT_MAGIC / FAT_MAGIC_64（按 LE 读出）
+            let n = Int(be32(4))
+            var out = ["Fat binary, \(n) slice(s):"]
+            for k in 0..<max(0, min(n, 20)) {
+                let o = 8 + k * 20
+                let ct = be32(o), cs = be32(o + 4), off = be32(o + 8), size = be32(o + 12)
+                out.append(String(format: "  cputype=%u cpusubtype=%u offset=%u size=%u", ct, cs, off, size))
+            }
+            out.append("提示：fat 头用 otool -h 看切片表；单个切片的段/符号用 `objdump <path>`（自动取 arm64 切片）。")
+            return ["command": command, "exit_code": 0, "stdout": out.joined(separator: "\n"), "ios_native": true]
+        }
+        guard magicLE == 0xFEEDFACF || magicLE == 0xFEEDFACE else {
+            return ["command": command, "exit_code": 1,
+                    "stdout": String(format: "otool: %@: is not a Mach-O file (magic 0x%08x)", path, magicLE),
+                    "ios_native": true]
+        }
+        let is64 = (magicLE == 0xFEEDFACF)
+        let cputype = u32(4), cpusubtype = u32(8), filetype = u32(12)
+        let ncmds = u32(16), sizeofcmds = u32(20), flags = u32(24)
+        let cpuName: String
+        switch cputype {
+        case 0x0100000C: cpuName = "arm64"
+        case 0x01000007: cpuName = "x86_64"
+        case 12: cpuName = "arm"
+        case 7: cpuName = "i386"
+        default: cpuName = "\(cputype)"
+        }
+        func filetypeName(_ t: UInt32) -> String {
+            switch t {
+            case 1: return "OBJECT"
+            case 2: return "EXECUTE"
+            case 3: return "FVMLIB"
+            case 4: return "CORE"
+            case 5: return "PRELOAD"
+            case 6: return "DYLIB"
+            case 7: return "DYLINKER"
+            case 8: return "BUNDLE"
+            case 9: return "DYLIB_STUB"
+            case 10: return "DSYM"
+            case 11: return "KEXT_BUNDLE"
+            default: return "\(t)"
+            }
+        }
+        var out = ["Mach header",
+                   "      magic  cputype cpusubtype  filetype ncmds sizeofcmds      flags"]
+        out.append(String(format: " 0x%08x %8u %10u %9u %5u %10u 0x%08x",
+                          magicLE, cputype, cpusubtype, filetype, ncmds, sizeofcmds, flags))
+        out.append("  → \(cpuName) / \(filetypeName(filetype)) / 64bit=\(is64 ? "yes" : "no")")
+        out.append("  段节/符号：`objdump \(path)`；依赖库：`otool -L \(path)`；反汇编：`objdump -d \(path)`。")
+        return ["command": command, "exit_code": 0, "stdout": out.joined(separator: "\n"), "ios_native": true]
+    }
+
+    /// otool -L：LC_LOAD_DYLIB / WEAK / REEXPORT / UPWARD / ID_DYLIB 依赖列表。
+    private static func runIOSOtoolDylibs(command: String, path: String) -> [String: Any] {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
+            return ["command": command, "exit_code": 1, "stdout": "otool: \(path): cannot read", "ios_native": true]
+        }
+        let b = [UInt8](data)
+        func u32(_ o: Int) -> UInt32 {
+            guard o + 3 < b.count else { return 0 }
+            return UInt32(b[o]) | (UInt32(b[o+1])<<8) | (UInt32(b[o+2])<<16) | (UInt32(b[o+3])<<24)
+        }
+        func be32(_ o: Int) -> UInt32 {
+            guard o + 3 < b.count else { return 0 }
+            return (UInt32(b[o])<<24) | (UInt32(b[o+1])<<16) | (UInt32(b[o+2])<<8) | UInt32(b[o+3])
+        }
+        var base = 0
+        let magicLE = u32(0)
+        if magicLE == 0xBEBAFECA || magicLE == 0xBFBAFECA {
+            let n = Int(be32(4))
+            for k in 0..<max(0, min(n, 20)) {
+                let o = 8 + k * 20
+                let ct = be32(o)
+                if ct == 0x0100000C { base = Int(be32(o + 8)); break }   // 优先 arm64 切片
+                if base == 0 { base = Int(be32(o + 8)) }
+            }
+        }
+        guard base + 32 <= b.count, u32(base) == 0xFEEDFACF || u32(base) == 0xFEEDFACE else {
+            return ["command": command, "exit_code": 1, "stdout": "otool: \(path): not a supported Mach-O header", "ios_native": true]
+        }
+        let ncmds = Int(u32(base + 16))
+        var off = base + 32
+        var out: [String] = []
+        for _ in 0..<min(ncmds, 4000) {
+            if off + 8 > b.count { break }
+            let c = u32(off), sz = Int(u32(off + 4))
+            if sz < 8 { break }
+            let isNameCmd = (c == 0xb || c == 0x80000018 || c == 0x8000001f || c == 0x80000023 || c == 0xd)
+            if isNameCmd, sz >= 12 {
+                let nameOff = Int(u32(off + 8))
+                var s = ""
+                var p = off + nameOff
+                while p < off + sz && p < b.count && b[p] != 0 { s += String(UnicodeScalar(b[p])); p += 1 }
+                if !s.isEmpty {
+                    let kind: String
+                    switch c {
+                    case 0xd: kind = "  (ID)"
+                    case 0x80000018: kind = "  (weak)"
+                    case 0x8000001f: kind = "  (re-export)"
+                    case 0x80000023: kind = "  (upward)"
+                    default: kind = ""
+                    }
+                    out.append(s + kind)
+                }
+            }
+            off += sz
+        }
+        if out.isEmpty {
+            return ["command": command, "exit_code": 0, "stdout": "otool: \(path): no dylib load commands (静态库/可执行文件无依赖)", "ios_native": true]
+        }
+        return ["command": command, "exit_code": 0, "stdout": "\(path):\n" + out.joined(separator: "\n"), "ios_native": true]
+    }
+
     /// v4.4.5: 原生 class-dump —— 直读 __TEXT,__objc_classname / __objc_methname，输出 OC 类与方法。
     /// 对砸壳/未砸壳二进制均可用（字符串明文存在于 Mach-O）。纯只读。
     /// 语法: class-dump [-l 限制条数] <path>
     private static func runIOSClassDump(_ command: String) -> [String: Any] {
-        let fm = FileManager.default
         let parts = command.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if let probe = ShellExecTool.nativeToolProbe(command, name: "class-dump", version: "1.0 (__objc_classname/__objc_methname)",
+                                                     usage: "class-dump [-l N] <path>") { return probe }
         var limit = 80
         var pathArg: String?
         var i = 1
@@ -2370,9 +2667,10 @@ final class ShellExecTool: MCPTool {
                     "stdout": "usage: class-dump [-l N] <path> — 输出 Objective-C 类与方法（__objc_classname/__objc_methname）。",
                     "ios_native": true]
         }
-        let path = ShellExecTool.normalizePath((raw as NSString).expandingTildeInPath)
-        guard fm.fileExists(atPath: path) else {
-            return ["command": command, "exit_code": 1, "stdout": "class-dump: \(path): No such file or directory", "ios_native": true]
+        guard let path = ShellExecTool.resolveExistingPath(raw) else {
+            return ["command": command, "exit_code": 1,
+                    "stdout": "class-dump: \(raw): No such file or directory（原路径、/rootfs 前缀与 roothide jbroot 前缀都已试过）",
+                    "ios_native": true]
         }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             return ["command": command, "exit_code": 1, "stdout": "class-dump: \(path): cannot read", "ios_native": true]
@@ -2574,8 +2872,9 @@ final class ShellExecTool: MCPTool {
     }
 
     private static func runIOSKfdDiag(_ command: String) -> [String: Any] {
-        let fm = FileManager.default
         let parts = command.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
+        if let probe = ShellExecTool.nativeToolProbe(command, name: "kfd_diag", version: "1.0 (LC_CODE_SIGNATURE 只读诊断)",
+                                                     usage: "kfd_diag <path>") { return probe }
         var pathArg: String?
         for a in parts.dropFirst() {
             if !a.hasPrefix("-") { pathArg = a; break }
@@ -2585,9 +2884,10 @@ final class ShellExecTool: MCPTool {
                     "stdout": "usage: kfd_diag <path> — 只读输出 Mach-O 的代码签名结构 (LC_CODE_SIGNATURE → superblob → CodeDirectory)。纯诊断，不注入。",
                     "ios_native": true]
         }
-        let path = ShellExecTool.normalizePath((raw as NSString).expandingTildeInPath)
-        guard fm.fileExists(atPath: path) else {
-            return ["command": command, "exit_code": 1, "stdout": "kfd_diag: \(path): No such file or directory", "ios_native": true]
+        guard let path = ShellExecTool.resolveExistingPath(raw) else {
+            return ["command": command, "exit_code": 1,
+                    "stdout": "kfd_diag: \(raw): No such file or directory（原路径、/rootfs 与 roothide jbroot 前缀都已试过）",
+                    "ios_native": true]
         }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             return ["command": command, "exit_code": 1, "stdout": "kfd_diag: \(path): cannot read", "ios_native": true]
@@ -2844,7 +3144,27 @@ final class ShellExecTool: MCPTool {
         }
         
         let pattern = positional[0].trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
-        let targets = positional.dropFirst().map { ShellExecTool.normalizePath(($0 as NSString).expandingTildeInPath) }
+        // v9.15：目标同样走统一路径解析（roothide 的 /usr/bin/x、/rootfs 前缀），
+        // 旧实现只 normalizePath，导致「ls 说有、grep 说没有」。
+        var targets: [String] = []
+        var missingTargets: [String] = []
+        for rt in positional.dropFirst().map({ ($0 as NSString).expandingTildeInPath }) {
+            if let hit = ShellExecTool.resolveExistingPath(rt) {
+                targets.append(hit)
+            } else {
+                missingTargets.append(rt)
+            }
+        }
+        if !missingTargets.isEmpty {
+            return [
+                "command": command,
+                "exit_code": 2,
+                "stdout": missingTargets.map {
+                    "grep: \($0): No such file or directory（原路径、/rootfs 与 roothide jbroot 前缀都已试过）"
+                }.joined(separator: "\n"),
+                "ios_native": true
+            ]
+        }
         
         // 收集要搜索的文件 (支持 -r 递归目录）
         var files: [String] = []
@@ -2903,6 +3223,9 @@ final class ShellExecTool: MCPTool {
         }
         let patternBytes = Data(pattern.utf8)
         let patternBytesLower = Data(pattern.lowercased().utf8)
+        // 空模式（`grep -c "" file`）= 匹配每一行（BSD/GNU 一致）；Data.range(of: 空 Data) 会返回 nil，
+        // 自检把它读成"文件不可读"。这里显式处理。
+        let matchAll = pattern.isEmpty
 
         var matchedFiles: [String] = []
         var matchedLines: [String] = []
@@ -2920,7 +3243,9 @@ final class ShellExecTool: MCPTool {
             var fileCount = 0
             for (idx, line) in byteLines.enumerated() {
                 let found: Bool
-                if useRegex {
+                if matchAll {
+                    found = true
+                } else if useRegex {
                     let text = printableLine(line)
                     found = ignoreCase ? text.range(of: pattern, options: [.caseInsensitive, .regularExpression]) != nil
                                        : text.range(of: pattern, options: .regularExpression) != nil
@@ -3513,60 +3838,71 @@ final class ShellExecTool: MCPTool {
     }
     
     /// v3.1.32: iOS 原生 hexdump 命令——二进制十六进制查看
+    /// v9.15: 参数解析重写（`-s`/`-n` 的值带 `0x`/`+` 也认；`-C`/`-v` 这类无参开关不再被当成
+    /// 文件路径——旧实现 `hexdump -C -s 0x10 f` 会把 `0x10` 当文件），输出按 hexdump -C 惯例对齐。
     private static func runIOSHexdump(_ command: String) -> [String: Any] {
-        let fm = FileManager.default
         let parts = command.components(separatedBy: .whitespaces).filter { !$0.isEmpty }
-        
-        guard parts.count >= 2 else {
-            return ["command": command, "exit_code": 1, "stdout": "Usage: hexdump -C <file>", "ios_native": true]
+
+        func parseNumber(_ s: String) -> Int? {
+            var t = s.trimmingCharacters(in: CharacterSet(charactersIn: "'\""))
+            if t.hasPrefix("+") { t.removeFirst() }
+            if t.hasPrefix("0x") || t.hasPrefix("0X") { return Int(t.dropFirst(2), radix: 16) }
+            return Int(t)
         }
-        
+
         var offset = 0
         var length = 256
         var filePath = ""
-        
-        for i in 1..<parts.count {
-            if parts[i] == "-s", i + 1 < parts.count {
-                offset = Int(parts[i+1]) ?? 0
-            } else if parts[i] == "-n", i + 1 < parts.count {
-                length = Int(parts[i+1]) ?? 256
-            } else if !parts[i].hasPrefix("-") {
-                filePath = parts[i]
+        var i = 1
+        while i < parts.count {
+            let a = parts[i]
+            if a == "-s", i + 1 < parts.count {
+                offset = max(0, parseNumber(parts[i + 1]) ?? 0)
+                i += 2
+                continue
             }
+            if a == "-n", i + 1 < parts.count {
+                length = max(0, parseNumber(parts[i + 1]) ?? 256)
+                i += 2
+                continue
+            }
+            if a.hasPrefix("-") { i += 1; continue }   // -C / -v / -x：统一按 -C 风格输出
+            if filePath.isEmpty { filePath = a }
+            i += 1
         }
-        
+
         guard !filePath.isEmpty else {
-            return ["command": command, "exit_code": 1, "stdout": "Usage: hexdump -C <file>", "ios_native": true]
+            return ["command": command, "exit_code": 1,
+                    "stdout": "Usage: hexdump [-C] [-s offset] [-n length] <file>", "ios_native": true]
         }
-        
-        let path = ShellExecTool.normalizePath((filePath as NSString).expandingTildeInPath)
+        guard let path = ShellExecTool.resolveExistingPath(filePath) else {
+            return ["command": command, "exit_code": 1,
+                    "stdout": "hexdump: \(filePath): No such file or directory（原路径、/rootfs 与 roothide jbroot 前缀都已试过）",
+                    "ios_native": true]
+        }
         do {
             let data = try Data(contentsOf: URL(fileURLWithPath: path))
             let start = min(offset, data.count)
             let end = min(start + length, data.count)
-            let subdata = data[start..<end]
-            
+            let bytes = [UInt8](data[start..<end])
+
             var lines: [String] = []
-            subdata.withUnsafeBytes { bytes in
-                let ptr = bytes.bindMemory(to: UInt8.self).baseAddress!
-                for i in stride(from: 0, to: subdata.count, by: 16) {
-                    let addr = String(format: "%08x", start + i)
-                    var hex = ""
-                    var ascii = ""
-                    for j in 0..<16 {
-                        if i + j < subdata.count {
-                            let b = ptr[i + j]
-                            hex += String(format: "%02x ", b)
-                            ascii += (b >= 32 && b < 127) ? String(UnicodeScalar(b)) : "."
-                        } else {
-                            hex += "   "
-                            ascii += " "
-                        }
+            for i in stride(from: 0, to: bytes.count, by: 16) {
+                let chunk = min(16, bytes.count - i)
+                var hex = ""
+                var ascii = ""
+                for j in 0..<16 {
+                    hex += j < chunk ? String(format: "%02x", bytes[i + j]) : "  "
+                    hex += " "
+                    if j == 7 { hex += " " }
+                    if j < chunk {
+                        let b = bytes[i + j]
+                        ascii += (b >= 32 && b < 127) ? String(UnicodeScalar(b)) : "."
                     }
-                    lines.append("\(addr)  \(hex) |\(ascii)|")
                 }
+                lines.append(String(format: "%08x  ", start + i) + hex + " |" + ascii + "|")
             }
-            
+
             return [
                 "command": command,
                 "exit_code": 0,
@@ -3574,7 +3910,7 @@ final class ShellExecTool: MCPTool {
                 "ios_native": true
             ]
         } catch {
-            return ["command": command, "exit_code": 1, "stdout": "hexdump failed: \(error.localizedDescription)", "ios_native": true]
+            return ["command": command, "exit_code": 1, "stdout": "hexdump: \(path): \(error.localizedDescription)", "ios_native": true]
         }
     }
     
