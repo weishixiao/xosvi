@@ -381,7 +381,9 @@ final class InjectionManager {
         // 随即 SIGBUS（实测 exit=138，崩溃报告 chown-*.ips：EXC_BAD_ACCESS / KERN_PROTECTION_FAILURE）。
         // bootstrap 里同名工具是原生实现、不链 libiosexec，所以 root 通道一律先换过去。
         let exec = sanitizedRootExecutable(bin, name: nil)
-        let cmd = ([exec] + args).map(shellQuote).joined(separator: " ")
+        // v10.0.2：`</dev/null` 是给交互式工具（insert_dylib 的 y/n 提问）兜底：
+        // sh 里 stdin 若继承到一个永不 EOF 的 fd，它会一直等；接 /dev/null 立刻得到 EOF。
+        let cmd = (([exec] + args).map(shellQuote).joined(separator: " ")) + " </dev/null"
         let res = XosviXPC.helper("xosvi-build",
                                   args: ["--exec", "/private/var/mobile", cmd],
                                   timeout: Int(min(max(timeout, 1), 120)))
@@ -727,6 +729,12 @@ final class InjectionManager {
         posix_spawn_file_actions_adddup2(&fileActions, errPipe[1], 2)
         posix_spawn_file_actions_addclose(&fileActions, outPipe[0])
         posix_spawn_file_actions_addclose(&fileActions, errPipe[0])
+        // v10.0.2：stdin 一律接 /dev/null。
+        // 内置 insert_dylib / optool 这类工具遇到「已存在载入命令」会交互提问，
+        // 子进程若继承了 App 的 fd 0（不是终端），读到的永远是 EOF，它不会退出而是**无限**
+        // 打印 "Please enter y or n:"（实测 8s 吐 420MB）。接 /dev/null 让它立刻拿到 EOF，
+        // 至少不会把调用方的读取循环拖死。
+        posix_spawn_file_actions_addopen(&fileActions, 0, "/dev/null", O_RDONLY, 0)
 
         var env: [UnsafeMutablePointer<CChar>?] = [
             strdup("PATH=/usr/bin:/bin:/usr/sbin:/sbin"),
@@ -748,25 +756,40 @@ final class InjectionManager {
             timer.setEventHandler { timedOut = true; kill(pid, SIGKILL) }
             timer.resume()
 
-            var buf = [UInt8](repeating: 0, count: 4096)
+            // v10.0.2：输出上限。子进程刷屏（insert_dylib 的提问循环）时，无上限读取会把
+            // 整个 App 撑到 OOM 被杀——现场 12:28:48 / 13:04:25 两次崩溃就是这么来的。
+            // 到上限就 SIGKILL 并继续把管道读空，保证不阻塞。
+            let outputCap = 2 * 1024 * 1024
+            var capped = false
+            var buf = [UInt8](repeating: 0, count: 8192)
             while true {
                 let n = read(outPipe[0], &buf, buf.count)
                 if n <= 0 { break }
-                out.append(buf, count: n)
+                if out.count < outputCap {
+                    out.append(buf, count: n)
+                } else if !capped {
+                    capped = true; kill(pid, SIGKILL)
+                }
             }
-            var buf2 = [UInt8](repeating: 0, count: 4096)
+            var buf2 = [UInt8](repeating: 0, count: 8192)
             while true {
                 let n = read(errPipe[0], &buf2, buf2.count)
                 if n <= 0 { break }
-                out.append(buf2, count: n)
+                if out.count < outputCap {
+                    out.append(buf2, count: n)
+                } else if !capped {
+                    capped = true; kill(pid, SIGKILL)
+                }
             }
             var st: Int32 = 0
             waitpid(pid, &st, 0)
             timer.cancel()
             close(outPipe[0]); close(errPipe[0])
             if timedOut { return (-2, "timeout after \(Int(timeout))s (SIGKILL)") }
+            var text = String(data: out, encoding: .utf8) ?? ""
+            if capped { text += "\n[输出超过 2MB，已 SIGKILL]" }
             let code = Int32((UInt32(st) >> 8) & 0xff)  // WEXITSTATUS
-            return (code, String(data: out, encoding: .utf8) ?? "")
+            return (code, text)
         }
         close(outPipe[0]); close(errPipe[0])
         return (status, "posix_spawn failed (\(status))")
@@ -865,6 +888,9 @@ final class InjectionManager {
         posix_spawn_file_actions_adddup2(&fileActions, errPipe[1], STDERR_FILENO)
         posix_spawn_file_actions_addclose(&fileActions, outPipe[1])
         posix_spawn_file_actions_addclose(&fileActions, errPipe[1])
+        // v10.0.2：同 spawn——stdin 接 /dev/null，避免 insert_dylib 这类交互工具的提问循环
+        // 在 EOF 上无限刷屏（实测 8s 420MB），把调用方拖死。
+        posix_spawn_file_actions_addopen(&fileActions, 0, "/dev/null", O_RDONLY, 0)
         defer { posix_spawn_file_actions_destroy(&fileActions) }
 
         var attr: posix_spawnattr_t?
@@ -937,6 +963,9 @@ final class InjectionManager {
         var stdoutStr = ""
         var stderrStr = ""
         var stdoutData = Data()   // v3.0.42：原始字节 (二进制安全，bplist 等）
+        // v10.0.2：输出上限（见 spawn 内同一防护）。超限即 SIGKILL 并停止累积。
+        let outputCap = 2 * 1024 * 1024
+        var outputCapped = false
         let outputLock = NSLock()
         let bufsiz = 65536
 
@@ -959,8 +988,12 @@ final class InjectionManager {
             }
             let arr = Array(UnsafeBufferPointer(start: buf, count: n))
             outputLock.lock()
-            stdoutData.append(contentsOf: arr)
-            stdoutStr += String(decoding: arr, as: UTF8.self)
+            if stdoutData.count < outputCap {
+                stdoutData.append(contentsOf: arr)
+                stdoutStr += String(decoding: arr, as: UTF8.self)
+            } else if !outputCapped {
+                outputCapped = true; kill(pid, SIGKILL)
+            }
             outputLock.unlock()
         }
         errSource.setEventHandler {
@@ -975,7 +1008,13 @@ final class InjectionManager {
             let arr = Array(UnsafeBufferPointer(start: buf, count: n)) + [UInt8(0)]
             arr.withUnsafeBufferPointer { ptr in
                 let s = String(cString: unsafeBitCast(ptr.baseAddress, to: UnsafePointer<CChar>.self))
-                outputLock.lock(); stderrStr += s; outputLock.unlock()
+                outputLock.lock()
+                if stderrStr.utf8.count < outputCap {
+                    stderrStr += s
+                } else if !outputCapped {
+                    outputCapped = true; kill(pid, SIGKILL)
+                }
+                outputLock.unlock()
             }
         }
         outSource.resume()
@@ -1008,9 +1047,11 @@ final class InjectionManager {
                     let chunk = Array(buf.prefix(n))
                     outputLock.lock()
                     if fd == outPipe[0] {
-                        stdoutData.append(contentsOf: chunk)
-                        stdoutStr += String(decoding: chunk, as: UTF8.self)
-                    } else {
+                        if stdoutData.count < outputCap {
+                            stdoutData.append(contentsOf: chunk)
+                            stdoutStr += String(decoding: chunk, as: UTF8.self)
+                        }
+                    } else if stderrStr.utf8.count < outputCap {
                         stderrStr += String(decoding: chunk, as: UTF8.self)
                     }
                     outputLock.unlock()
@@ -1026,6 +1067,9 @@ final class InjectionManager {
         // v2.9.126：signal/exit 区分 (对齐 TrollFools WIFSIGNALED/WTERMSIG）
         var signaled = false
         var signal = Int32(0)
+        if outputCapped, stderrStr.count < 4096 {
+            stderrStr += "\n[输出超过 2MB，已 SIGKILL]"
+        }
         if timedOut {
             return SpawnResult(code: -2, stdout: stdoutStr, stderr: stderrStr, timedOut: true,
                                signaled: false, signal: 0,
@@ -2813,14 +2857,36 @@ final class InjectionManager {
         }
         let mainBin = destApp + "/" + execName
 
-        // 4. 用 insert_dylib 修改主二进制 (添加 load command）
+        // 4. 用 insert_dylib 修改主二进制 (添加 load command)
+        //
+        // v10.0.2：这里原来只传 `--inplace <dylib> <bin>`，没有 `--all-yes`。
+        // insert_dylib 有两种必须应答的提问：
+        //   · "LC_CODE_SIGNATURE load command found. Remove it? [y/n]" —— 真 App 基本必中；
+        //   · "Binary already contains a load command for that dylib. Continue anyway? [y/n]" —— 重复注入。
+        // 没有 --all-yes 时它去读 stdin；App/守护里 spawn 出的子进程 fd 0 不是终端，
+        // read() 立刻 EOF，而它的循环**不会退出**，只会无限打印 "Please enter y or n:"
+        // （本机实测：8 秒写出 420MB，只能 SIGKILL）。现场表现就是注入卡死几分钟 +
+        // Xosvi 因收集输出把内存吃爆而崩溃。
+        // 静态重打包是对**副本**动刀，多一条/覆盖一条载入命令都无害；
+        // 旧签名在这里直接剥掉（步骤 5 本来就要删 _CodeSignature，TrollStore 重装时整体重签），
+        // 所以用 --strip-codesig 而不是留下一个「已不在末尾」的死签名。
         let dylibLoadPath = "@executable_path/Frameworks/" + dylibName
         guard let insertDylib = binaryPath("insert_dylib") else {
             return (false, "insert_dylib not bundled")
         }
-        let (insRc, insOut) = spawnRoot(insertDylib, args: ["--inplace", dylibLoadPath, mainBin], timeout: 30)
-        guard insRc == 0 else {
-            return (false, "insert_dylib failed: \(insOut.prefix(300))")
+        let alreadyLoaded = MachOAnalyzer.analyze(mainBin)?.dylibs.contains(dylibLoadPath) == true
+        if !alreadyLoaded {
+            let (insRc, insOut) = spawnRoot(insertDylib,
+                args: ["--inplace", "--overwrite", "--strip-codesig", "--all-yes", dylibLoadPath, mainBin],
+                timeout: 60)
+            let alreadyThere = insOut.localizedCaseInsensitiveContains("already contains a load command")
+            guard insRc == 0 || alreadyThere else {
+                return (false, "insert_dylib failed(rc=\(insRc)): \(insOut.prefix(300))")
+            }
+            // 写没写进去不靠退出码猜：能解析就回读一遍载入命令
+            if let post = MachOAnalyzer.analyze(mainBin), !post.dylibs.contains(dylibLoadPath) {
+                return (false, "insert_dylib 返回成功但载入命令未写入: \(mainBin)")
+            }
         }
 
         // 5. 删除旧签名 (TrollStore 安装时会重新签名）
