@@ -1212,7 +1212,9 @@ final class InjectionManager {
     private static let substrateFwkName = "CydiaSubstrate.framework"
     private static let substrateName = "CydiaSubstrate"
     /// v10.0.3：内置代理资产名——inPlaceEnable 以它区分内置 agent 与用户插件。
-    static let agentAssetName = "ControlAgent.dylib"
+    /// 存小写形式：比较对象是 sourceFileName.lowercased()，大写常量会永不匹配
+    ///（isUserPlugin 恒为 true，等于没修；b87 编译错误修完后顺带修正）。
+    static let agentAssetName = "controlagent.dylib"
     static let ignoredRuntimeNames: Set<String> = [
         "cydiasubstrate", "cydiasubstrate.framework", "ellekit", "ellekit.framework",
         "libsubstrate.dylib", "libsubstitute.dylib", "libellekit.dylib",
@@ -2952,11 +2954,11 @@ final class InjectionManager {
             candidates.append((jb + "/usr/bin/trollstorehelper", ["install", ipaPath], "jbroot-trollstorehelper"))
         }
         candidates.append(contentsOf: [
-            ("/var/jb/usr/bin/appinst", ["install", ipaPath], "jb-appinst"),
-            ("/var/jb/usr/bin/jbctl", ["install", ipaPath], "jbctl"),
-            ("/var/jb/usr/bin/trollstorehelper", ["install", ipaPath], "jb-trollstorehelper"),
-            ("/usr/bin/appinst", ["install", ipaPath], "root-appinst"),
-            ("/var/usr/bin/trollstorehelper", ["install", ipaPath], "trollstorehelper"),
+            (path: "/var/jb/usr/bin/appinst", args: ["install", ipaPath], label: "jb-appinst"),
+            (path: "/var/jb/usr/bin/jbctl", args: ["install", ipaPath], label: "jbctl"),
+            (path: "/var/jb/usr/bin/trollstorehelper", args: ["install", ipaPath], label: "jb-trollstorehelper"),
+            (path: "/usr/bin/appinst", args: ["install", ipaPath], label: "root-appinst"),
+            (path: "/var/usr/bin/trollstorehelper", args: ["install", ipaPath], label: "trollstorehelper"),
         ])
         for c in candidates {
             guard fm.isExecutableFile(atPath: c.path) else { continue }
