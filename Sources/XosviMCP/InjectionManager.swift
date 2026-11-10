@@ -1211,6 +1211,8 @@ final class InjectionManager {
 
     private static let substrateFwkName = "CydiaSubstrate.framework"
     private static let substrateName = "CydiaSubstrate"
+    /// v10.0.3：内置代理资产名——inPlaceEnable 以它区分内置 agent 与用户插件。
+    static let agentAssetName = "ControlAgent.dylib"
     static let ignoredRuntimeNames: Set<String> = [
         "cydiasubstrate", "cydiasubstrate.framework", "ellekit", "ellekit.framework",
         "libsubstrate.dylib", "libsubstitute.dylib", "libellekit.dylib",
@@ -1819,7 +1821,14 @@ final class InjectionManager {
         // 注入目标在 Frameworks/ 下 → dylib 也放 Frameworks + @rpath；
         // 兜底注入主二进制 → dylib 放 App 根 + @executable_path。
         let useFramework = targetMachO.hasPrefix(frameworksDirPath + "/")
+        // v10.0.3：内置 ControlAgent 不算用户插件。控制台「注入并打开」传的 dylibSourcePath
+        // 指向内置 tweaks/ControlAgent.dylib，旧判定只看 dylibSourcePath 是否为空，把它误当
+        // 用户插件 → A4 必走 prepareSubstrate()，而本仓从未内置 CydiaSubstrate.framework.zip，
+        // 于是原地注入在拷资产一步就抛 "CydiaSubstrate.framework.zip not bundled"，静态兜底
+        // 又因设备无安装器整体失败（audit 实录 2026-11-10 18:38）。TrollFools 语义：agent 无
+        // substrate 依赖，只有用户插件才需要 substrate 转发与拷入。
         let isUserPlugin = !(dylibSourcePath?.isEmpty ?? true)
+            && sourceFileName.lowercased() != Self.agentAssetName
         var injectNameMap: [String: String] = [:]
         for asset in preparedAssets {
             let name = (asset as NSString).lastPathComponent
@@ -2931,16 +2940,24 @@ final class InjectionManager {
     // MARK: - v8（R⑦/R⑪）：IPA 安装链（TrollStore / JB 双档）
     //
     // 17.1 + Relaxin 上 trollstorehelper 不存在，必须走 JB 侧 appinst/jbctl。
+    // v10.0.3：roothide 没有 /var/jb——bootstrap 藏在 jbroot（重启会改名），安装器路径用
+    // JBEnvironment.jbrootPath 运行期解析。jbctl 只收 deb（其二进制只见 install/deb 字样，
+    // 无 ipa），装 IPA 不列它；本机实测无 appinst/trollstorehelper 时如实失败，IPA 路径交用户。
     // 依次尝试，全部失败时把 IPA 路径交给用户手动安装（不静默失败）。
     func installIPA(_ ipaPath: String) -> (Bool, String) {
         let fm = FileManager.default
-        let candidates: [(path: String, args: [String], label: String)] = [
+        var candidates: [(path: String, args: [String], label: String)] = []
+        if let jb = JBEnvironment.jbrootPath, !jb.isEmpty {
+            candidates.append((jb + "/usr/bin/appinst", ["install", ipaPath], "jbroot-appinst"))
+            candidates.append((jb + "/usr/bin/trollstorehelper", ["install", ipaPath], "jbroot-trollstorehelper"))
+        }
+        candidates.append(contentsOf: [
             ("/var/jb/usr/bin/appinst", ["install", ipaPath], "jb-appinst"),
             ("/var/jb/usr/bin/jbctl", ["install", ipaPath], "jbctl"),
             ("/var/jb/usr/bin/trollstorehelper", ["install", ipaPath], "jb-trollstorehelper"),
             ("/usr/bin/appinst", ["install", ipaPath], "root-appinst"),
             ("/var/usr/bin/trollstorehelper", ["install", ipaPath], "trollstorehelper"),
-        ]
+        ])
         for c in candidates {
             guard fm.isExecutableFile(atPath: c.path) else { continue }
             let (rc, out) = spawnRoot(c.path, args: c.args, timeout: 240)

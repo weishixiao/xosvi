@@ -712,27 +712,13 @@ struct GuestFilesystemView: View {
 // MARK: - v9：环境页壳（文档「壳 + Pane」结构）
 
 struct EnvironmentView: View {
-    @Environment(\.presentationMode) private var presentationMode
-
     var body: some View {
         // 注意：本页由 SettingsView 的 NavigationStack push 进来，不能再套 CompatNav
         //（嵌套 NavigationStack 会导致返回按钮/侧滑失效）。
+        // v10.0.3：本页曾自带 chevron.left 自定义返回（Kelivo 移植壳遗留）——push 进
+        // 设置栈后系统返回箭头本来就有，左上角出现两个返回箭头。统一交给系统返回。
         EnvironmentPane()
             .navigationTitle("环境")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .navigationBarLeading) {
-                    Button {
-                        presentationMode.wrappedValue.dismiss()
-                    } label: {
-                        Image(systemName: "chevron.left")
-                            .font(.system(size: 17, weight: .semibold))
-                            .foregroundColor(.primary)
-                            .frame(width: 32, height: 32)
-                            .contentShape(Rectangle())
-                    }
-                    .accessibilityLabel(Text("返回"))
-                }
-            }
     }
 }
