@@ -280,6 +280,7 @@ enum L10n {
     "term_key_clear": ["zh": "清屏", "en": "Clear"],
     "term_key_paste": ["zh": "粘贴", "en": "Paste"],
     "term_key_root": ["zh": "su", "en": "su"],
+    "term_root_home_hint": ["zh": "iOS 没有 /root：root 用户的家目录是 /var/root（本机后端以 mobile 身份运行，无 root 权限）", "en": "iOS has no /root: root's home is /var/root (native backend runs as mobile, without root privileges)"],
     "term_spawn_failed": ["zh": "无法启动 shell：%@", "en": "Cannot start shell: %@"],
     "term_backend_alpine": ["zh": "Alpine 沙盒", "en": "Alpine sandbox"],
     "term_backend_ios": ["zh": "本机原生", "en": "iOS native"],

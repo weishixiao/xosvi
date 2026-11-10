@@ -296,8 +296,10 @@ struct TerminalPageView: View {
                     }
                 }
                 key(L10n.t("term_key_root")) {
-                    // 沙盒里默认就是 root，这里只是直接 cd 到 /root，方便对照
-                    input = "cd /root && id"
+                    // Alpine guest 默认就是 root：cd 到 /root 对照 uid=0。
+                    // v9.13.1：本机后端没有 /root（iOS 上 root 用户家目录是 /var/root），
+                    // 旧实现写死 /root，在本机后端必报 can't cd to /root —— 按后端填对应家目录。
+                    input = session?.backend == .ios ? "cd /var/root && id" : "cd /root && id"
                 }
             }
             .padding(.horizontal, 10)

@@ -433,7 +433,13 @@ final class TermSession: Identifiable, ObservableObject {
                 if res.exitCode == 0, out.hasPrefix("/") {
                     self.cwd = out
                 } else {
-                    self.append(L10n.t("term_cd_failed", original) + "\n", kind: .notice)
+                    if backend == .ios, original == "cd /root" {
+                        // v9.13.1：手敲 cd /root 在本机后端必败（iOS 无 /root），
+                        // 直接给出真实原因与正确路径，而不是一句「无法进入」。
+                        self.append(L10n.t("term_root_home_hint") + "\n", kind: .notice)
+                    } else {
+                        self.append(L10n.t("term_cd_failed", original) + "\n", kind: .notice)
+                    }
                 }
             }
         }
