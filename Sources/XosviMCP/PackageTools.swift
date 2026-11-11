@@ -12,10 +12,10 @@ import CLZMA
 final class PackageTool: MCPTool {
     let definition = ToolDefinition(
         name: "package",
-        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect / unpack / selftest (verify built-in decoders). Inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz/lzma/xz decoded in-process, bz2/zstd via bundled python3); ipa=zip(stored/deflate). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
+        summary: "Inspect & unpack .deb/.ipa packages. Commands: inspect / unpack / selftest (verify built-in decoders). Inspect (list members: deb→ar entries+control text+data.tar list; ipa→zip entries+main Info.plist path) / unpack (extract to workspace dir, read via artifact). Params: command, path, dest. Formats: deb=ar+tar(gz/lzma/xz decoded in-process, bz2/zstd via bundled python3); ipa=zip(stored/deflate); a .app/.appex directory=bundle anatomy (Info.plist fields, archs, cryptid, frameworks/plugins, sizes). Use for: see inside deb/ipa, list structure, read control/info, extract files. Required: command+path.",
         parameters: [
             "command": "inspect / unpack",
-            "path": "absolute path to .deb or .ipa",
+            "path": "absolute path to .deb or .ipa, or an unpacked .app/.appex directory (bundle anatomy)",
             "dest": "required for unpack — output directory (will be created)"
         ],
         verified: false, category: "package", prerequisites: [
@@ -54,6 +54,11 @@ final class PackageTool: MCPTool {
     // MARK: - Inspect
 
     private func inspect(_ path: String) throws -> [String: Any] {
+        // v7.18.0：目录 = 解包后的 .app / .appex，走 Apple bundle 解剖
+        var isDir: ObjCBool = false
+        if FileManager.default.fileExists(atPath: path, isDirectory: &isDir), isDir.boolValue {
+            return try BundleAnatomy.inspect(path)
+        }
         guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)) else {
             throw MCPError.failed("package: cannot read file: \(path)")
         }
