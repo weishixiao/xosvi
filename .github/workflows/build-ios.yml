@@ -43,6 +43,10 @@ on:
       - 'index.html'
       - 'sileo-featured.json'
       - 'CydiaIcon.png'
+      # 测试与 CI 自身改动不重打 108MB 包：解析层自检（tests/parse）在 ci.yml 里跑，
+      # 与 IPA 产物无关；只改这两类文件时没必要排一次 30–60 分钟的构建。
+      - 'tests/**'
+      - '.github/workflows/ci.yml'
   workflow_dispatch:
     # v6.5.9：显式声明 inputs —— App「触发线上编译」会带 {"inputs":{"tweak":<目录名>}}，
     # 若 workflow 未声明任何 input，GitHub 会直接返回 **422 Unexpected inputs provided**

@@ -16,6 +16,39 @@ python3 tests/contract/run_all.py
 
 破坏性变更（删工具 / 改必填参数 / 改子命令）必须运行 `dump_registry.py --out` 更新快照并提交。
 
+## L1.5 解析层自检（CI 必跑，无需设备）
+
+```bash
+# macOS（需要 swiftc + macOS SDK，因为用了 Compression）
+swiftc -O -o /tmp/parse_selftest \
+    Sources/XosviMCP/StaticAnalysisSupport.swift \
+    Sources/XosviMCP/BinaryForensicsTool.swift \
+    Sources/XosviMCP/CrashIPSTool.swift \
+    Sources/XosviMCP/BundleAnatomy.swift \
+    tests/parse/Stubs.swift tests/parse/main.swift
+/tmp/parse_selftest        # 任何断言失败退出码非 0
+```
+
+`tests/parse/` 覆盖 v7.18.0 移植进来的三套**手写字节解析**，它们在真机上只有在
+重新出包、装进 App、由模型真的调一次工具之后才会被执行，所以单独立一层：
+
+| 覆盖 | 夹具 | 断言要点 |
+|---|---|---|
+| `armor command:hardening` | 系统真 Mach-O（`/bin/ls`）+ 自检程序自身 | flags.pie / cryptid=0 / signed / 段数与 rwx 权限 / score 范围 / evidence 计数 |
+| `armor command:toolchain` | 同上 | 非 Go/Rust 目标要给 note，不能假装命中 |
+| `armor command:diff` | `/bin/ls` vs `/bin/cat` | added/removed 计数、sizes 与 delta、evidence 口径；二进制 vs 目录必须拒绝 |
+| `crash.ips command:parse` | 合成 `.ips`（JSON 头 + JSON 正文，含 faultingThread/usedImages/asi） | format=ips-json、exception/termination 透传、帧 image/offset/address/symbol、images_total |
+| `BundleAnatomy.inspect` | 合成 `.app`（Info.plist + 真 Mach-O 当主二进制 + Frameworks/PlugIns/Assets.car） | bundle 关键字段、主二进制签名与 uuid、frameworks/plugins/top_level 计数、缺 Info.plist → BAD_FORMAT |
+
+注意：
+
+- `tests/parse/Stubs.swift` 只是 `MCPCore` 里这四份源码实际用到的最小形状
+  （`MCPTool` / `ToolDefinition` / `MCPError` / `ToolAnnotations` / `ToolCachePolicy`）。
+  **解析源码是真文件**，没有拷贝；MCPCore 那边签名变了，这里编译会失败——
+  失败是可见的，不会变成假绿。
+- CI 里对应 job：`parse-selftest`（`macos-latest`，几分钟）。报错会镜像成
+  `::error title=parse-selftest…`，未登录也能在 run 页面看到。
+
 ## L2 设备内自检
 
 `debug.selftest`（Swift 工具，DEBUG 或设置页开关启用）在本机执行只读自检：

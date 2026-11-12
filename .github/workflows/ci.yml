@@ -88,6 +88,54 @@ jobs:
       - run: python3 scripts/check_braces.py
       - run: python3 scripts/check_tweak_braces.py
 
+  parse-selftest:
+    name: 静态解析自检（armor / crash.ips / bundle anatomy 真跑一遍）
+    # v7.18 系列：这三套解析都是手写字节解析（Mach-O load commands、.ips 头/正文、.app 目录），
+    # 本机没有 swiftc、真机 App 必须重新出包才能验证，所以「写完没人执行过」。
+    # 这个 job 在 macOS runner 上把它们真跑一遍：用系统自带的真 Mach-O 二进制、
+    # 合成的 .ips / .app 夹具，断言输出字段。不需要签名、不需要真机、不需要 iOS SDK。
+    # 为什么是 macOS 而不是 ubuntu：StaticAnalysisSupport 用了 Compression
+    # （COMPRESSION_ZLIB），Linux 的 Swift 没有这个模块。
+    # 打桩只覆盖 MCPCore 里最小的一块（见 tests/parse/Stubs.swift 头注释），
+    # 解析源码是**真文件**，不是拷贝。
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: swift 版本
+        run: swift --version
+
+      - name: 编译解析层（真源码 + 最小打桩）
+        run: |
+          RC=0
+          swiftc -O -o "$RUNNER_TEMP/parse_selftest" \
+            Sources/XosviMCP/StaticAnalysisSupport.swift \
+            Sources/XosviMCP/BinaryForensicsTool.swift \
+            Sources/XosviMCP/CrashIPSTool.swift \
+            Sources/XosviMCP/BundleAnatomy.swift \
+            tests/parse/Stubs.swift \
+            tests/parse/main.swift > "$RUNNER_TEMP/compile.log" 2>&1 || RC=$?
+          if [ "$RC" -ne 0 ]; then
+            sed -n '1,120p' "$RUNNER_TEMP/compile.log"
+            grep -E 'error: ' "$RUNNER_TEMP/compile.log" | sed -n '1,10p' | while IFS= read -r line; do
+              echo "::error title=parse-selftest-compile::$line"
+            done
+            exit 1
+          fi
+          echo "编译通过"
+
+      - name: 跑断言
+        run: |
+          RC=0
+          "$RUNNER_TEMP/parse_selftest" > "$RUNNER_TEMP/selftest.log" 2>&1 || RC=$?
+          sed -n '1,400p' "$RUNNER_TEMP/selftest.log"
+          if [ "$RC" -ne 0 ]; then
+            grep -E 'FAIL' "$RUNNER_TEMP/selftest.log" | sed -n '1,10p' | while IFS= read -r line; do
+              echo "::error title=parse-selftest::$line"
+            done
+            exit 1
+          fi
+
   ios-build:
     name: iOS 构建（手动触发）
     if: github.event_name == 'workflow_dispatch'
