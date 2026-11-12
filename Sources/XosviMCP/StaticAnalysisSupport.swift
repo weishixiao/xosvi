@@ -121,7 +121,11 @@ struct RawMachO {
             fatChosen = idx
             sliceOff = arches[idx].off
             sliceSize = arches[idx].size
-        } else if beMagic != 0xfeedface && beMagic != 0xfeedfacf {
+        // beMagic 是「按大端读前 4 字节」，所以大小端都会被读成不同值，四种都要认：
+        //   小端文件（iOS / macOS 常态）字节是 CF FA ED FE / CE FA ED FE → 读成 0xcffaedfe / 0xcefaedfe
+        //   大端文件（老 PowerPC、某些固件）字节是 FE ED FA CF / CE → 读成 0xfeedfacf / 0xfeedface
+        } else if beMagic != 0xfeedface && beMagic != 0xfeedfacf
+                    && beMagic != 0xcefaedfe && beMagic != 0xcffaedfe {
             throw MCPError.invalidParams(
                 "不是 Mach-O 文件: \(path)（magic=0x\(String(beMagic, radix: 16))）。"
                 + "常见原因：这是脚本/文本/压缩包，或文件被截断")
