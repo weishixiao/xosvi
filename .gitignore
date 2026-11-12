@@ -24,3 +24,10 @@ __pycache__/
 
 # 本机改前备份（不含解析后的 jbroot 绝对路径，也不入库）
 .runtime/
+
+# v10.2：OpenMinis 参考源（第三方源码，仅供本地对照与方案文档引用，不入库）
+tests/loopguard/om/
+tests/loopguard/fetch_tmp
+tests/loopguard/fetch_tmp.m
+tests/loopguard/paths.txt
+tests/loopguard/tree.json

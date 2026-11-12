@@ -124,3 +124,17 @@ v9.9 批次顺带修掉的编译期风险：
 - `ModelQuickSwitch.swift` / `RemoteTerminalView.swift`：`autocapitalization` 已弃用，改回 `textInputAutocapitalization`（SDK 里 iOS 15.0 起可用）。
 - `RemoteAccessView.swift` / `SettingsView.swift`：`ssh.host` → `ssh_host`，与 `SSHSettingsView` 写入的键一致（否则卡片永远显示「未配置」）。
 
+
+## 底座 UI 仿 OpenMinis（v10.2，2026-11-12）
+
+参考源：`tests/loopguard/om/`（OpenMinis iOS 端的 ChatColors / ComposerSurface / SidebarSurfaces /
+SessionRow / ContentView+Layout）。方案与调研见 `docs/plan/08-base-ui-minis.md`。
+
+| 文件 | 变更 | 验证 |
+|---|---|---|
+| `Sources/XosviMCP/XDesign.swift` | 新增底座设计层：`XColor`（全语义色，角色命名）/ `XRadius` / `XMetric` / `XType.rowTitle·rowSubtitle·rowMeta·groupHeader` / `xSurface()` / `xComposerSurface()` / `xFloatCircle()` / `XAvatar` / `XSearchField` / `XFloatingActionButton`。填充一律画在形状内且不 `.blur`；`glassEffect` 因 SDK 18.5 无该符号暂不实现 | 括号配平 + 顶层重名 |
+| `Sources/XosviMCP/DrawerConversationRow.swift` | 行按 Minis SessionRow 重排：44 头像 + 16/14 两行 + 13pt 相对时间，行高 50→66；行底 `XColor.page`（不透明盖住滑出的红键）+ 选中 `XColor.fill`，圆角 `XRadius.row`；滑动删除与 `swipedId` 契约不变 | 同上 |
+| `Sources/XosviMCP/RootView.swift` | 抽屉底色→`XColor.page`；搜索框→`XSearchField`（36 高/12 圆角）；分组标题→`XType.groupHeader`；底栏→`xSurface(radius: XRadius.sheet)`；行调用点补 `subtitle`（末条消息预览）/ `meta`（相对时间），新增 `previewText` / `rowTime` | 同上 |
+
+本地 sanity（无 swiftc）：`tests/loopguard/swift_braces.c` → checked 194 files, mismatches=0；
+顶层类型重名扫描 → 327 个声明无 DUP。**Swift 类型检查仍需 CI**（`swiftc -parse` 作业只查语法）。

@@ -163,7 +163,7 @@ struct ConversationDrawerView: View {
             conversationList
             bottomWorkbench
         }
-        .background(Color(uiColor: .systemGroupedBackground))   // 与设置页/二级页同一底色
+        .background(XColor.page)   // 与设置页/二级页同一底色（v10.2：走底座令牌）
         .onAppear(perform: refreshReadiness)
     }
 
@@ -186,7 +186,7 @@ struct ConversationDrawerView: View {
                 }) {
                     Image(systemName: "square.and.pencil")
                         .font(.system(size: 19, weight: .medium))
-                        .foregroundColor(.primary)
+                        .foregroundColor(XColor.text)
                         .frame(width: 36, height: 36)
                         .contentShape(Rectangle())
                 }
@@ -208,25 +208,10 @@ struct ConversationDrawerView: View {
         UIApplication.shared.windows.first?.safeAreaInsets.bottom ?? 0
     }
 
+    /// v10.2：搜索框改用底座令牌（Minis 侧栏同款：36 高 / 12 圆角 / 次级填充），
+    /// 页面里不再手写 HStack + Capsule。
     private var searchBar: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .foregroundColor(.secondary)
-                .font(XType.note)
-            TextField(L10n.t("drawer_search"), text: $searchText)
-                .font(XType.body)
-            if !searchText.isEmpty {
-                Button(action: { searchText = "" }) {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundColor(.secondary)
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .frame(height: 44)
-        // 胶囊形，填充用系统卡片色（深色模式自适应）
-        .background(Capsule(style: .continuous)
-            .fill(Color(uiColor: .secondarySystemGroupedBackground)))
+        XSearchField(text: $searchText, placeholder: L10n.t("drawer_search"))
     }
 
     private var countLabel: some View {
@@ -254,17 +239,18 @@ struct ConversationDrawerView: View {
                     // 分组标题单独成块，滚动时不会和行混在一起
                     VStack(alignment: .leading, spacing: 0) {
                         Text(group.key)
-                            .font(XType.section)
-                            .fontWeight(.medium)
-                            .foregroundColor(.secondary)
-                            .padding(.horizontal, 16)
+                            .font(XType.groupHeader)
+                            .foregroundColor(XColor.subtext)
+                            .padding(.horizontal, XMetric.gutter)
                             .padding(.top, 14)
-                            .padding(.bottom, 4)
+                            .padding(.bottom, 2)
 
                         VStack(alignment: .leading, spacing: 2) {
                             ForEach(group.items) { conv in
                                 DrawerConversationRow(
                                     title: conv.title,
+                                    subtitle: Self.previewText(conv),
+                                    meta: Self.rowTime(conv.updatedAt),
                                     selected: store.selectedId == conv.id,
                                     deleteTitle: L10n.t("drawer_delete"),
                                     reveal: swipeReveal,
@@ -321,6 +307,34 @@ struct ConversationDrawerView: View {
         return f.string(from: d)
     }
 
+    /// v10.2：行内预览——取最后一条有正文的消息，压平换行（Minis SessionRow 的 subtitle）
+    static func previewText(_ conv: ChatConversation) -> String {
+        for msg in conv.messages.reversed() {
+            let flat = msg.content
+                .replacingOccurrences(of: "\n", with: " ")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !flat.isEmpty {
+                return flat.count > 60 ? String(flat.prefix(60)) + "…" : flat
+            }
+        }
+        return "还没有消息"
+    }
+
+    /// v10.2：尾部相对时间（Minis SessionRow 的 relativeDate）——今天只给时刻，
+    /// 昨天给「昨天」，更早给「M月d日」。分组标题已经给了大粒度，这里只做细分。
+    static func rowTime(_ d: Date) -> String {
+        let cal = Calendar.current
+        if cal.isDateInToday(d) {
+            let f = DateFormatter()
+            f.dateFormat = "HH:mm"
+            return f.string(from: d)
+        }
+        if cal.isDateInYesterday(d) { return "昨天" }
+        let f = DateFormatter()
+        f.dateFormat = "M月d日"
+        return f.string(from: d)
+    }
+
     private func deleteSingle(_ id: UUID) {
         guard let idx = store.conversations.firstIndex(where: { $0.id == id }) else { return }
         store.delete(at: IndexSet(integer: idx))
@@ -374,26 +388,21 @@ struct ConversationDrawerView: View {
             }) {
                 Image(systemName: "gearshape.fill")
                     .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(.primary)
+                    .foregroundColor(XColor.text)
                     .frame(width: 52, height: 52)
-                    .background(Color(uiColor: .tertiarySystemFill))
-                    .cornerRadius(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: XRadius.row, style: .continuous)
+                            .fill(XColor.fill)
+                    )
                     .contentShape(Rectangle())
             }
             Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(Color(uiColor: .systemBackground))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 20, style: .continuous)
-                        .stroke(Color(uiColor: .separator).opacity(0.6), lineWidth: 0.8)
-                )
-                .shadow(color: .black.opacity(0.06), radius: 8, x: 0, y: 2)
-        )
-        .padding(.horizontal, 16)
+        // v10.2：底栏改用底座面修饰器（Minis 的 surface 三件套之一）
+        .xSurface(radius: XRadius.sheet, fill: XColor.card, stroke: XColor.hairline)
+        .padding(.horizontal, XMetric.gutter)
         .padding(.bottom, max(bottomSafeArea, 12))
     }
 
