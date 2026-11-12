@@ -72,7 +72,7 @@ enum ConsoleErrorDigest {
             out.append("")
             out.append(contentsOf: describe(row, index: i + 1))
         }
-        let missing = stringRows(list["missing_dirs"])
+        let missing = stringRows(list["missing_dirs"]) ?? []
         if !missing.isEmpty {
             out.append("")
             out.append("没找到的目录：" + missing.joined(separator: "、"))
