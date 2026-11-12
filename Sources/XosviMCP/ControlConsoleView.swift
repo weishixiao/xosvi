@@ -61,6 +61,12 @@ struct ControlConsoleView: View {
     @State private var lastFailed = false
     @State private var toast: String?
 
+    // 抓报错（v10.x）
+    @State private var collectingErrors = false
+    @State private var errorDigest = ""
+    @State private var showDigest = false
+    @State private var digestNote = ""
+
     var body: some View {
         List {
             // v10：页首大标题卡（与「环境」页同一套排版）
@@ -97,6 +103,9 @@ struct ControlConsoleView: View {
                 autoChecksLeft = 0
                 statusText = "未注入（点「注入并打开」）"
             }
+        }
+        .sheet(isPresented: $showDigest) {
+            digestSheet
         }
         .overlay(alignment: .bottom) {
             if let t = toast {
@@ -191,11 +200,32 @@ struct ControlConsoleView: View {
                 }
             }
             .buttonStyle(PlainButtonStyle())
-            .disabled(busy)
+            .disabled(collectingErrors || busy)
+
+            Button {
+                collectErrorDigest()
+            } label: {
+                HStack(spacing: 10) {
+                    if collectingErrors {
+                        ProgressView().scaleEffect(0.7).frame(width: 22)
+                    } else {
+                        Image(systemName: "exclamationmark.bubble").frame(width: 22)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(collectingErrors ? "抓报错中…" : "抓报错信息")
+                            .font(.subheadline).foregroundColor(.primary)
+                        Text(digestHint).font(.system(size: 11.5)).foregroundColor(.secondary).lineLimit(2)
+                    }
+                    Spacer()
+                    Image(systemName: "doc.on.doc").font(XType.note).foregroundColor(.secondary)
+                }
+            }
+            .buttonStyle(PlainButtonStyle())
+            .disabled(collectingErrors || busy)
         } header: {
             sectionHeader("目标", "iphone.and.arrow.forward")
         } footer: {
-            Text("ControlAgent 注入到目标 App 后，App 需在前台运行约 1.5 秒才能被读到界面。点按 / 滑动在多条路径可用时优先走 HID，不依赖注入。")
+            Text("ControlAgent 注入到目标 App 后，App 需在前台运行约 1.5 秒才能被读到界面。点按 / 滑动在多条路径可用时优先走 HID，不依赖注入。连不上时先点「抓报错信息」：把本次失败原因和目标 App 最近的崩溃报告并成一段可复制文本。")
                 .font(XType.section)
         }
     }
@@ -645,6 +675,68 @@ struct ControlConsoleView: View {
                 }
             }
         }
+    }
+
+    // MARK: - 抓报错
+
+    private var digestHint: String {
+        if !digestNote.isEmpty { return digestNote }
+        if collectingErrors { return "正在读崩溃报告…" }
+        return "注入失败 / 连不上时：拉本次失败原因 + 目标 App 最近崩溃报告"
+    }
+
+    /// v10.x：把「为什么失败」变成能复制走的东西——状态行、上次失败原文、最近崩溃报告。
+    /// 只读 crash.ips，不注入、不 respring、不改目标 App。
+    private func collectErrorDigest() {
+        guard !collectingErrors else { return }
+        collectingErrors = true
+        digestNote = ""
+        // 主线程先取好，后台线程不去读 @State
+        let bid = bundleId
+        let name = appName
+        let status = statusText
+        let action = lastAction
+        let failureRaw = lastFailed ? lastResult : nil
+        DispatchQueue.global(qos: .userInitiated).async {
+            let text = ConsoleErrorDigest.build(bundleId: bid, appName: name,
+                                                statusLine: status,
+                                                lastAction: action,
+                                                lastFailureRaw: failureRaw)
+            DispatchQueue.main.async {
+                collectingErrors = false
+                errorDigest = text
+                digestNote = "已生成，可整段复制"
+                showDigest = true
+            }
+        }
+    }
+
+    private var digestSheet: some View {
+        NavigationView {
+            ScrollView {
+                Text(errorDigest.isEmpty ? "还没有采集。" : errorDigest)
+                    .font(.system(size: 11.5, design: .monospaced))
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+            }
+            .navigationTitle("报错信息")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .navigationBarLeading) {
+                    Button("关闭") { showDigest = false }
+                }
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Button("复制") {
+                        UIPasteboard.general.string = errorDigest
+                        toast = "已复制报错信息"
+                        showDigest = false
+                    }
+                    .disabled(errorDigest.isEmpty)
+                }
+            }
+        }
+        .navigationViewStyle(.stack)
     }
 
     private func loadTree() {

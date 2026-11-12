@@ -367,6 +367,47 @@ do {
     expect(false, "抛了非 MCPError: \(error)")
 }
 
+// MARK: - 控制台「抓报错」
+
+section("控制台抓报错（ConsoleErrorDigest）")
+ToolRegistry.shared.register(CrashIPSTool())
+let crashDir = tmpRoot + "/CrashReporter"
+try? fm.createDirectory(atPath: crashDir, withIntermediateDirectories: true)
+try? (ipsHeader + "\n" + ipsBody).write(toFile: crashDir + "/SelfTest-2024-01-01-000000.ips",
+                                        atomically: true, encoding: .utf8)
+do {
+    let digest = ConsoleErrorDigest.build(bundleId: "com.example.selftest",
+                                         appName: "SelfTest",
+                                         statusLine: "未连接（先注入并打开目标 App）",
+                                         lastAction: "注入 com.example.selftest",
+                                         lastFailureRaw: "{\"ok\":false,\"error\":\"ControlAgent 未监听 4789\"}",
+                                         crashDirectory: crashDir)
+    print(digest.split(separator: "\n").map { "    | " + $0 }.joined(separator: "\n"))
+    expect(digest.contains("控制台失败现场"), "digest 有标题")
+    expect(digest.contains("SelfTest · com.example.selftest"), "digest 写出目标 App 与 bundle id")
+    expect(digest.contains("ControlAgent 未监听 4789"), "digest 从上次失败的 JSON 里取出 error")
+    expect(digest.contains("匹配 1 份"), "digest 统计到 1 份报告")
+    expect(digest.contains("报告 1：SelfTest-2024-01-01-000000.ips"), "digest 列出报告文件名")
+    expect(digest.contains("异常：EXC_BAD_ACCESS"), "digest 折叠出异常类型")
+    expect(digest.contains("终止：SIGNAL"), "digest 折叠出终止原因")
+    expect(digest.contains("崩溃线程 #0"), "digest 写出崩溃线程序号")
+    expect(digest.contains("SelfTest + 0x1000"), "digest 折叠出崩溃帧的 image + offset")
+    expect(digest.contains("-[ViewController viewDidLoad]"), "digest 折叠出帧符号")
+    expect(digest.contains("只读 crash.ips"), "digest 带采集口径")
+}
+
+// 目录里没有报告时必须如实说「没崩过 / 被清理」，不能编一份出来
+let emptyCrashDir = tmpRoot + "/CrashReporterEmpty"
+try? fm.createDirectory(atPath: emptyCrashDir, withIntermediateDirectories: true)
+let emptyDigest = ConsoleErrorDigest.build(bundleId: "com.example.none",
+                                          appName: "NoSuchApp",
+                                          statusLine: "",
+                                          lastAction: "",
+                                          lastFailureRaw: nil,
+                                          crashDirectory: emptyCrashDir)
+expect(emptyDigest.contains("没有 .ips / .crash"), "空目录给出「没崩过 / 被清理」")
+expect(emptyDigest.contains("没匹配到报告"), "过滤词没命中时说明退回全目录")
+
 // MARK: - 汇总
 
 print("\n=== 解析层自检结果：\(passes) passed, \(failures) failed ===")

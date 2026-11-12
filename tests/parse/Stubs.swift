@@ -113,3 +113,24 @@ public protocol MCPTool {
     var definition: ToolDefinition { get }
     func invoke(_ params: [String: Any]) throws -> [String: Any]
 }
+
+// MARK: - 工具注册表（只给 ConsoleErrorDigest 用）
+
+/// ConsoleErrorDigest 需要 `ToolRegistry.shared.dispatch(name:params:)` 这一小块：
+/// 按名字找到工具并调用。真实的注册表还有 envelope / 缓存 / 审计，自检不需要。
+final class ToolRegistry {
+    static let shared = ToolRegistry()
+
+    private var tools: [String: MCPTool] = [:]
+
+    func register(_ tool: MCPTool) {
+        tools[tool.definition.name] = tool
+    }
+
+    func dispatch(name: String, params: [String: Any]) throws -> [String: Any] {
+        guard let tool = tools[name] else {
+            throw MCPError.unknownTool(name)
+        }
+        return try tool.invoke(params)
+    }
+}

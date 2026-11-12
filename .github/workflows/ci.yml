@@ -89,7 +89,7 @@ jobs:
       - run: python3 scripts/check_tweak_braces.py
 
   parse-selftest:
-    name: 静态解析自检（armor / crash.ips / bundle anatomy 真跑一遍）
+    name: 静态解析自检（armor / crash.ips / bundle anatomy / 控制台抓报错 真跑一遍）
     # v7.18 系列：这三套解析都是手写字节解析（Mach-O load commands、.ips 头/正文、.app 目录），
     # 本机没有 swiftc、真机 App 必须重新出包才能验证，所以「写完没人执行过」。
     # 这个 job 在 macOS runner 上把它们真跑一遍：用系统自带的真 Mach-O 二进制、
@@ -113,6 +113,7 @@ jobs:
             Sources/XosviMCP/BinaryForensicsTool.swift \
             Sources/XosviMCP/CrashIPSTool.swift \
             Sources/XosviMCP/BundleAnatomy.swift \
+            Sources/XosviMCP/ConsoleErrorDigest.swift \
             tests/parse/Stubs.swift \
             tests/parse/main.swift > "$RUNNER_TEMP/compile.log" 2>&1 || RC=$?
           if [ "$RC" -ne 0 ]; then

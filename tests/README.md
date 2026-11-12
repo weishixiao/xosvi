@@ -25,6 +25,7 @@ swiftc -O -o /tmp/parse_selftest \
     Sources/XosviMCP/BinaryForensicsTool.swift \
     Sources/XosviMCP/CrashIPSTool.swift \
     Sources/XosviMCP/BundleAnatomy.swift \
+    Sources/XosviMCP/ConsoleErrorDigest.swift \
     tests/parse/Stubs.swift tests/parse/main.swift
 /tmp/parse_selftest        # 任何断言失败退出码非 0
 ```
@@ -39,11 +40,13 @@ swiftc -O -o /tmp/parse_selftest \
 | `armor command:diff` | `/bin/ls` vs `/bin/cat` | added/removed 计数、sizes 与 delta、evidence 口径；二进制 vs 目录必须拒绝 |
 | `crash.ips command:parse` | 合成 `.ips`（JSON 头 + JSON 正文，含 faultingThread/usedImages/asi） | format=ips-json、exception/termination 透传、帧 image/offset/address/symbol、images_total |
 | `BundleAnatomy.inspect` | 合成 `.app`（Info.plist + 真 Mach-O 当主二进制 + Frameworks/PlugIns/Assets.car） | bundle 关键字段、主二进制签名与 uuid、frameworks/plugins/top_level 计数、缺 Info.plist → BAD_FORMAT |
+| `ConsoleErrorDigest.build`（控制台「抓报错」） | 拿上面那份合成 `.ips` 当 CrashReporter 目录里的报告 | 标题 / 目标与 bundle id / 从上次失败的 JSON 取出 error / 报告份数 / 异常 / 终止 / 崩溃线程 / 帧 image+offset+符号 / 采集口径；空目录必须如实写「没崩过或被清理」，过滤词没命中要写明退回全目录 |
 
 注意：
 
-- `tests/parse/Stubs.swift` 只是 `MCPCore` 里这四份源码实际用到的最小形状
-  （`MCPTool` / `ToolDefinition` / `MCPError` / `ToolAnnotations` / `ToolCachePolicy`）。
+- `tests/parse/Stubs.swift` 只是 `MCPCore` 里这几份源码实际用到的最小形状
+  （`MCPTool` / `ToolDefinition` / `MCPError` / `ToolAnnotations` / `ToolCachePolicy`，
+  外加一个只有 `dispatch(name:params:)` 的 `ToolRegistry`）。
   **解析源码是真文件**，没有拷贝；MCPCore 那边签名变了，这里编译会失败——
   失败是可见的，不会变成假绿。
 - CI 里对应 job：`parse-selftest`（`macos-latest`，几分钟）。报错会镜像成
