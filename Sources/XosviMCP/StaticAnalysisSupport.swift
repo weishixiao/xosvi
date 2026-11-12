@@ -213,7 +213,7 @@ struct RawMachO {
                 let ver = "\(minosRaw >> 16).\((minosRaw >> 8) & 0xff).\(minosRaw & 0xff)"
                 platform = "\(names[plat] ?? "platform(\(plat))") \(ver)"
             case 0x2a:  // LC_SOURCE_VERSION
-                if body.count >= 16 { sourceVer = is64 ? Self.u64in(body, 8, isLittle) : UInt64(Self.u32in(body, 8, isLittle)) }
+                if body.count >= 16 { sourceVer = is64Header ? Self.u64in(body, 8, isLittle) : UInt64(Self.u32in(body, 8, isLittle)) }
             default:
                 break
             }
