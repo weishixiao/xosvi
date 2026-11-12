@@ -888,6 +888,12 @@ final class ConversationStore: ObservableObject {
     private var budgetExhausted: Bool = false
     /// v4.3.25：空回复纠正连续次数——最多 2 次仍空就停止，避免无限重跑。
     private var emptyReplyCorrectionCount = 0
+    /// v10.1：本轮 run 的工具轨迹与起点——RunReport 的原料。
+    /// entries 只在 run 期间累积，run 结束时统一清空；不落进消息历史（历史里已有 tool 消息）。
+    private var runEntries: [RunToolEntry] = []
+    private var runStartedAt: Date?
+    /// v10.1：本轮已经写过报告（避免同一轮在多处收尾时重复落盘同一个文件）。
+    private var runReportWritten = false
     /// v3.1.70：活动请求绑定的会话 ID——请求由哪个会话发起就写回哪个会话。
     /// 修复"请求进行中切换会话，AI 输出错位/写错会话" (用户实测：老会话未暂停，切换新会话后输出仍乱）。
     private var activeConvId: UUID?
@@ -1224,6 +1230,10 @@ final class ConversationStore: ObservableObject {
         ToolLoopGuard.shared.reset()
         ToolResultLatch.shared.reset()
         budgetExhausted = false
+        // v10.1：新一轮 run → 清空上一轮的轨迹并记下起点（RunReport 用）
+        runEntries = []
+        runReportWritten = false
+        runStartedAt = Date()
         var msg = ChatMessage(role: "user", content: text)
         if let imgs = imageDataURLs, !imgs.isEmpty {
             msg.imageDataURLs = imgs
@@ -1666,27 +1676,39 @@ final class ConversationStore: ObservableObject {
                         return
                     }
                     self.emptyReplyCorrectionCount = 0
+                    // v10.1：分析型任务的收尾——本轮真查过东西（≥3 次工具）且给了有分量的结论时，
+                    // 把结论 + 执行轨迹 + 关键输出摘录落成一份 Markdown，路径回显在回复末尾。
+                    // 放在文本工具兜底之前：兜底一旦接手，本轮就不是终点，不该现在落盘。
+                    // 结论取**消息上的实际内容**（流式可能比最终 text 更全），否则报告会和屏幕上不一致。
+                    if Self.extractTextualShellCommand(from: text) == nil {
+                        let question = self.currentQuestionText()
+                        let answer = self.currentAnswerText(fallback: text)
+                        if let footer = self.finishRunReport(question: question, answer: answer) {
+                            self.appendReportFooter(footer)
+                        }
+                    }
                     // v3.5.3：文本工具调用兜底——模型把 shell.exec("...")/shell_exec(...) 写成文本
                     // (而非结构化 tool_call) 时，系统本不执行、任务卡死。这里检测最终文本里的文本式
                     // shell 调用，提取命令并真正执行，继续 agent 循环（提示词兜底不住，代码兜底保证）。
                     self.runTextualShellIfNeeded(text: text, config: config, tools: tools, disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel)
                     // v3.1.70：整条请求链 (含工具递归）结束——解除活动会话绑定
                     self.activeConvId = nil
-                case .success(.toolCalls(let calls, let thinking, let narrationContent)):
-                    // v3.5.2：系统级"一次一个工具"硬约束——模型一次批几个 toolCalls，
-                    // 都裁成第一个：assistant 消息与执行只带这一个，执行完回模型让它看到
-                    // 结果再决定下一步（一个接一个）。依赖调用必须等前一个结果才能决定下一步，
-                    // 合批执行会让模型猜结果(违规)；提示词不可靠，代码兜底强制一次一个。
-                    // v7.15.3：保持"一次一个"（v3.5.2 的设计：依赖调用必须看到前一个结果
-                    // 才能决定下一步），但把被裁掉的个数记下来——否则模型不知道自己发出的
-                    // 第 2..N 个调用被静默丢弃，会反复重发同一批，白白多跑数轮。
-                    // TODO(verify): 若要放开为整批执行，需同时改造：
-                    //   ① 一次写回 N 条 tool 消息（sanitizeToolSequence 已支持 1:N）
-                    //   ② 熔断计数口径（loopBlockedError 目前按单工具计）
-                    //   ③ 循环提示 _loop_hint 的批次语义
-                    //   ④ ToolDefinition.prerequisites 是否足以表达依赖顺序
-                    let truncatedCalls = calls.count > 1 ? calls.count - 1 : 0
-                    let calls = Array(calls.prefix(1))
+                case .success(.toolCalls(let modelCalls, let thinking, let narrationContent)):
+                    // v10.1：批执行（对齐 Minis / Codex 的「同一轮批量跑独立调用」）。
+                    // 旧实现无条件 prefix(1)：模型一次看得很清楚的三个独立读（ls + cat + grep）
+                    // 被打成三轮往返，每轮一次网络请求、一次整段上下文重发，用户看到的就是「慢、来回绕」。
+                    // 现在由机制决定能跑几个：读类调用按顺序整批跑；只要出现一个会改状态的调用，
+                    // 它就是本批的最后一棒——后面的调用可能依赖它的结果，合批执行等于让模型猜结果。
+                    // 判定规则全在 ToolBatchPlanner（含 shell 命令的只读判定）。
+                    let plan = ToolBatchPlanner.plan(modelCalls)
+                    let calls = plan.calls
+                    if !plan.dropped.isEmpty {
+                        self.pendingParamCorrection = "你上次一次给出了 \(modelCalls.count) 个工具调用，"
+                            + "系统这一轮执行了其中 \(calls.count) 个：读操作可以合批，"
+                            + "写操作之后的调用必须等结果才能决定下一步。"
+                            + "另外 \(plan.dropped.count) 个本次没有执行、也不会自动补执行。"
+                            + "请基于已拿到的结果继续，需要时再发出剩下的调用，不要把整批原样重发。"
+                    }
                     // v3.1.72：思考(reasoning)与可见输出(content)分开存放——
                     // 旧逻辑把流式可见文本+思考合并成 thinkText 塞进 assistant.content，
                     // 又把同一 thinkText 塞进 tool 消息 thinking，导致 UI 上"回复内容"和
@@ -1810,8 +1832,7 @@ final class ConversationStore: ObservableObject {
                     // v3.1.72：thinkText 传可见文本 (工具调用前的说明），不再写入 tool 消息 thinking
                     self.processToolCalls(calls, index: 0, toolMessages: [], newlyDisclosed: [],
                                           config: config, tools: tools, disclosed: disclosed, depth: depth,
-                                          reasoningLevel: reasoningLevel, thinkText: visibleText,
-                                              truncatedCalls: truncatedCalls)
+                                          reasoningLevel: reasoningLevel, thinkText: visibleText)
                 case .failure(let error):
                     self.isLoading = false
                     self.currentClient = nil
@@ -1954,6 +1975,103 @@ final class ConversationStore: ObservableObject {
         }
     }
 
+    /// v10.1：批执行中途停止时，把**还没执行**的调用从 assistant 消息上剥掉。
+    ///
+    /// 为什么必须做：OpenAI / Anthropic 都要求 assistant.tool_calls 里的每一个 id
+    /// 后面紧跟他自己的 role=tool 消息。批执行一次挂 N 个调用，一旦在第 k 个上被拦
+    /// （缺参纠正 / 熔断 / 用户取消），第 k..N 个就没有结果消息了——历史变成非法序列，
+    /// 下一次请求会被服务端整个拒掉。旧实现每批只有 1 个调用，卡住时正好是"全都没执行"，
+    /// 所以运气好没暴露；合批之后必须显式收尾。
+    private func pruneUnexecutedCalls(in calls: [ToolCall], from index: Int) {
+        guard index < calls.count, let ci = self.activeConvIndex else { return }
+        let rest = Set(calls[index...].map { $0.id })
+        let msgs = self.conversations[ci].messages
+        guard let mi = msgs.lastIndex(where: { m in
+            (m.toolCalls ?? []).contains { rest.contains($0.id) }
+        }) else { return }
+        let kept = (self.conversations[ci].messages[mi].toolCalls ?? []).filter { !rest.contains($0.id) }
+        if kept.isEmpty && self.conversations[ci].messages[mi].content
+            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // 只挂了思考和调用、没有正文 → 整条移除，避免"孤立块"观感
+            self.conversations[ci].messages.remove(at: mi)
+        } else {
+            self.conversations[ci].messages[mi].toolCalls = kept.isEmpty ? nil : kept
+            // parts 同步（投影层以 parts 为准，不剥会继续显示已放弃的步骤）
+            let alive = Set(kept.map { $0.id })
+            if var parts = self.conversations[ci].messages[mi].parts {
+                parts.removeAll {
+                    if case .toolCall(let p) = $0 { return !alive.contains(p.id) }
+                    return false
+                }
+                self.conversations[ci].messages[mi].parts = parts
+            }
+            ProjectedBlockCache.shared.invalidate(id: self.conversations[ci].messages[mi].id)
+        }
+    }
+
+    /// v10.1：RunReport 原料——把一次工具执行记进本轮轨迹。
+    /// 只留摘要（结果 ≤1200 字符），一轮几十次工具也不会把内存撑起来。
+    private func recordRunEntry(tool: String, args: String, result: String,
+                                isError: Bool, durationMs: Int, narration: String?) {
+        let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+        let brief = trimmed.count > 1200
+            ? String(trimmed.prefix(1200)) + "\n…[轨迹摘要，原文 \(trimmed.count) 字符]"
+            : trimmed
+        runEntries.append(RunToolEntry(tool: tool, args: args, result: brief,
+                                       isError: isError, durationMs: durationMs,
+                                       narration: narration))
+        if runStartedAt == nil { runStartedAt = Date() }
+    }
+
+    /// v10.1：本轮结束时把「查过东西 + 给出结论」的分析结果落成 Markdown 文档。
+    ///
+    /// 只在**真做过研究**的 run 上触发（≥3 次工具、结论 ≥300 字），并把路径回显到回复末尾。
+    /// 报告不是聊天记录的替代品：它只写结论 + 轨迹 + 关键输出摘录，供用户事后翻看或转交。
+    /// 返回要追加到回复尾部的那一行（没有写就返回 nil）。
+    @discardableResult
+    private func finishRunReport(question: String, answer: String) -> String? {
+        guard !runReportWritten else { return nil }
+        let entries = runEntries
+        guard RunReport.shouldWrite(entryCount: entries.count, answer: answer) else { return nil }
+        runReportWritten = true
+        let started = runStartedAt ?? Date()
+        guard let path = RunReport.write(question: question, answer: answer,
+                                         entries: entries, startedAt: started,
+                                         finishedAt: Date()) else { return nil }
+        return RunReport.footer(path: path)
+    }
+
+    /// v10.1：本轮用户提问（RunReport 的标题来源）——活动会话里最后一条 user 消息。
+    private func currentQuestionText() -> String {
+        guard let ci = activeConvIndex ?? (activeConvId.flatMap { id in
+            conversations.firstIndex(where: { $0.id == id })
+        }) else { return "" }
+        for m in conversations[ci].messages.reversed() where m.role == "user" {
+            let t = m.content.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { return t }
+        }
+        return ""
+    }
+
+    /// v10.1：本轮结论的**实际文本**——屏幕末尾那条 assistant 消息的内容（流式合并后可能比最终 text 更全）。
+    private func currentAnswerText(fallback: String) -> String {
+        guard let ci = activeConvIndex,
+              let mi = conversations[ci].messages.lastIndex(where: { $0.role == "assistant" })
+        else { return fallback }
+        let content = conversations[ci].messages[mi].content
+        return content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? fallback : content
+    }
+
+    /// v10.1：把报告路径追加到本轮回复末尾。
+    /// 走 updateMessageContent，顺带同步 parts 里的 text 段；两套内容不一致时，屏幕上会重复或断裂。
+    private func appendReportFooter(_ footer: String) {
+        guard let ci = activeConvIndex,
+              let mi = conversations[ci].messages.lastIndex(where: { $0.role == "assistant" })
+        else { return }
+        let msg = conversations[ci].messages[mi]
+        self.updateMessageContent(id: msg.id, content: msg.content + "\n\n" + footer)
+    }
+
     private func processToolCalls(_ calls: [ToolCall],
                                   index: Int,
                                   toolMessages: [ChatMessage],
@@ -1963,26 +2081,31 @@ final class ConversationStore: ObservableObject {
                                   disclosed: [String],
                                   depth: Int,
                                   reasoningLevel: Int,
-                                  thinkText: String = "",
-                                  truncatedCalls: Int = 0) {
-        // 一次一个硬约束已在 .toolCalls 源头把批次裁成 prefix(1)，这里 calls.count==1，
-        // 执行完 index=1 >= calls.count 即回模型。
+                                  thinkText: String = "") {
+        // v10.1：批执行——这里按 calls 的顺序逐个执行，每个的结果写完 N 条 tool 消息后
+        // index+1 递归；index 走到末尾即回模型。读类调用 Planner 会一次给多个，
+        // 写操作之后被 Planner 截断的调用不进这个数组（它在 pendingParamCorrection 里说明）。
         if index >= calls.count {
             // v3.4.1：工具气泡已在 handleDispatchResult 逐条实时上屏（对齐 OpenMinis 逐步展示），
             // 不再攒批到最后统一追加 —— 边做边说更接近"直播"。
-            // v7.15.3：若上一轮模型一次发了多个调用而被裁成 1 个，明确告诉它还剩几个没执行，
-            // 否则它会以为都没执行、反复重发同一批（每次重发又是一整轮往返）。
-            if truncatedCalls > 0 {
-                self.pendingParamCorrection = "你上次一次给出了多个工具调用，系统按「一次一个」只执行了第一个，"
-                    + "另外 \(truncatedCalls) 个已被丢弃、不会自动补执行。请根据已拿到的结果决定下一步，"
-                    + "需要的话逐个调用，不要把整批重新发一遍。"
-            }
+            // v10.1：被 Planner 挡下的调用个数已在这一批开始前写进 pendingParamCorrection，
+            // 这里不再重复追加提示（否则模型会收到两遍同义纠正）。
             let merged = Array(Set(disclosed + newlyDisclosed))
             self.runLoop(config: config, tools: tools, disclosed: merged, depth: depth + 1, reasoningLevel: reasoningLevel)
             return
         }
         let call = calls[index]
         let params = Self.parseArgs(call.arguments)
+        // v10.1：批执行中途用户点了「停止」——剩下的调用不再执行。
+        // 必须先把它们从 assistant 消息上剥掉，否则历史里留下「有 tool_call、没有 tool 结果」
+        // 的非法序列，下一次请求会被服务端整条拒掉（旧的「一次一个」每批只有 1 个调用，
+        // 到 index+1 正好回 runLoop 停下，碰不到这个问题；合批之后必须显式收尾）。
+        if self.stopRequested {
+            self.pruneUnexecutedCalls(in: calls, from: index)
+            self.isLoading = false
+            self.runningTool = nil
+            return
+        }
         // v3.5.6：工具参数 schema 预校验（机制级，治"缺参盲试"老毛病）——
         // 调工具前先用工具 schema 校验必填参数，缺了就不执行，注入纠正消息重跑一轮逼模型补齐。
         // 不再像以前那样直接执行→报"invalid params required"→靠提示词让模型自己改（常盲试好几次）。
@@ -1993,23 +2116,13 @@ final class ConversationStore: ObservableObject {
             let missing = required.filter { params[$0] == nil }
             if !missing.isEmpty && self.paramCorrectionCount < 2 {
                 self.paramCorrectionCount += 1
-                self.pendingParamCorrection = "你要调用的工具 \(call.name) 缺少必填参数: \(missing.joined(separator: "、"))。请补齐这些参数后再调用该工具，不要用同样方式反复重试同一个缺参调用。"
+                self.pendingParamCorrection = (self.pendingParamCorrection.map { $0 + "\n\n" } ?? "")
+                    + "你要调用的工具 \(call.name) 缺少必填参数: \(missing.joined(separator: "、"))。请补齐这些参数后再调用该工具，不要用同样方式反复重试同一个缺参调用。"
                 self.trailStep(.done(.note, "工具参数缺失被拦", detail: "\(call.name) 缺: \(missing.joined(separator: "、"))", ok: false))
-                // v3.5.6 审计修正：纠正重跑前，必须先清掉刚挂上但未执行的 toolCalls——
+                // v10.1：纠正重跑前先清掉本批里**所有**未执行的 toolCalls（含后面没轮到的），
                 // 否则会话里留下"assistant 带 toolCalls 却无 tool 结果"的非法历史序列，
                 // OpenAI/Anthropic 会拒绝（tool_call 必须紧跟 tool message），纠正重跑会失败。
-                if let ci = self.activeConvIndex {
-                    let msgs = self.conversations[ci].messages
-                    if let mi = msgs.lastIndex(where: { ($0.toolCalls ?? []).contains(where: { $0.id == call.id }) }) {
-                        if self.conversations[ci].messages[mi].content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            // 只挂了思考没正文 → 整条移除，避免"孤立思考块"观感
-                            self.conversations[ci].messages.remove(at: mi)
-                        } else {
-                            // 已写了正文解说 → 保留正文，仅剥离未执行的 toolCalls
-                            self.conversations[ci].messages[mi].toolCalls = nil
-                        }
-                    }
-                }
+                self.pruneUnexecutedCalls(in: calls, from: index)
                 // 不执行工具，回模型补齐参数（depth+1 防死循环；paramCorrectionCount 上限 2）
                 self.runLoop(config: config, tools: tools, disclosed: disclosed, depth: depth + 1, reasoningLevel: reasoningLevel)
                 return
@@ -2178,6 +2291,10 @@ final class ConversationStore: ObservableObject {
             self.trailStep(.done(.result, call.name,
                                  detail: Self.trailSummary(rawContent),
                                  ok: true))
+            // v10.1：RunReport 原料——只留摘要级别（每步 ≤1200 字符），长会话不占内存
+            self.recordRunEntry(tool: call.name, args: call.arguments, result: content,
+                                isError: false, durationMs: Int((toolDuration * 1000).rounded()),
+                                narration: toolMsg.toolNarration)
             var nextDisclosed = newlyDisclosed
             // v3.1.66：tool_search 已删除，全量加载所有工具，无需披露机制。
             self.processToolCalls(calls, index: index + 1, toolMessages: next, newlyDisclosed: nextDisclosed,
@@ -2214,6 +2331,9 @@ final class ConversationStore: ObservableObject {
             self.trailStep(.done(.result, call.name,
                                  detail: Self.trailSummary(Self.jsonString(failureBody)),
                                  ok: false))
+            self.recordRunEntry(tool: call.name, args: call.arguments, result: content,
+                                isError: true, durationMs: Int((toolDuration * 1000).rounded()),
+                                narration: nil)
             self.processToolCalls(calls, index: index + 1, toolMessages: next, newlyDisclosed: newlyDisclosed,
                                   config: config, tools: tools, disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel,
                                   thinkText: thinkText)
@@ -2259,6 +2379,10 @@ final class ConversationStore: ObservableObject {
             self.trailStep(.done(.result, call.name,
                                  detail: "❌ \(err.localizedDescription.prefix(200))",
                                  ok: false))
+            self.recordRunEntry(tool: call.name, args: call.arguments,
+                                result: Self.jsonString(errBody),
+                                isError: true, durationMs: Int((toolDuration * 1000).rounded()),
+                                narration: nil)
             // v6.6.21：熔断触发 → 终止本轮，不再把控制权交回模型。
             // 旧行为只是把"已停止本次调用"当普通工具结果喂回去，
             // 模型会继续同样参数重试（真机连续 13 次），用户只能干等。
@@ -2285,6 +2409,9 @@ final class ConversationStore: ObservableObject {
                            + "② 我先解释这个错误意味着什么\n"
                            + "③ 先修环境（比如 iSH 引擎、登录状态）再继续")
                 stopMsg.thinking = nil
+                // v10.1：本轮终止 → 这一批里还没轮到的调用不再执行，先把它们从
+                // assistant 消息上剥掉，留一份合法（每个 tool_call 都有结果）的历史。
+                self.pruneUnexecutedCalls(in: calls, from: index + 1)
                 self.appendToCurrent(stopMsg)
                 self.liveProducedID = stopMsg.id
                 self.activeConvId = nil
