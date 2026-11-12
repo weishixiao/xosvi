@@ -824,6 +824,26 @@ jobs:
             exit "$RC"
           fi
 
+      # CI 诊断补强：job summary 与日志归档都要登录才看得到，annotation 在公开页面可读。
+      # 编译错误（xcodebuild 的 "…: error: …"）逐条镜像成 annotation，最多 10 条。
+      - name: Mirror build errors as annotations
+        if: failure()
+        run: |
+          LOG=/tmp/build-ipa.log
+          echo "log exists: $([ -f "$LOG" ] && echo yes || echo no)"
+          [ -f "$LOG" ] || exit 0
+          grep -n -E ": error: " "$LOG" | head -10 | while IFS= read -r line; do
+            msg=$(printf '%s' "$line" | tr -d '\r' | cut -c1-900)
+            echo "::error title=build-ipa-error::$msg"
+          done
+          # 没有编译错误时，把脚本层的失败行也镜像出来（"!!! …" / "FAILED" / "失败"）
+          if ! grep -q -E ": error: " "$LOG"; then
+            grep -n -E "!!!|FAILED|失败|error" "$LOG" | tail -10 | while IFS= read -r line; do
+              msg=$(printf '%s' "$line" | tr -d '\r' | cut -c1-900)
+              echo "::error title=build-ipa-script::$msg"
+            done
+          fi
+
       # v4.4.8-fix3x: 进包断言——实测发现 job 绿但工具缺失（缓存劫持/吞错），
       # 这里逐项列出实际进包情况，build 日志可查、可审计。
       - name: Verify bundled tools in tipa
