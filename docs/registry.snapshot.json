@@ -1,8 +1,9 @@
 {
-  "count": 52,
+  "count": 54,
   "names": [
     "app",
     "app_write_file",
+    "armor",
     "artifact",
     "assistant_memory",
     "automation",
@@ -11,6 +12,7 @@
     "bind_app_write",
     "container",
     "control",
+    "crash.ips",
     "db",
     "device",
     "diagnose",
@@ -70,6 +72,14 @@
       "requires_jailbreak": false,
       "requires_trollstore": false,
       "verified": true
+    },
+    "armor": {
+      "category": "macho",
+      "file": "BinaryForensicsTool.swift",
+      "remote_only": false,
+      "requires_jailbreak": false,
+      "requires_trollstore": false,
+      "verified": false
     },
     "artifact": {
       "category": "fs",
@@ -134,6 +144,14 @@
       "requires_jailbreak": false,
       "requires_trollstore": false,
       "verified": true
+    },
+    "crash.ips": {
+      "category": "diagnose",
+      "file": "CrashIPSTool.swift",
+      "remote_only": false,
+      "requires_jailbreak": false,
+      "requires_trollstore": false,
+      "verified": false
     },
     "db": {
       "category": "data",
