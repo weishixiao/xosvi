@@ -147,6 +147,11 @@ public enum JSONRPC {
         if case let .classified(_, code, reason, nextStep) = e {
             return ["mcp_code": code, "reason": reason, "next_step": nextStep]
         }
+        // v10.3：classifiedData 是 classified 的结构化版本（带 kb_fix / unmet_prerequisites），
+        // 之前这里只认 classified，带数据的分类错误在 MCP 协议层丢掉 mcp_code。
+        if case let .classifiedData(_, code, reason, nextStep, _) = e {
+            return ["mcp_code": code, "reason": reason, "next_step": nextStep]
+        }
         if case let .unknownTool(name) = e {
             return ["mcp_code": "UNKNOWN_TOOL", "tool": name]
         }

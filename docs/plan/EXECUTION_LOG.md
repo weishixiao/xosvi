@@ -158,3 +158,39 @@ SessionRow / ContentView+Layout）。方案与调研见 `docs/plan/08-base-ui-mi
 - 停止路径：`cancelCurrent()` 清 `activeConvId` 但保留 `requestSessionId`，`activeConvIndex` 仍能解析到会话，`pruneUnexecutedCalls` 不会因拿不到 index 而静默跳过。
 - `send()` 会重置 `budgetExhausted` / `runEntries` / `runReportWritten`，因此批内停止分支只做 prune + 停手即可，无需重复收尾。
 - `RunReport.shouldWrite` 开头 `chars >= 120` 与后面两条阈值分支重叠（冗余但无害），保留以免误放宽。
+
+## 控制台报错信息：双层外壳 + 连接类落 UNKNOWN（v10.3，2026-11-13）
+
+用户贴出控制台「抓报错」生成的文本，状态行是：
+
+```
+tool failed: [UNKNOWN] tool failed: [UNKNOWN] 无法连接服务器。 (category: unknown) next: inspect full logs then retry (category: unknown) next: inspect full logs then retry
+```
+
+两个独立缺陷叠在一起，都不是提示词问题：
+
+1. **双层外壳**。`MCPCore.dispatch` 的兜底 `catch` 取 `(error as? MCPError)?.description`（已带
+   `tool failed: [CODE] … (category: …) next: …` 外壳）当作 `message` 重新构造 `.classified`，
+   外壳就被套两次。触发路径是「返回式错误」：`control.status` 返回 `["error": "无法连接服务器。"]`
+   → `extractReturnedError` → 第一次包成 `.classified` 抛出 → 同一函数的 catch 再包一次。
+   影响所有 `throw MCPError.classified(...)` 的工具（disasm / bundle / install / inject 等），
+   模型侧 `message` 字段、审计 detail、熔断指纹同样被这层外壳污染。
+2. **连接类没有词条**。`FailureKind.classify` 表里只有环境/目标/参数/工具四类，`无法连接服务器。`
+   （`URLError` 的本地化文案）一个词都不命中 → 落 `UNKNOWN` + `inspect full logs then retry`，
+   真实原因（目标 App 没开 / agent 没监听）被盖掉。而 `FailureKind.retryable` 本来就认「连接」，
+   于是还会自动重试一次，等于对必然失败的调用再试一遍。
+
+| 文件 | 变更 |
+|---|---|
+| `Sources/XosviMCP/MCPCore.swift` | `MCPError` 新增 `payloadMessage`（classified/classifiedData 取裸 message，其余仍返回 `description`）；兜底 catch 改用 `payloadMessage`，重建 `classified` 时外壳只出现一次。`FailureKind.classify` 新增 `NETWORK` / `network` 分支（`无法连接` `连接失败` `连接被拒` `未连接` `连不上` `connect` `network` `网络` `unreachable` `不可达` `timed out`），排在环境类之前——连接失败不是权限问题，next_step 指向 `control.status` 与目标 App 是否在跑 |
+| `AGENTS.md` / `RULES.md` | 失败分类表与 code 列举补 `NETWORK` |
+
+预期同一条现场改为一行：
+`tool failed: [NETWORK] 无法连接服务器。 (category: network) next: network/connection failure, not a permission or code problem: …`
+
+本地 sanity（无 swiftc）：改动文件括号配平检查 0 报错（`Sources/XosviMCP/*.swift` 全量跑，
+报出的 FilePreviewView / Models / SystemPrompts / ToolchainSigner 四处皆为检查器不认 `"""`
+多行字符串与字符字面量造成的既有误报，与本次改动无关）。**Swift 类型检查仍需完整 iOS 构建**。
+
+未动：`StatusLine` 文本仍是英文 CLI 式前缀 + 中文原因（项目既有口径，人读得懂，不改）；
+`FailureKind.retryable` 的重试策略保持原样（网络类重试一次本身合理）。

@@ -40,7 +40,8 @@
 ## 失败处理（MUST）
 
 - **先分类再重试**：读返回的 `error.code` / `reason` / `next_step`，判断属于
-  `ENV_PERMISSION` / `TARGET_INCOMPATIBLE` / `PARAM_INVALID` / `INJECT_MEM_FAILED` / `TOOL_FAILED` / `UNKNOWN` 中的哪一类，再决定动作。
+  `ENV_PERMISSION` / `NETWORK` / `TARGET_INCOMPATIBLE` / `PARAM_INVALID` / `INJECT_MEM_FAILED` / `TOOL_FAILED` / `UNKNOWN` 中的哪一类，再决定动作。
+- 连接类（`NETWORK`）：目标 App 没开 / agent 没监听 / 断网——先 `control command:status` 确认连上，不是权限也不是代码问题。
 - 权限类（`ENV_PERMISSION`）**重试无意义**：去 TrollStore 开启「编辑 Entitlements」并卸载重装。
 - 参数类（`PARAM_INVALID`）按返回的 usage 修正后**只重试一次**。
 - **同参数同错误 2 次即熔断**：同一工具 + 同一参数 + 同一类错误连续出现 2 次，运行时会置中止标志并终止本轮 run。

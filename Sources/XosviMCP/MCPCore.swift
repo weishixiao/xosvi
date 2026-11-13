@@ -288,6 +288,18 @@ public enum MCPError: Error, CustomStringConvertible {
         }
     }
 
+    /// v10.3：裸消息。`description` 会给 classified 再套一层
+    /// `tool failed: [CODE] … (category: …) next: …` 外壳；dispatch 的兜底 catch 若拿
+    /// description 当 message 重新构造 classified，外壳就会被套两次，模型和控制台看到的
+    /// 都是 `tool failed: [UNKNOWN] tool failed: [UNKNOWN] …`。取裸 message 再重建才只有一层。
+    public var payloadMessage: String {
+        switch self {
+        case .classified(let m, _, _, _): return m
+        case .classifiedData(let m, _, _, _, _): return m
+        default: return description
+        }
+    }
+
     /// v8（PR-B4）：把知识库修复建议挂到错误上（没有命中时原样返回）
     public func withKBFix(_ kb: [[String: Any]]) -> MCPError {
         guard !kb.isEmpty else { return self }
@@ -323,6 +335,17 @@ enum FailureKind {
         if m.contains("opainject") || m.contains("[unsupported]") || m.contains("内存注入") {
             return ("INJECT_MEM_REMOVED", "environment",
                     "memory injection (opainject) is gone: Xosvi injects by static re-packaging only. Use injection.enable (insert_dylib writes LC_LOAD_DYLIB + ldid fake-sign + ct_bypass for CoreTrust), and app.decrypt first for encrypted Apps. Do not retry memory injection.")
+        }
+        // 0.5) 网络：连不上目标 / 断网 / 连接被拒。
+        // v10.3：以前这类错误在表里没有词条，直接落 UNKNOWN（"无法连接服务器。" 就是
+        // URLError 的本地化文案），控制台状态行给出 "next: inspect full logs then retry"，
+        // 看不出"连不上"这个真实原因。放在环境类之前：连接失败不是权限问题，先查连接。
+        if m.contains("无法连接") || m.contains("连接失败") || m.contains("连接被拒")
+            || m.contains("未连接") || m.contains("连不上")
+            || m.contains("connect") || m.contains("network") || m.contains("网络")
+            || m.contains("unreachable") || m.contains("不可达") || m.contains("timed out") {
+            return ("NETWORK", "network",
+                    "network/connection failure, not a permission or code problem: confirm the target App is running and its agent is listening (control.status), check Wi-Fi/cellular, then retry once; repeated failures mean the agent was never connected")
         }
         // 1) 环境：权限 / Entitlements / setuid / 容器写 / 未开权限
         if m.contains("operation not permitted") || m.contains("entitlement")
@@ -1797,7 +1820,10 @@ public final class ToolRegistry: ObservableObject {
                 return ["ok": true, "message": msg, "data": data]
             } catch {
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
-                var errDesc = (error as? MCPError)?.description ?? error.localizedDescription
+                // v10.3：取裸 message（classified 的 description 已带一层外壳，见 payloadMessage）。
+                // 旧实现取 description：工具返回式错误先被本函数包成 classified 抛出，又被这一层
+                // catch 拿 description 再包一次 → "tool failed: [UNKNOWN] tool failed: [UNKNOWN] …"。
+                var errDesc = (error as? MCPError)?.payloadMessage ?? error.localizedDescription
                 // v9.2：失败也要进循环守卫——失败熔断只看「同参同错误」，这里补的是
                 // 「同参不同错误也可能在绕圈」（模型每次换一种错法，熔断永远不触发）。
                 ToolLoopGuard.shared.record(tool: originalName, params: params, result: nil, error: errDesc)
