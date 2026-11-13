@@ -76,9 +76,13 @@ final class BuildRunner {
         }
 
         if let wd = workingDir {
+            // v10.4：原来写死 /bin/sh —— iOS 上没有这个文件，凡带 workingDir 的 exec 都失败
+            guard let shell = JBEnvironment.nativeShellPath else {
+                return BuildProcessResult(exitCode: -1, stdout: "", stderr: "no shell on this device (iOS ships no /bin/sh, no jailbreak bootstrap shell)", timedOut: false, spawnError: "no shell")
+            }
             var cmd = "cd \(shellQuote(wd)) && exec \(shellQuote(executable))"
             for a in args { cmd += " " + shellQuote(a) }
-            return spawnPosix(path: "/bin/sh", args: ["-c", cmd], env: env, timeout: timeout)
+            return spawnPosix(path: shell, args: ["-c", cmd], env: env, timeout: timeout)
         }
         return spawnPosix(path: executable, args: args, env: env, timeout: timeout)
     }
@@ -175,9 +179,13 @@ final class BuildRunner {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// 通过 /bin/sh -c 执行一条命令 (用于版本探测等）
+    /// 通过 shell -c 执行一条命令 (用于版本探测等）
     func shell(_ command: String, workingDir: String? = nil, env: [String: String] = [:], timeout: TimeInterval = 30) -> BuildProcessResult {
-        run(executable: "/bin/sh", args: ["-c", command], workingDir: workingDir, env: env, timeout: timeout)
+        // v10.4：原实现走 /bin/sh，iOS 上没有这个文件 → 一律 "executable not found"
+        guard let sh = JBEnvironment.nativeShellPath else {
+            return BuildProcessResult(exitCode: -1, stdout: "", stderr: "no shell on this device (iOS ships no /bin/sh, no jailbreak bootstrap shell)", timedOut: false, spawnError: "no shell")
+        }
+        return run(executable: sh, args: ["-c", command], workingDir: workingDir, env: env, timeout: timeout)
     }
 }
 

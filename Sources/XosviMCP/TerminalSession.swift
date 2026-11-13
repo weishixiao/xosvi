@@ -38,7 +38,11 @@ enum TermBackend: String, CaseIterable, Identifiable {
     var home: String { self == .ios ? "/var/mobile" : "/root" }
 }
 
-final class TermLine: Identifiable, Equatable {
+// v10.4：值类型。
+// 原来 TermLine 是 class，`append` 里 `last.text += text` 改的是对象本身，数组没有任何写入，
+// @Published 的 objectWillChange 不会发 —— 流式输出只能等 running 变化或用户敲键盘时才顺带刷新，
+// 看上去就像「命令没有输出 / 终端卡住」。换成 struct 后下标写会触发发布。
+struct TermLine: Identifiable, Equatable {
     enum Kind {
         case output      // 普通输出（含 stderr）
         case command     // 用户输入的命令行回显
@@ -71,6 +75,9 @@ final class TermSession: Identifiable, ObservableObject {
     private(set) var runId: String?
     /// iOS 原生后端当前子进程（停止时 kill）
     private var iosPid: pid_t = 0
+    /// v10.4：这一轮是用户主动停的 —— 收尾时按「已停止」处理，
+    /// 不再补一行「退出码 -15」这类噪声。
+    private var stoppedByUser = false
     /// 命令行历史（上下箭头翻）
     private(set) var history: [String] = []
 
@@ -85,8 +92,9 @@ final class TermSession: Identifiable, ObservableObject {
 
     func append(_ text: String, kind: TermLine.Kind) {
         guard !text.isEmpty else { return }
-        if let last = lines.last, last.kind == kind, kind == .output {
-            last.text += text
+        // 下标写（而不是改对象）才会让 @Published 发通知
+        if kind == .output, let idx = lines.indices.last, lines[idx].kind == .output {
+            lines[idx].text += text
         } else {
             lines.append(TermLine(text: text, kind: kind))
         }
@@ -135,15 +143,40 @@ final class TermSession: Identifiable, ObservableObject {
             runIniOS(command)
             return
         }
-        let bootRC = ISH.boot()
-        guard bootRC == 0 else {
-            append((ISH.lastError ?? "沙盒启动失败 rc=\(bootRC)") + "\n", kind: .notice)
+        // v10.4：boot 不能留在主线程 —— KelivoISHKernel 的契约是「在后台线程 boot」
+        // （它会成为 guest PID 1）。旧实现在按钮回调里同步 boot：首次敲命令就卡界面，
+        // 缺 rootfs 时还要现场装一遍，几秒钟白屏，严重时被系统 watchdog 杀掉。
+        if ISH.isBooted {
+            startGuestRun(command)
             return
         }
+        running = true
+        lastExit = 0
+        append(L10n.t("term_boot_hint") + "\n", kind: .notice)
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let rc = ISH.boot()
+            let err = ISH.lastError
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard rc == 0 else {
+                    self.running = false
+                    self.append((err ?? "沙盒启动失败 rc=\(rc)") + "\n", kind: .notice)
+                    return
+                }
+                // boot 期间用户按了停止：这条命令不再执行
+                guard self.running, self.runId == nil else { return }
+                self.startGuestRun(command)
+            }
+        }
+    }
+
+    /// guest 里真正的一次执行（boot 完成之后）
+    private func startGuestRun(_ command: String) {
         let runId = UUID().uuidString
         self.runId = runId
         running = true
         lastExit = 0
+        stoppedByUser = false
 
         // 哨兵：唯一、不会被用户输出自然命中的串
         let marker = "__XOSVI_RC_\(runId.replacingOccurrences(of: "-", with: ""))__"
@@ -203,15 +236,25 @@ final class TermSession: Identifiable, ObservableObject {
 
     // MARK: iOS 原生后端
     //
-    // 直接 posix_spawn `/bin/sh -c`（本机 /bin/sh 真实存在），输出经共享 fd + DispatchSource
-    // 实时上屏。与 Alpine 后端的差别：命令读写的是真实文件系统，且没有 apk/python（本机没装）。
+    // posix_spawn `<可用 shell> -c`，输出经共享 fd + DispatchSource 实时上屏。
+    // 与 Alpine 后端的差别：命令读写的是真实文件系统，且没有 apk/python（本机没装）。
+    //
+    // v10.4：原来写死 `/bin/sh`（注释还写着「本机 /bin/sh 真实存在」）—— iOS 根本不带 sh，
+    // 于是本机后端每条命令都只回一行「无法启动 shell：errno 2」，cd 也一并失效。
+    // 现在改为运行期解析：真机 /bin/sh → rootless /var/jb/usr/bin/sh → roothide <jbroot>/usr/bin/sh。
     private func runIniOS(_ command: String) {
+        guard let shell = JBEnvironment.nativeShellPath else {
+            running = false
+            append(L10n.t("term_native_no_shell") + "\n", kind: .notice)
+            return
+        }
         running = true
         lastExit = 0
+        stoppedByUser = false
         let quotedCwd = cwd.replacingOccurrences(of: "'", with: "'\\''")
         let wrapped = "cd '\(quotedCwd)' 2>/dev/null || true; ( \(command) ) 2>&1"
 
-        var args = [strdup("/bin/sh"), strdup("-c"), strdup(wrapped)]
+        var args = [strdup(shell), strdup("-c"), strdup(wrapped)]
         args.append(nil)
         var env = [strdup("PATH=" + ShellExecTool.effectivePATH),
                    strdup("HOME=/var/mobile"),
@@ -235,7 +278,7 @@ final class TermSession: Identifiable, ObservableObject {
         posix_spawn_file_actions_addclose(&actions, fds[1])
 
         var pid: pid_t = 0
-        let rc = posix_spawn(&pid, "/bin/sh", &actions, nil, args, env)
+        let rc = posix_spawn(&pid, shell, &actions, nil, args, env)
         posix_spawn_file_actions_destroy(&actions)
         close(fds[1])
         args.forEach { free($0) }
@@ -265,6 +308,9 @@ final class TermSession: Identifiable, ObservableObject {
                 }
             } else if n == 0 {
                 source.cancel()
+            } else if errno != EINTR && errno != EAGAIN {
+                // v10.4：读失败时不再空转（原来只处理 n==0，n<0 会让可读事件反复触发占满 CPU）
+                source.cancel()
             }
         }
         source.setCancelHandler {
@@ -284,7 +330,9 @@ final class TermSession: Identifiable, ObservableObject {
         running = false
         self.runId = nil
         lastExit = code
-        let cancelled = (dict["cancelled"] as? NSNumber)?.boolValue ?? false
+        // v10.4：用户主动停止也算 cancelled —— 否则本机后端 kill 之后会再补一行「退出码 -15」
+        let cancelled = stoppedByUser || ((dict["cancelled"] as? NSNumber)?.boolValue ?? false)
+        stoppedByUser = false
         let timedOut = (dict["timedOut"] as? NSNumber)?.boolValue ?? false
         if cancelled {
             append(L10n.t("term_stopped") + "\n", kind: .notice)
@@ -292,8 +340,8 @@ final class TermSession: Identifiable, ObservableObject {
             append(L10n.t("term_timeout") + "\n", kind: .notice)
         }
         // 末尾没换行时补一个，保证下一次输入从新行开始
-        if let last = lines.last, last.kind == .output, !last.text.hasSuffix("\n") {
-            last.text += "\n"
+        if let idx = lines.indices.last, lines[idx].kind == .output, !lines[idx].text.hasSuffix("\n") {
+            lines[idx].text += "\n"
         }
         if code != 0 && !cancelled {
             append(L10n.t("term_exit_code", Int(code)) + "\n", kind: .notice)
@@ -333,15 +381,19 @@ final class TermSession: Identifiable, ObservableObject {
 
     func stop() {
         if iosPid > 0 {
+            // v10.4：「已停止」交给收尾的 finishRun 统一写一行（原来这里再加一次 = 两行）
+            stoppedByUser = true
             kill(iosPid, SIGTERM)
             kill(iosPid, SIGKILL)
             iosPid = 0
             running = false
-            append(L10n.t("term_stopped") + "\n", kind: .notice)
             return
         }
-        guard let runId = runId else { return }
-        _ = KelivoISHExecutor.cancelRunId(runId)
+        if let runId = runId {
+            _ = KelivoISHExecutor.cancelRunId(runId)
+        }
+        // v10.4：boot 阶段（runId 还没建立）也要能停下；旧实现在这里直接 return，
+        // 「正在启动沙盒」时按停止毫无反应。
         running = false
     }
 
@@ -355,7 +407,6 @@ final class TermSession: Identifiable, ObservableObject {
         guard backend != target else { return }
         if running {
             stop()
-            append(L10n.t("term_stopped") + "\n", kind: .notice)
         }
         backend = target
         cwd = target.home
@@ -425,9 +476,15 @@ final class TermSession: Identifiable, ObservableObject {
 
     /// 本机原生后端里解析 cd：跑一段 `pwd`，成功就把结果当新 cwd
     private func resolveCwdNative(_ script: String, original: String) {
+        // v10.4：原来走 run(executable: "/bin/sh") —— iOS 没这个文件，FileManager 直接判 not found，
+        // 于是本机后端每一次 cd（含启动时的 prompt 探测）都报「无法进入」
+        guard let shell = JBEnvironment.nativeShellPath else {
+            append(L10n.t("term_native_no_shell") + "\n", kind: .notice)
+            return
+        }
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self = self else { return }
-            let res = BuildRunner.shared.run(executable: "/bin/sh", args: ["-c", script], timeout: 10)
+            let res = BuildRunner.shared.run(executable: shell, args: ["-c", script], timeout: 10)
             let out = res.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             DispatchQueue.main.async {
                 if res.exitCode == 0, out.hasPrefix("/") {
@@ -504,11 +561,18 @@ final class TermManager: ObservableObject {
     @Published var sessions: [TermSession] = []
     @Published var selectedId: UUID?
 
+    /// v10.4：终端页只 `@ObservedObject` 了 manager，会话自己的 `@Published` 没人订阅 ——
+    /// 命令回显、流式输出、running/停止键都不会触发重绘（只有敲键盘改 `input` 时顺带重画，
+    /// 所以「不敲字就看不到输出」）。把每个会话的 objectWillChange 转到 manager 上：
+    /// 用 receive(on: main) 让这次通知排在真正的写入之后，界面读到的就是新值。
+    private var forwarders: [UUID: AnyCancellable] = [:]
+
     private init() {
         let s = TermSession(title: "1")
         s.greet()
         sessions = [s]
         selectedId = s.id
+        observe(s)
     }
 
     var selected: TermSession? {
@@ -526,13 +590,22 @@ final class TermManager: ObservableObject {
         s.greet()
         sessions.append(s)
         selectedId = s.id
+        observe(s)
     }
 
     func close(_ id: UUID) {
         guard let idx = sessions.firstIndex(where: { $0.id == id }) else { return }
         sessions[idx].stop()
         sessions.remove(at: idx)
+        forwarders[id] = nil
         if sessions.isEmpty { newSession(); return }
         if selectedId == id { selectedId = sessions[min(idx, sessions.count - 1)].id }
+    }
+
+    private func observe(_ s: TermSession) {
+        guard forwarders[s.id] == nil else { return }
+        forwarders[s.id] = s.objectWillChange
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in self?.objectWillChange.send() }
     }
 }

@@ -150,6 +150,26 @@ enum ISH {
                 failed += 1
                 continue
             }
+            // v10.4：符号链接必须建成链接。原来不管 entry 类型一律 data.write，
+            // 于是 /bin/sh、/bin/ls、/usr/bin/python3 全成了「内容是目标路径的小文本文件」
+            // （12 字节的 "/bin/busybox"），guest 里 exec 直接失败 —— Alpine 终端敲什么都没反应。
+            if entry.type == .symbolicLink {
+                var target = String(decoding: data, as: UTF8.self)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if target.hasPrefix("alpine-rootfs/") || target.hasPrefix("ish-rootfs/") {
+                    target = String(target.dropFirst("alpine-rootfs/".count))
+                }
+                if !target.isEmpty {
+                    try? fm.removeItem(at: destURL)
+                    let dest = relativeLinkTarget(fromLinkAt: "/" + rel, to: target) ?? target
+                    if (try? fm.createSymbolicLink(atPath: destURL.path, withDestinationPath: dest)) != nil {
+                        written += 1
+                    } else {
+                        failed += 1
+                    }
+                    continue
+                }
+            }
             if (try? data.write(to: destURL)) != nil { written += 1 } else { failed += 1 }
             // 可执行位（fakefs 主要靠 meta.db，但补上更稳）
             if rel.hasPrefix("bin/") || rel.hasPrefix("sbin/") || rel.hasPrefix("usr/bin/")
@@ -158,16 +178,31 @@ enum ISH {
             }
         }
 
-        // 校验：meta.db 与 data/bin/sh 必须是常规文件
+        // 校验：meta.db 是常规文件，busybox 是真的二进制（>100KB）
+        // v10.4：data/bin/sh 现在可能是符号链接（正常形态），不能再要求 isRegularFile；
+        // 反过来也要拦住「12 字节文本当 shell」的坏包。
         func isRegular(_ path: String) -> Bool {
             (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
         }
+        func isLink(_ path: String) -> Bool {
+            guard let attr = try? FileManager.default.attributesOfItem(atPath: path) else { return false }
+            let type = attr[.type] as? FileAttributeType
+            return type == FileAttributeType.typeSymbolicLink
+        }
+        func size(_ path: String) -> Int64 {
+            guard let attr = try? FileManager.default.attributesOfItem(atPath: path),
+                  let n = attr[.size] as? NSNumber else { return 0 }
+            return n.int64Value
+        }
         let metaOK = isRegular(staging.appendingPathComponent("meta.db").path)
-        let shOK = isRegular(staging.appendingPathComponent("data/bin/sh").path)
-        guard metaOK, shOK else {
+        let busyboxPath = staging.appendingPathComponent("data/bin/busybox").path
+        let busyboxOK = isRegular(busyboxPath) && size(busyboxPath) > 100_000
+        let shPath = staging.appendingPathComponent("data/bin/sh").path
+        let shOK = isLink(shPath) || (isRegular(shPath) && size(shPath) > 100_000)
+        guard metaOK, busyboxOK, shOK else {
             let listing = (try? fm.contentsOfDirectory(atPath: staging.path).prefix(8).joined(separator: ", ")) ?? "?"
             try? fm.removeItem(at: staging)
-            throw InstallError.failed("rootfs 解压不完整：条目 \(entries.count)，写入 \(written)，失败 \(failed)；meta.db=\(metaOK)·data/bin/sh=\(shOK)；顶层：\(listing)")
+            throw InstallError.failed("rootfs 解压不完整：条目 \(entries.count)，写入 \(written)，失败 \(failed)；meta.db=\(metaOK)·busybox=\(busyboxOK)·data/bin/sh=\(shOK)；顶层：\(listing)")
         }
 
         // 提交：换掉旧目录
@@ -202,6 +237,112 @@ enum ISH {
         _ = try installRootfsIfNeeded(force: true)
     }
 
+    // MARK: 破损 rootfs 自愈（v10.4）
+
+    struct LinkRepair {
+        var scanned = 0
+        var converted = 0
+        var failed = 0
+    }
+
+    private static let linkTargetChars = Set<Character>(
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/+-")
+
+    /// guest 绝对目标 → 相对链接目标。
+    /// iSH 的 fakefs 把 guest 路径拼成 host 路径再交给内核，绝对链接（/bin/busybox）会逃出 rootfs
+    /// 指到 iOS 自己的根上、必然 ENOENT；相对链接两种解析方式都对。
+    private static func relativeLinkTarget(fromLinkAt linkGuestPath: String, to target: String) -> String? {
+        guard target.hasPrefix("/") else { return target.isEmpty ? nil : target }
+        var dirComps = linkGuestPath.split(separator: "/").map(String.init)
+        if !dirComps.isEmpty { dirComps.removeLast() }          // 去掉文件名，只留目录
+        let tComps = target.split(separator: "/").map(String.init)
+        var i = 0
+        while i < dirComps.count, i < tComps.count, dirComps[i] == tComps[i] { i += 1 }
+        var parts = Array(repeating: "..", count: dirComps.count - i)
+        parts.append(contentsOf: tComps[i...])
+        if parts.isEmpty { return nil }
+        let rel = parts.joined(separator: "/")
+        return rel.isEmpty ? nil : rel
+    }
+
+    /// 单个 token 的路径形状（不含空白/换行/#/:），才可能是符号链接的目标
+    private static func looksLikeLinkTarget(_ s: String) -> Bool {
+        guard !s.isEmpty, s.count <= 255 else { return false }
+        guard s.allSatisfy({ linkTargetChars.contains($0) }) else { return false }
+        // 至少要有一个「不是 . 也不是 /」的字符，挡住 "."、"./"、".." 这类噪声
+        return s.contains(where: { $0 != "." && $0 != "/" })
+    }
+
+    /// 内置 alpine-rootfs.zip 把符号链接打成了普通文件：`data/bin/sh` 是 12 字节文本
+    /// "/bin/busybox"，`data/bin/ls`、`data/usr/bin/python3` 同理（这台机器上 1189 个）。
+    /// guest 里这些路径于是都是**文本文件**，exec 必然失败 —— Alpine 终端连 sh 都起不来，
+    /// 敲任何命令都报错。这里就地改回真正的符号链接：不动 apk 装的包，也不重装 rootfs。
+    static func rootfsLinksLookBroken() -> Bool {
+        let fm = FileManager.default
+        let root = installRoot.path
+        for rel in ["data/bin/sh", "data/bin/ls", "data/usr/bin/env", "data/usr/bin/python3"] {
+            let path = root + "/" + rel
+            guard let attr = try? fm.attributesOfItem(atPath: path) else { continue }
+            let type = attr[.type] as? FileAttributeType
+            if type == FileAttributeType.typeSymbolicLink { continue }     // 这条是好的
+            let size = (attr[.size] as? NSNumber)?.int64Value ?? 0
+            if size > 0 && size <= 255 { return true }                     // 文本壳 = 坏的
+        }
+        return false
+    }
+
+    /// 扫描 data/，把「内容只是目标路径的小文本文件」还原成符号链接。
+    /// 只认：单 token、无空白、目标真实存在（相对目标按同目录解析）。幂等，修完再跑就没事可做。
+    @discardableResult
+    static func repairBrokenRootfsLinks() -> LinkRepair {
+        var st = LinkRepair()
+        let fm = FileManager.default
+        let dataRoot = dataPath
+        guard !dataRoot.isEmpty,
+              let en = fm.enumerator(at: URL(fileURLWithPath: dataRoot),
+                                     includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
+                                     options: [],
+                                     errorHandler: { _, _ in true }) else { return st }
+        let skipTop: Set<String> = ["proc", "sys", "dev", "run", "mounts"]
+        for case let url as URL in en {
+            let full = url.path
+            let relPath = full.hasPrefix(dataRoot + "/") ? String(full.dropFirst(dataRoot.count + 1)) : url.lastPathComponent
+            let top = relPath.split(separator: "/").first.map(String.init) ?? ""
+            if skipTop.contains(top) {
+                en.skipDescendants()
+                continue
+            }
+            st.scanned += 1
+            guard let v = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
+                  v.isSymbolicLink != true,
+                  v.isRegularFile == true,
+                  let sz = v.fileSize, sz > 1, sz <= 255,
+                  let data = try? Data(contentsOf: url),
+                  data.count == Int(sz),
+                  let raw = String(data: data, encoding: .utf8) else { continue }
+            let target = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            // 只认「整个文件就是一个目标路径」（允许尾部换行），多行文本一律不碰
+            guard raw == target || raw == target + "\n" || raw == target + "\r\n" else { continue }
+            guard looksLikeLinkTarget(target) else { continue }
+            let resolved = target.hasPrefix("/")
+                ? dataRoot + target
+                : url.deletingLastPathComponent().appendingPathComponent(target).path
+            guard fm.fileExists(atPath: resolved) else { continue }
+            guard let linkDest = relativeLinkTarget(fromLinkAt: "/" + relPath, to: target) else { continue }
+            do {
+                try fm.removeItem(at: url)
+                try fm.createSymbolicLink(atPath: full, withDestinationPath: linkDest)
+                st.converted += 1
+            } catch {
+                // 建链接失败就把原文写回去：data/bin/sh 缺失会让 isRootfsValid() 判坏 →
+                // 下次启动重装 rootfs，把 apk 装的 python3/git/npm 全清掉。宁可修不动。
+                try? data.write(to: url)
+                st.failed += 1
+            }
+        }
+        return st
+    }
+
     // MARK: 启动
 
     private static var bootLock = NSLock()
@@ -223,6 +364,12 @@ enum ISH {
             return -2
         }
         try? FileManager.default.createDirectory(atPath: dataPath, withIntermediateDirectories: true)
+        // v10.4：源 rootfs.zip 把符号链接打成了文本文件 —— 不修的话 guest 里 sh/ls/python3
+        // 全是 12 字节的 "/bin/busybox" 文本，exec 直接失败，Alpine 终端敲什么都不会有输出。
+        if rootfsLinksLookBroken() {
+            let rep = repairBrokenRootfsLinks()
+            Log.browser("ISH rootfs 链接自愈：converted=\(rep.converted) scanned=\(rep.scanned) failed=\(rep.failed)")
+        }
         let rc = KelivoISHKernel.shared().boot(withRootPath: installRoot.path)
         if rc != 0 {
             lastError = "内核启动返回 rc=\(rc)（rootfs: meta.db=\(FileManager.default.fileExists(atPath: installRoot.appendingPathComponent("meta.db").path)), data=\(FileManager.default.fileExists(atPath: dataPath))）"

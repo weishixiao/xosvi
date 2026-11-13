@@ -23,6 +23,13 @@ struct TerminalPageView: View {
 
     private var session: TermSession? { manager.selected }
 
+    /// v10.4：流式输出是往最后一行**追加**，行数不变 —— 只盯 lines.count 的自动滚动
+    /// 在输出过程中不会跟到底部。把「行数 + 末行长度」拼成 key。
+    private var scrollKey: String {
+        guard let s = session, let last = s.lines.last else { return "0" }
+        return "\(s.lines.count):\(last.text.count)"
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             header
@@ -205,7 +212,7 @@ struct TerminalPageView: View {
                 .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .onChange(of: session?.lines.count ?? 0) { _ in
+            .onChange(of: scrollKey) { _ in
                 withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo("mirror", anchor: .bottom) }
             }
             .onChange(of: input) { _ in
@@ -244,7 +251,10 @@ struct TerminalPageView: View {
                 .textInputAutocapitalization(.never)
                 .keyboardType(.asciiCapable)
                 .focused($focused)
-                // 不用 onSubmit：回车键在工具条上，避免换行符被塞进命令
+                .submitLabel(.send)
+                // v10.4：键盘上的回车原本什么都不做（注释说「回车在工具条上」），
+                // 用户按 Return 以为发出去了，其实一条命令都没跑。现在 Return = 执行。
+                .onSubmit { send() }
             if let s = session, s.running {
                 Button(action: { s.stop() }) {
                     Image(systemName: "stop.fill")
@@ -329,6 +339,8 @@ struct TerminalPageView: View {
         input = ""
         historyCursor = -1
         s.submit(cmd)
+        // v10.4：onSubmit 之后系统会收掉焦点，这里补回来，连续敲命令不用每次点输入框
+        DispatchQueue.main.async { focused = true }
     }
 
     private func interrupt() {

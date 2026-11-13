@@ -282,6 +282,8 @@ enum L10n {
     "term_key_root": ["zh": "su", "en": "su"],
     "term_root_home_hint": ["zh": "iOS 没有 /root：root 用户的家目录是 /var/root（本机后端以 mobile 身份运行，无 root 权限）", "en": "iOS has no /root: root's home is /var/root (native backend runs as mobile, without root privileges)"],
     "term_spawn_failed": ["zh": "无法启动 shell：%@", "en": "Cannot start shell: %@"],
+    "term_native_no_shell": ["zh": "本机没有可用的 shell：iOS 本身不带 /bin/sh，只有越狱 bootstrap（rootless 的 /var/jb 或 roothide）里才有 sh；先用 Alpine 沙盒后端", "en": "No shell on device: iOS ships no /bin/sh; only a jailbreak bootstrap (rootless /var/jb or roothide) provides one. Use the Alpine sandbox backend."],
+    "term_boot_hint": ["zh": "正在启动沙盒内核…（首次要装 rootfs，稍等）", "en": "Starting the sandbox kernel… (first run installs a rootfs, please wait)"],
     "term_backend_alpine": ["zh": "Alpine 沙盒", "en": "Alpine sandbox"],
     "term_backend_ios": ["zh": "本机原生", "en": "iOS native"],
     "term_backend_switched": ["zh": "后端已切换到 %@（工作目录重置为该后端的家目录）", "en": "Backend switched to %@ (cwd reset to that backend's home)"],

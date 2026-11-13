@@ -1639,7 +1639,9 @@ struct MessageBubble: View {
     // v3.5.4：思考黄泡——思考进行中(isStreaming)自动展开让用户看到模型在动；
     // 思考结束自动收起(除非用户手动展开)。业界(掘金/Koder/DeepSeek Harness)一致做法。
     private var thinkingExpanded: Bool {
-        isStreaming ? true : expandedToolIds.contains(message.id.uuidString)
+        // v10.4：深度思考默认折叠（用户要求）——流式期间也不再自动展开，
+        // 只有用户点标题栏才展开；否则长思考一上来就把正文顶到屏幕外。
+        expandedToolIds.contains(message.id.uuidString)
     }
     /// v7.7.0：ReasoningBlock 需要可写绑定（原 thinkingExpanded 是只读计算属性）
     private var thinkingExpandedBinding: Binding<Bool> {

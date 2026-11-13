@@ -19,9 +19,6 @@ struct ReasoningBlock: View {
     var finishedAt: Date? = nil
     var tokens: Int? = nil
 
-    /// preview 态高度上限（Kelivo 用 100）
-    private let previewHeight: CGFloat = 100
-
     /// 思考耗时（流式中随每次刷新递增）
     private var elapsedSeconds: Int? {
         guard let start = startAt else { return nil }
@@ -43,7 +40,16 @@ struct ReasoningBlock: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Button {
+            header
+            // v10.4：折叠态只有标题行（不再画 100pt 预览灰字）——「默认折叠」就是真的收起来
+            if expanded { content }
+        }
+        .padding(.horizontal, 2)
+    }
+
+    /// 标题栏：点一下展开 / 收起
+    private var header: some View {
+        Button {
                 withAnimation(.easeInOut(duration: 0.18)) { expanded.toggle() }
             } label: {
                 HStack(spacing: 6) {
@@ -71,10 +77,6 @@ struct ReasoningBlock: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-
-            content
-        }
-        .padding(.horizontal, 2)
     }
 
     @ViewBuilder
@@ -83,31 +85,12 @@ struct ReasoningBlock: View {
             Text(isStreaming ? "…" : "（无思考内容）")
                 .font(.system(size: 12.5))
                 .foregroundColor(.secondary)
-        } else if expanded {
+        } else {
             ScrollView(.vertical, showsIndicators: true) {
                 ReasoningRichText(text: text)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: 320)
-        } else {
-            // preview：截断 + 上下渐变
-            ScrollView(.vertical, showsIndicators: false) {
-                ReasoningRichText(text: text)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .frame(maxHeight: previewHeight)
-            .mask(
-                LinearGradient(
-                    stops: [
-                        .init(color: .clear, location: 0.0),
-                        .init(color: .white, location: 0.14),
-                        .init(color: .white, location: 0.72),
-                        .init(color: .clear, location: 1.0)
-                    ],
-                    startPoint: .top, endPoint: .bottom
-                )
-            )
-            .allowsHitTesting(false)
         }
     }
 }

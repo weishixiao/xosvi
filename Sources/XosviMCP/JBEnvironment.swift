@@ -53,6 +53,18 @@ enum JBEnvironment {
         return out
     }
 
+    /// v10.4：本机可用的 shell。
+    ///
+    /// iOS 本身**不带** `/bin/sh`——多处 `posix_spawn("/bin/sh")` 在真机上必然 ENOENT。
+    /// 越狱环境才有 sh：rootless 在 `/var/jb/usr/bin/sh`，roothide 在 `<jbroot>/usr/bin/sh`。
+    /// `firstExistingPath` 会把 /rootfs 与 jbroot 两种写法都试一遍。
+    static let nativeShellPath: String? = {
+        for c in ["/bin/sh", "/usr/bin/sh", "/usr/bin/dash", "/usr/bin/bash"] {
+            if let p = firstExistingPath(c) { return p }
+        }
+        return nil
+    }()
+
     /// v7.16.6：返回第一个真实存在的写法（POSIX access，不看 FileManager 的容器视图）
     static func firstExistingPath(_ raw: String) -> String? {
         for p in pathVariants(raw) where FSStat.exists(p) { return p }
