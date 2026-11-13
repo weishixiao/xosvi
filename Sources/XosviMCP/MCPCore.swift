@@ -383,8 +383,19 @@ enum FailureKind {
     /// 判断这个错误能不能自动重试
     static func retryable(_ message: String) -> Bool {
         let m = message.lowercased()
+        // v10.3：确定性连接失败不重试。目标 agent 没监听时，1 秒后再连一次必然同样失败，
+        // 而 control.status 内部本来就试 4 次 × 0.6s——再叠一层"自动重试"只是把 2.4s 拖成 5s，
+        // 并在控制台多刷一条 🔄 自动重试，模型收到的却是同一个"连不上"。
+        // 必须放在下面 "连接/connection" 通配之前，否则被它抢先命中。
+        if m.contains("无法连接") || m.contains("未能连接") || m.contains("连接失败")
+            || m.contains("连接被拒") || m.contains("连不上") || m.contains("未连接")
+            || m.contains("refused") || m.contains("could not connect")
+            || m.contains("cannot connect") || m.contains("can't connect")
+            || m.contains("couldn't connect") {
+            return false
+        }
         // 网络错误/超时：可以重试
-        if m.contains("timeout") || m.contains("超时")
+        if m.contains("timeout") || m.contains("timed out") || m.contains("超时")
             || m.contains("network") || m.contains("网络")
             || m.contains("connection") || m.contains("连接")
             || m.contains("unreachable") || m.contains("不可达") {
