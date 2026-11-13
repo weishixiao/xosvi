@@ -192,5 +192,13 @@ tool failed: [UNKNOWN] tool failed: [UNKNOWN] 无法连接服务器。 (category
 报出的 FilePreviewView / Models / SystemPrompts / ToolchainSigner 四处皆为检查器不认 `"""`
 多行字符串与字符字面量造成的既有误报，与本次改动无关）。**Swift 类型检查仍需完整 iOS 构建**。
 
-未动：`StatusLine` 文本仍是英文 CLI 式前缀 + 中文原因（项目既有口径，人读得懂，不改）；
-`FailureKind.retryable` 的重试策略保持原样（网络类重试一次本身合理）。
+未动：`StatusLine` 文本仍是英文 CLI 式前缀 + 中文原因（项目既有口径，人读得懂，不改）。
+
+### 收尾：确定性连接失败不再自动重试（commit 239479c）
+
+`FailureKind.retryable` 原先用「连接 / connection / 网络」做通配，于是 `无法连接服务器。` 这类
+**必然失败**的错误也会白等 1s 再打一次：`control.status` 自己已试 4 次 × 0.6s，再叠一层重试，
+一次工具调用从约 2.4s 拖到约 5s，控制台还多刷一条 `🔄 自动重试`，模型拿到的仍是同一个「连不上」
+—— 正是用户说的「做无用功」。现在把确定性连接失败（`无法连接` `未能连接` `连接失败` `连接被拒`
+`连不上` `未连接` `refused` `could not connect` `cannot connect` `can't connect`
+`couldn't connect`）提到通配之前直接 `return false`；超时与真正的网络抖动仍保留一次自动重试。
