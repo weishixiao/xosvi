@@ -110,6 +110,10 @@
 |---|---|---|---|---|
 | 2026-11-01 18:35 | feat/v8-ai-seamless | 41337388513 | FAILURE | 首批编译错误（多行字符串/GatewayServer 重名/参数顺序/ISHManager/MitmProxy） |
 | 2026-11-01 22:39 | feat/v8-ai-seamless | 41358256548 | SUCCESS | Xosvi artifact 100,188,049 bytes；发布步骤按设计仅 main 执行 |
+| 2026-11-12 | main | 43333084302 | SUCCESS | CI#106（54s）· commit 89a1614 |
+| 2026-11-12 | main | 43333084320 | SUCCESS | build-xosvi-ios#97，18m5s · commit 89a1614 |
+| 2026-11-13 | main | 43440094301 | SUCCESS | CI#107（1m3s）· commit 239479c；含 Swift `-parse` 门禁 |
+| 2026-11-13 | main | 43440094294 | SUCCESS | build-xosvi-ios#98，18m25s（build 作业 16m18s）；Xosvi artifact 96.1 MB · commit 239479c（v10.3 全部改动） |
 
 ### 本地 sanity（无 swiftc，2026-11-06）
 
@@ -202,3 +206,7 @@ tool failed: [UNKNOWN] tool failed: [UNKNOWN] 无法连接服务器。 (category
 —— 正是用户说的「做无用功」。现在把确定性连接失败（`无法连接` `未能连接` `连接失败` `连接被拒`
 `连不上` `未连接` `refused` `could not connect` `cannot connect` `can't connect`
 `couldn't connect`）提到通配之前直接 `return false`；超时与真正的网络抖动仍保留一次自动重试。
+
+验证：`build-xosvi-ios#98`（run 43440094294）在 `239479c` 上 **SUCCESS，18m25s**——完整 iOS 构建通过
+（v10.3 三处改动同批）；`CI#107`（run 43440094301）SUCCESS，1m3s，含 Swift `-parse` 门禁。
+**设备侧表现未测**：本机装的是旧构建，要看到新的状态行必须先装上这次 CI 产出的 IPA 再点一次「抓报错」。
