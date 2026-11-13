@@ -138,3 +138,23 @@ SessionRow / ContentView+Layout）。方案与调研见 `docs/plan/08-base-ui-mi
 
 本地 sanity（无 swiftc）：`tests/loopguard/swift_braces.c` → checked 194 files, mismatches=0；
 顶层类型重名扫描 → 327 个声明无 DUP。**Swift 类型检查仍需 CI**（`swiftc -parse` 作业只查语法）。
+
+
+## Agent 循环改造：批执行 + 分析报告（v10.1，2026-11-12，commit 89a1614）
+
+用户诉求：agent 工作流程「很傻，经常跑偏、做无用功」。原则是**改机制，不加提示词**。
+对齐 Minis / Codex 的做法：同一轮能跑几个工具由代码判定，不由模型自觉。
+
+| 文件 | 变更 |
+|---|---|
+| `Sources/XosviMCP/ToolBatchPlanner.swift` | 新增。入口 `plan(_:)` 把模型一轮给的调用压成「本轮真正执行的序列」：读类按序合批（≤`maxBatch`=4）；出现改状态调用即纳入并**立即截断**（后续调用可能依赖它的结果，合批等于让模型猜结果）；同工具同参去重；未知工具按改状态处理。`shell.exec` / `root` 不信注解，改看命令本身：`shellCommandIsReadOnly` 按段首命令白名单判定，先剥掉 `2>/dev/null` 类无害重定向，剩余任何 `>` `<` 即算写；`sed -i`、`plutil -replace`、非查询 `sqlite3`、`sh`/`bash` 一律算写 |
+| `Sources/XosviMCP/Models.swift` | `.toolCalls` 分支去掉无条件 `prefix(1)`，改为 `ToolBatchPlanner.plan`；`dropped` 的个数写进 `pendingParamCorrection`（模型知道自己有几个没执行，不重发整批）；assistant 消息只挂**真正执行**的调用，`parts` 按执行集合重建；新增 `pruneUnexecutedCalls(in:from:)`——批执行在第 k 个上被拦（缺参纠正 / 预算 / 用户停止）时剥掉 k..N，避免「有 tool_call 无 tool 结果」的非法历史被服务端整条拒掉 |
+| `Sources/XosviMCP/RunReport.swift` | 新增。本轮工具 ≥3 次且结论 ≥300 字（或工具 ≥6 次、结论 ≥180 字）时，把结论 + 执行轨迹表 + 关键输出摘录写成 `Workspace/reports/<时间戳>-<slug>.md`（工作区 UI 已把 `reports` 显示为「分析报告」，见 `WorkspaceBrowserView.swift:57`），并在回复末尾回显可复制路径。预算/熔断终止的收尾不落盘 |
+
+验证：`build-xosvi-ios#97`（run 43333084320）在 `89a1614` 上 **SUCCESS，18m 5s**——完整 iOS 构建通过；
+`CI#106`（run 43333084302）SUCCESS，54s。本地无 swiftc，类型检查结论以上述构建为准。
+
+自审记录（代码层面已核对，无需改动）：
+- 停止路径：`cancelCurrent()` 清 `activeConvId` 但保留 `requestSessionId`，`activeConvIndex` 仍能解析到会话，`pruneUnexecutedCalls` 不会因拿不到 index 而静默跳过。
+- `send()` 会重置 `budgetExhausted` / `runEntries` / `runReportWritten`，因此批内停止分支只做 prune + 停手即可，无需重复收尾。
+- `RunReport.shouldWrite` 开头 `chars >= 120` 与后面两条阈值分支重叠（冗余但无害），保留以免误放宽。
