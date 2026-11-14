@@ -124,6 +124,14 @@ let package = Package(
             path: "CPyEmbed",
             publicHeadersPath: "public"
         ),
+        // v10.x：CReCore——内置逆向解析引擎（纯 C，无第三方依赖）。
+        // 越狱环境下 r2/objcdump 之类外部工具起不来，而解析 Mach-O 只要逐字节读文件，
+        // 放进主进程后「解包 → 出报告」不再依赖任何子进程。
+        .target(
+            name: "CReCore",
+            path: "CReCore",
+            publicHeadersPath: "include"
+        ),
         // v6.6.15：CCapstone——进程内反汇编（capstone 5.0.3，BSD-3）。
         // 越狱会拒绝执行 App 内的第三方二进制（posix_spawn → ENOSYS 85），
         // r2/cstool 起不来；把 capstone 静态库链进主二进制后反汇编不再依赖子进程。
@@ -163,6 +171,8 @@ let package = Package(
                 "CLZMA",
                 "CCapstone",
                 "CPyEmbed",
+                // v10.x：内置逆向引擎（re 工具后端）
+                "CReCore",
                 // v6.7.0：VansonMod 内存引擎（GPL-3.0）——memory 工具的原生扫描/读写/冻结实现
                 "VansonEngine"
             ],

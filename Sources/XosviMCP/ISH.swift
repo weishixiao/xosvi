@@ -274,7 +274,7 @@ enum ISH {
     }
 
     /// 内置 alpine-rootfs.zip 把符号链接打成了普通文件：`data/bin/sh` 是 12 字节文本
-    /// "/bin/busybox"，`data/bin/ls`、`data/usr/bin/python3` 同理（这台机器上 1189 个）。
+    /// "/bin/busybox"，`data/bin/ls`、`data/usr/bin/python3` 同理（这台机器上近 800 个）。
     /// guest 里这些路径于是都是**文本文件**，exec 必然失败 —— Alpine 终端连 sh 都起不来，
     /// 敲任何命令都报错。这里就地改回真正的符号链接：不动 apk 装的包，也不重装 rootfs。
     static func rootfsLinksLookBroken() -> Bool {

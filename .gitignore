@@ -28,6 +28,9 @@ __pycache__/
 # v10.2：OpenMinis 参考源（第三方源码，仅供本地对照与方案文档引用，不入库）
 tests/loopguard/om/
 tests/loopguard/fetch_tmp
+
+# 本机逆向引擎调试草稿：样本二进制、一次性探针、输出目录
+.proto/
 tests/loopguard/fetch_tmp.m
 tests/loopguard/paths.txt
 tests/loopguard/tree.json

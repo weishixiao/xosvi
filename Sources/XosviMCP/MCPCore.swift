@@ -958,6 +958,8 @@ public final class ToolRegistry: ObservableObject {
         "file", "db", "package", "vpn.capture",
         // v7.18.0：REA 式静态取证默认启用——armor（加固/语言溯源/diff）、crash.ips（崩溃报告）
         "armor", "crash.ips", "macho", "disasm",
+        // v10.x：内置逆向引擎（Mach-O/ObjC/字符串交叉引用 → 报告），不默认启用 AI 就看不见
+        "re",
         "skills.list", "skills.read", "skills.set_enabled",
         // v8.2：ish.doctor / health.summary 移出默认白名单（健康度体系已删；ish.doctor 仍注册，
         // 需要时用户可在工具权限页手动开启；gateway 不动）
@@ -2080,6 +2082,7 @@ public final class ToolRegistry: ObservableObject {
         register(MemoryTweakTool())   // v6.7.0：H5GG式内存修改（默认原生 VansonMod 引擎，可切 legacy dylib）
         register(MachoExecTool())     // v6.8.0：Mach-O 静态分析（MachOKit）
         register(DisasmTool())        // v6.6.15：进程内反汇编（capstone），不依赖子进程
+        register(ReTool())            // v10.x：内置逆向引擎——Mach-O/ObjC元数据/字符串交叉引用 → report.json+md
         register(BinaryArmorTool())    // v7.18.0：REA 式内置静态检查——加固标志 / Go·Rust 溯源 / 二进制 diff
         register(CrashIPSTool())       // v7.18.0：.ips / .crash 崩溃报告结构化解析（异常+崩溃栈+镜像表）
         register(PyEvalTool())        // v6.6.16：进程内 CPython（dlopen），不依赖子进程

@@ -13,7 +13,7 @@
 
 Xosvi 是部署在 iOS 设备上的原生 MCP 服务，让 AI 直接操作真实 iOS 系统：App 管理、dylib 注入、网络抓包、SQLite 取证、跨环境文件、内存修改、包解剖、设备/定位等。
 Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine**（Linux 工具链）两套环境。
-工具总数与可用性不写死：**以 `system.overview` 的 `total_tools` 或 `tools/list` 的实时输出为准**（当前默认启用 50 个，源码注册表共 52 个，含未启用的历史工具）。
+工具总数与可用性不写死：**以 `system.overview` 的 `total_tools` 或 `tools/list` 的实时输出为准**（当前默认启用 51 个，源码注册表共 53 个，含未启用的历史工具）。
 
 ## 工具调用规范（先读这段）
 ## 执行档位（探测驱动，禁止假设）
@@ -31,7 +31,7 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 - 内存修改只用 native 引擎；`backend:legacy` 在 rootHide 上直接拒绝。
 
 
-1. **只调用真实存在的工具名**。下表是当前**默认启用**的工具名（50 个），也是唯一可信的调用名清单；不在表里的名字会直接报 `unknownTool`。
+1. **只调用真实存在的工具名**。下表是当前**默认启用**的工具名（51 个），也是唯一可信的调用名清单；不在表里的名字会直接报 `unknownTool`。
 2. **大工具 + 子命令**：子命令用 `command:`（少数工具用 `action:`）参数传。
    例：`app command:launch bundle_id:com.xxx`、`inject command:enable bundle_id:com.xxx`、`network.capture action:start bundle_id:com.xxx`。
 3. **不要给工具名加任何前缀或别名**：不存在前缀别名机制，加前缀会报 `unknownTool`。
@@ -41,7 +41,7 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 5. 拿不准子命令/参数时：先看 `tools/list` 里该工具的 `parameters` / `param_specs` / `variants` / `prerequisites`（或调用该工具时不带参数看报错里的 usage），仍不确定就先做只读探测。
 6. **熔断规则**：同一工具 + 同一参数 + 同一类错误连续 2 次，运行时置 `RunScope` 中止标志并终止本轮 run。不要重复撞同一面墙：换工具、换参数、或先跑诊断。
 
-## 工具注册表（默认启用 50 个，按类别）
+## 工具注册表（默认启用 51 个，按类别）
 
 | 类别 | 工具名 |
 |---|---|
@@ -53,7 +53,7 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 | fs / filesystem | `artifact`、`container`、`file`、`workspace`、`bind_app`、`bind_app_write`、`app_write_file`、`backup`、`save` |
 | data | `db` |
 | device | `device`、`location` |
-| shell / terminal | `shell.exec`、`root`、`py`、`disasm`、`macho`、`memory` |
+| shell / terminal | `shell.exec`、`root`、`py`、`disasm`、`macho`、`re`、`memory` |
 | automation | `automation`、`macro`、`subagent` |
 | knowledge / skills | `knowledge`、`assistant_memory`、`skills.list`、`skills.read`、`skills.set_enabled` |
 | system | `system.overview`、`tools.audit`、`verify`、`server`、`ssh`、`git`、`jb`、`reminder`、`prompt.read_mode` |
@@ -63,7 +63,7 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 | rescue | `rescue` |
 | package | `package` |
 
-> 同一工具可出现在多个类别（例如 `package` 既是包解剖也是 app 辅助）；名字去重后共 50 个（未启用的历史工具不在表内，调用前以 `system.overview` 为准）。
+> 同一工具可出现在多个类别（例如 `package` 既是包解剖也是 app 辅助）；名字去重后共 51 个（未启用的历史工具不在表内，调用前以 `system.overview` 为准）。
 
 ## 核心工具速查（节选）
 
@@ -78,6 +78,7 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 | `file` | 文件类型/字符串分析（自动绑定 iOS 路径） | `file command:inspect path:/...` |
 | `backup` | 统一备份台账：清点 / 还原 / 清理 | `backup command:list` → `backup command:restore bundle_id:...` |
 | `package` | 解剖 .deb/.ipa | `package command:inspect path:/...` |
+| `re` | 内置逆向引擎：Mach-O → 类/方法/字符串/交叉引用 → report.json+md | `re command:analyze path:/.../x.dylib` |
 | `memory` | 进程内存修改 | `memory command:search ...` |
 | `device` / `location` | 设备信息与伪装 / 定位 | `device command:info` |
 | `shell.exec` | 原生 shell（iOS 原生或 Alpine） | `shell.exec command:"ls -l /..."` |

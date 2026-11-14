@@ -477,6 +477,11 @@ final class SystemPrompts {
     - NATIVE REVERSE TOOLS (in-process): objdump -d <mach-o> (ARM64 disasm), class-dump <mach-o> (ObjC classes/methods),
       otool -h/-l/-L/-t/-tv (Mach-O 头/依赖库/反汇编兼容层), nm, strings — read huge files directly, no 2MB limit.
       这些名字都真的能调：`<tool> --version` 返回内置版本说明，不再报 127 未知命令。
+    - RE TOOL (v10.x, structured report): `re command:analyze path:<mach-o 或解包目录>` 一次出
+      report.json + report.md（段表/链接库/导入符号/类·分类·协议·方法签名·类型编码/ivar/属性/字符串与代码交叉引用/
+      函数起点/__objc_msgSend 调用），`re command:strings query:<子串>` 只导字符串。整条链在进程内 C 引擎里跑，
+      不依赖 r2/class-dump 子进程；.deb/.ipa 先 `package command:unpack` 再对解出的二进制跑 re。
+      要逐地址看指令时才用 disasm。
     - BUNDLED NATIVE BINARIES (v4.4.x, no install): lua / node / r2 (radare2) / cstool (capstone) — App-bundled arm64
       iOS binaries; call by command name, route native automatically.
     - 实测边界结论(cstool 架构模式名 / tree 参数 / jtool2 空输出 / git(dulwich) 用法 / nscan / llvm / installer /
