@@ -305,13 +305,18 @@ struct TerminalPageView: View {
                         if !cmd.isEmpty { session?.submit(cmd); input = "" }
                     }
                 }
-                key(L10n.t("term_key_root")) {
-                    // v10.5：su 键不再往输入框里摆一条命令 —— 旧实现只是填字不提交，
-                    // 看起来就是「点了没反应」；本机后端又是 mobile 身份，id 永远是 501。
-                    // 现在切到 root 后端（经 xosvid 以 uid=0 执行）并立刻跑一次 id。
+                // v10.5：su 键不再往输入框里摆一条命令 —— 旧实现只是填字不提交，
+                // 看起来就是「点了没反应」；本机后端又是 mobile 身份，id 永远是 501。
+                // v10.6：root 不再是独立后端，这枚键就是「本机」的身份开关：
+                //   未提权 → 交给 root 守护以 uid=0 执行，并立刻跑一次 id 证明；
+                //   已提权 → 退回 mobile，提示符的 # 跟着变回 $。
+                key(L10n.t(session?.isRoot == true ? "term_key_exit_root" : "term_key_root")) {
                     guard let s = session else { return }
-                    if s.backend != .root { s.switchBackend(to: .root) }
-                    s.submit("id")
+                    if s.isRoot {
+                        s.setElevated(false)
+                    } else if s.setElevated(true) {
+                        s.submit("id")
+                    }
                     input = ""
                     focused = true
                 }

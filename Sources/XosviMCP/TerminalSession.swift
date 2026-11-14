@@ -16,18 +16,23 @@ import ISHBridge
 // 线程模型：KelivoISHExecutor 的 chunk/done 回调在后台线程，这里一律
 // DispatchQueue.main.async 再改 @Published，避免 SwiftUI 后台发布警告。
 
-/// 终端后端：alpine = iSH 沙盒（默认，有 apk/python/git）；ios = 直接 fork 本机 shell（能读写真实文件系统）；
-/// root = 经 root 守护（xosvid）以 uid=0 执行（v10.5）
+/// 终端后端（v10.6：由三个合成两个）
+///
+/// - `alpine`：iSH 沙盒里的 Linux（有 apk / python3 / git），看不到 iOS 真实文件系统；
+/// - `ios`：本机原生 shell，直接读写真实文件系统。**身份**由会话的 `elevated` 决定：
+///   false = mobile（App 自己 fork），true = uid 0（经 root 守护 xosvid 执行）。
+///
+/// v10.5 曾把 root 单列成第三个后端，但它和「本机」是同一套 shell、同一套路径，
+/// 只有 uid 不同——两个分段等于让用户在选择「同一个东西的两遍」，还多出一堆
+/// `backend == .root` 分支。现在合并成「本机」+ 一个 su 开关。
 enum TermBackend: String, CaseIterable, Identifiable {
     case alpine
     case ios
-    case root
     var id: String { rawValue }
     var title: String {
         switch self {
         case .alpine: return L10n.t("term_backend_alpine")
         case .ios: return L10n.t("term_backend_ios")
-        case .root: return L10n.t("term_backend_root")
         }
     }
     /// 分段条上的短标签（宽顶栏放不下整句译名）
@@ -35,7 +40,6 @@ enum TermBackend: String, CaseIterable, Identifiable {
         switch self {
         case .alpine: return "Alpine"
         case .ios: return "本机"
-        case .root: return "root"
         }
     }
     /// 该后端的家目录：切换后端时 cwd 必须跟着走，否则提示符会停在另一个根里
@@ -43,14 +47,9 @@ enum TermBackend: String, CaseIterable, Identifiable {
         switch self {
         case .alpine: return "/root"
         case .ios: return "/var/mobile"
-        case .root:
-            // v10.5：root 守护跑在 bootstrap 视图里，真实系统挂在 /rootfs；
-            // 家目录按运行期前缀拼，绝不写死解析结果（roothide 重启会换 jbroot）。
-            let rf = JBEnvironment.rootfsPrefix
-            return (rf.isEmpty ? "" : rf) + "/var/mobile"
         }
     }
-    /// ios / root 都走本机原生执行链（cd 要按原生路径解析，不能用 guest 的 pwd）
+    /// 只有 ios 走本机原生执行链（cd 要按原生路径解析，不能用 guest 的 pwd）
     var isNative: Bool { self != .alpine }
 }
 
@@ -85,8 +84,14 @@ final class TermSession: Identifiable, ObservableObject {
     /// 当前是否有命令在跑（决定停止按钮是否可用、输入是否排队）
     @Published var running = false
     @Published var lastExit: Int32 = 0
-    /// 当前会话跑在哪个后端（v9.13：ios = 直接 fork iOS 原生 shell，alpine = iSH 沙盒）
+    /// v10.5：当前会话跑在哪个后端（v9.13：ios = 直接 fork iOS 原生 shell，alpine = iSH 沙盒）
     @Published var backend: TermBackend = .alpine
+    /// v10.6：本机后端的执行身份。false = mobile（App 直接 fork），true = uid 0（经 root 守护）。
+    /// 合并前这是独立的第三个后端 `.root`，但它只是「本机」换了 uid，路径与执行链完全相同。
+    @Published var elevated: Bool = false
+
+    /// 本机后端 + root 身份：runInGuest / prompt / banner 到处要用，收成一个判断
+    var isRoot: Bool { backend == .ios && elevated }
 
     private(set) var runId: String?
     /// iOS 原生后端当前子进程（停止时 kill）
@@ -155,12 +160,9 @@ final class TermSession: Identifiable, ObservableObject {
     }
 
     private func runInGuest(_ command: String) {
-        if backend == .root {
-            runInRoot(command)
-            return
-        }
         if backend == .ios {
-            runIniOS(command)
+            // v10.6：同一套原生 shell，按身份选执行链（mobile 直接 fork / uid 0 交守护）
+            if elevated { runInRoot(command) } else { runIniOS(command) }
             return
         }
         // v10.4：boot 不能留在主线程 —— KelivoISHKernel 的契约是「在后台线程 boot」
@@ -495,14 +497,13 @@ final class TermSession: Identifiable, ObservableObject {
         if backend == .ios {
             // v9.14：原先不论后端都去问 guest 要 pwd，本机后端跑完拿回来的是
             // Alpine 的路径，提示符就跳回沙盒了。本机后端自己算。
-            resolveCwdNative("cd '\(cwd.replacingOccurrences(of: "'", with: "'\\''"))' 2>/dev/null && pwd",
-                             original: "")
-            return
-        }
-        if backend == .root {
-            // root 后端由守护侧解析（权限与视图都跟 App 侧不同）
-            resolveCwdRoot("cd '\(cwd.replacingOccurrences(of: "'", with: "'\\''"))' 2>/dev/null && pwd",
-                           original: "")
+            // v10.6：root 身份交给守护侧解析（权限与视图都跟 App 侧不同）。
+            let script = "cd '\(cwd.replacingOccurrences(of: "'", with: "'\\''"))' 2>/dev/null && pwd"
+            if elevated {
+                resolveCwdRoot(script, original: "")
+            } else {
+                resolveCwdNative(script, original: "")
+            }
             return
         }
         _ = KelivoISHExecutor.startCommand(
@@ -526,7 +527,7 @@ final class TermSession: Identifiable, ObservableObject {
     }
 
     func stop() {
-        if backend == .root {
+        if isRoot {
             // 守护侧的命令在另一个进程里跑，cli 只能等它结束 —— 这里杀不到，也不谎报「已停止」。
             if running { append(L10n.t("term_root_no_stop") + "\n", kind: .notice) }
             return
@@ -560,8 +561,34 @@ final class TermSession: Identifiable, ObservableObject {
             stop()
         }
         backend = target
+        // v10.6：离开「本机」就退回 mobile 身份——Alpine 里没有 uid 这回事，
+        // 回到本机时也不该悄悄还是 root（用户看得见的开关才算数）。
+        if target != .ios { elevated = false }
         cwd = target.home
         append(L10n.t("term_backend_switched", target.title) + "\n", kind: .notice)
+    }
+
+    /// v10.6：切换「本机」后端的执行身份（mobile ⇄ uid 0）。
+    /// - Parameter on: true = 经 root 守护以 uid 0 执行；false = App 自己 fork（mobile）。
+    /// - Returns: 切换后的真实状态（守护不可用时会保持 false）。
+    @discardableResult
+    func setElevated(_ on: Bool) -> Bool {
+        if backend != .ios {
+            switchBackend(to: .ios)
+        }
+        guard on != elevated else { return elevated }
+        if on, Self.rootCLIPath == nil {
+            append(L10n.t("term_root_unavailable") + "\n", kind: .notice)
+            return elevated
+        }
+        // 有命令在跑就别换身份：守护侧的命令杀不掉，输出会混在两条执行链之间
+        if running {
+            append(L10n.t(isRoot ? "term_root_no_stop" : "term_busy") + "\n", kind: .notice)
+            return elevated
+        }
+        elevated = on
+        append(L10n.t(on ? "term_root_on" : "term_root_off") + "\n", kind: .notice)
+        return elevated
     }
 
     // MARK: cd
@@ -592,7 +619,7 @@ final class TermSession: Identifiable, ObservableObject {
             let base = cwd.replacingOccurrences(of: "'", with: "'\\''")
             let arg = resolved.replacingOccurrences(of: "'", with: "'\\''")
             resolveCwdNative("cd '\(base)' 2>/dev/null; cd '\(arg)' 2>/dev/null && pwd", original: original)
-        } else if backend == .root {
+        } else if isRoot {
             // root 后端同样本机解析，但要在守护里跑（/var/root 这类目录 mobile 进不去）
             let base = cwd.replacingOccurrences(of: "'", with: "'\\''")
             let arg = resolved.replacingOccurrences(of: "'", with: "'\\''")
@@ -646,7 +673,7 @@ final class TermSession: Identifiable, ObservableObject {
                 if res.exitCode == 0, out.hasPrefix("/") {
                     self.cwd = out
                 } else {
-                    if self.backend == .ios, original == "cd /root" {
+                    if self.backend == .ios, !self.elevated, original == "cd /root" {
                         // v9.13.1：手敲 cd /root 在本机后端必败（iOS 无 /root），
                         // 直接给出真实原因与正确路径，而不是一句「无法进入」。
                         self.append(L10n.t("term_root_home_hint") + "\n", kind: .notice)
@@ -673,7 +700,7 @@ final class TermSession: Identifiable, ObservableObject {
 
     /// 校验目录存在（Alpine 后端）：在 guest 里 cd 一次，成功才改 cwd
     private func setCwd(_ p: String) {
-        if backend == .root {
+        if isRoot {
             resolveCwdRoot("cd '\(p.replacingOccurrences(of: "'", with: "'\\''"))' 2>/dev/null && pwd",
                            original: "cd \(p)")
             return
@@ -706,16 +733,16 @@ final class TermSession: Identifiable, ObservableObject {
     // MARK: 提示符
 
     var promptText: String {
-        // root 后端的 pwd 来自 bootstrap 视图，按 App 写法归一化后再与 home 比
+        // root 身份的 pwd 来自 bootstrap 视图，按 App 写法归一化后再与 home 比
         let home = backend.isNative ? TermSession.normalizeRootPath(backend.home) : backend.home
-        let cur = backend == .root ? TermSession.normalizeRootPath(cwd) : cwd
+        let cur = isRoot ? TermSession.normalizeRootPath(cwd) : cwd
         let shown: String
         if cur == home { shown = "~" }
         else if cur.hasPrefix(home + "/") { shown = "~" + cur.dropFirst(home.count) }
         else { shown = cur }
         let device = TermSession.deviceName
-        // v10.5：root 后端的提示符按惯例用 #，一眼能看出当前是 uid=0
-        return "\(device):\(shown)\(backend == .root ? "#" : "$")"
+        // v10.5：uid=0 的提示符按惯例用 #，一眼能看出当前身份
+        return "\(device):\(shown)\(isRoot ? "#" : "$")"
     }
 
     /// 提示符里的设备名一律用 guest 的 hostname，这里是编译期常量，避免每帧查内核
@@ -736,10 +763,8 @@ final class TermSession: Identifiable, ObservableObject {
             key = "term_banner"
             ver = ISH.runtimeVersion
         case .ios:
-            key = "term_banner_native"
-            ver = bannerVer
-        case .root:
-            key = "term_banner_root"
+            // v10.6：本机后端两种身份共用一条横幅位，root 时换成「uid=0」那版
+            key = elevated ? "term_banner_root" : "term_banner_native"
             ver = bannerVer
         }
         append(L10n.t(key, TermSession.deviceName, ver) + "\n", kind: .prompt)

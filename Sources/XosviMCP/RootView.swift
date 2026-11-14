@@ -392,8 +392,8 @@ struct ConversationDrawerView: View {
         .accessibilityLabel(L10n.t("settings"))
     }
 
-    /// 新建会话（v10.5：由头部右上角移到底栏、设置齿轮右侧，同尺寸同间距；
-    /// 齿轮用弱填充、这枚用反色实心，主次一眼可分）
+    /// 新建会话（v10.5：由头部右上角移到底栏、设置齿轮右侧，同尺寸同间距）
+    /// v10.6：反色实心底（浅色下是纯黑块）太扎眼，改回次级填充，与齿轮只差一档灰度。
     private var newConversationButton: some View {
         Button(action: {
             withAnimation { ui.drawerOpen = false }
@@ -402,11 +402,11 @@ struct ConversationDrawerView: View {
         }) {
             Image(systemName: "square.and.pencil")
                 .font(.system(size: 21, weight: .semibold))
-                .foregroundColor(XColor.invertText)
+                .foregroundColor(XColor.text)
                 .frame(width: XMetric.fab, height: XMetric.fab)
                 .background(
                     RoundedRectangle(cornerRadius: XRadius.row, style: .continuous)
-                        .fill(XColor.invertBg)
+                        .fill(XColor.fillStrong)
                 )
                 .contentShape(Rectangle())
         }
@@ -415,12 +415,13 @@ struct ConversationDrawerView: View {
     }
 
     private var bottomWorkbench: some View {
-        // v6.6.7：删除本机环境入口卡片；设置齿轮移到此界面左边（用户要求）
-        // v10.5：新建会话键从头部移来，紧挨齿轮右侧——两枚同 52×52、间距 12（与齿轮内部尺寸一致）
+        // v6.6.7：删除本机环境入口卡片
+        // v10.5：新建会话键从头部移来，紧挨齿轮右侧——两枚同 52×52、间距 12
+        // v10.6：整组靠右（用户要求「设置键往右移」），黑底实心改次级填充
         HStack(spacing: 12) {
+            Spacer(minLength: 0)
             settingsButton
             newConversationButton
-            Spacer()
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
