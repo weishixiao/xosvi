@@ -210,3 +210,33 @@ tool failed: [UNKNOWN] tool failed: [UNKNOWN] 无法连接服务器。 (category
 验证：`build-xosvi-ios#98`（run 43440094294）在 `239479c` 上 **SUCCESS，18m25s**——完整 iOS 构建通过
 （v10.3 三处改动同批）；`CI#107`（run 43440094301）SUCCESS，1m3s，含 Swift `-parse` 门禁。
 **设备侧表现未测**：本机装的是旧构建，要看到新的状态行必须先装上这次 CI 产出的 IPA 再点一次「抓报错」。
+
+## 内置逆向引擎：`re` 工具（v10.4，2026-11-14，commit 79fd3fa）
+
+把原本散在 agent 侧的逆向链（Mach-O → ObjC 类/方法/字符串/交叉引用 → 报告）收成设备内一个 MCP 工具，
+不再依赖 agent 逐个跑 otool/class-dump 再拼结论。
+
+| 文件 | 变更 |
+|---|---|
+| `CReCore/include/xosvi_re.h`、`CReCore/src/xosvi_re.c` | 纯 C 解析引擎（无第三方依赖，MachOKit 是远程 SPM 依赖、本地读不到 API，故不采用）：ObjC 类/元类/方法/属性/ivar、CFString 与 C 字符串、`__objc_stubs` 交叉引用、段与加固特征；输出 `report.json` + `report.md` |
+| `Sources/XosviMCP/ReTool.swift` | `re` 工具：`analyze`（单文件或目录，递归上限 24 个目标 / 深度 6 / 单文件 200 MB / maxVisited 6000，按体积降序）、`strings`（`query` 过滤）、`selftest`；结果写 `Workspace/re/<stamp>-<slug>/`，可用 `out_dir` 覆盖 |
+| `Sources/XosviMCP/MCPCore.swift` | 工具白名单加 `re` |
+| `docs/registry.snapshot.json` | 补 `re` 条目（CI 的工具契约检查比对快照，新增工具不同步会直接红） |
+| `AGENTS.md` | 「核心工具速查」补 `re`，描述里补 Example 段（契约检查同样要求） |
+
+引擎首版有几处自查出的错，已一并修：`strip_objc_prefix()` 前缀剥离越界、方法 types 应优先 `cstr_at`、
+`adrp` 判定掩码应为 `(i & 0x9F000000) == 0x90000000`、漏 `collect_cfstrings()`、
+`count_aggregate()` 缺位导致 methods/ivars/properties 恒为 0。
+
+同批修掉上一条构建失败的编译错误：`Sources/XosviMCP/ISH.swift` 用 ZIPFoundation 的
+`Entry.EntryType.symbolicLink`，而库里的成员是 `.symlink`（`init(mode:)` 按 `S_IFMT` 拆出）。修在 `0608d45`。
+
+验证：
+- `build-xosvi-ios#99`（`bd1337c`）FAILED 25m31s —— 上面的 `.symbolicLink` 编译错误；
+- `build-xosvi-ios#100`（`0608d45`，run 43544545326）**SUCCESS 15m17s**，产物 Xosvi 96.1 MB —— Swift 侧 `re` 编译通过；
+- `build-xosvi-ios#101`（`79fd3fa`，run 43545335448）**SUCCESS 23m03s**，产物同名 96.1 MB；
+- `CI#111` SUCCESS 41s，含 `swiftc -parse` 语法门禁与工具契约检查；
+- 滚动 Release 已更新为 **v7.18.0-b101**。
+
+**设备侧表现未测**：本机装的是旧构建，`re` 从未在这台设备上真正跑过。要核对的是 `analyze` 对真实
+Mach-O 的类/方法计数与交叉引用、目录模式的多目标去重、`selftest` 的期望值 —— 都得先装上 b101 的 IPA。
