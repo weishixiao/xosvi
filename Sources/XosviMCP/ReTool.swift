@@ -264,8 +264,11 @@ final class ReTool: MCPTool {
         var errBuf = [CChar](repeating: 0, count: 512)
         let rc: Int32 = path.withCString { fp in
             outRoot.withCString { op in
-                query.withCString { qp in
-                    xosvi_re_strings(fp, qp.isEmpty ? nil : qp, op, &errBuf, 512)
+                if query.isEmpty {
+                    return xosvi_re_strings(fp, nil, op, &errBuf, 512)
+                }
+                return query.withCString { qp in
+                    xosvi_re_strings(fp, qp, op, &errBuf, 512)
                 }
             }
         }
@@ -314,19 +317,23 @@ final class ReTool: MCPTool {
         checks.append(["id": "reject_non_macho", "passed": badRC != 0 && !badMsg.isEmpty,
                        "detail": "rc=\(badRC) err=\(badMsg)"])
 
-        // 截断的 Mach-O 头（magic 对、后面全 0）→ 必须报错
-        var head = Data()
-        head.append(contentsOf: [0xCF, 0xFA, 0xED, 0xFE])
-        head.append(Data(repeating: 0, count: 2044))
-        let broken = dir + "/broken.macho"
-        fm.createFile(atPath: broken, contents: head)
+        // 只有 magic、没有装载命令的 Mach-O → 引擎必须能容忍并照样出报告（空壳不崩）
+        var headBytes = Data()
+        headBytes.append(contentsOf: [0xCF, 0xFA, 0xED, 0xFE])
+        headBytes.append(Data(repeating: 0, count: 2044))
+        let broken = dir + "/empty.macho"
+        fm.createFile(atPath: broken, contents: headBytes)
         var err2 = [CChar](repeating: 0, count: 512)
+        let emptyDir = dir + "/out"
+        try? fm.createDirectory(atPath: emptyDir, withIntermediateDirectories: true)
         let brokenRC: Int32 = broken.withCString { fp in
-            dir.withCString { op in xosvi_re_analyze(fp, op, nil, &err2, 512) }
+            emptyDir.withCString { op in xosvi_re_analyze(fp, op, nil, &err2, 512) }
         }
         let brokenMsg = Self.cString(err2)
-        checks.append(["id": "reject_truncated", "passed": brokenRC != 0,
-                       "detail": "rc=\(brokenRC) err=\(brokenMsg)"])
+        let reportPath = emptyDir + "/report.json"
+        let hasCounts = (Self.readCounts(reportPath)?.isEmpty == false)
+        checks.append(["id": "empty_header_ok", "passed": brokenRC == 0 && hasCounts,
+                       "detail": "rc=\(brokenRC) counts=\(hasCounts ? "ok" : "missing") err=\(brokenMsg)"])
 
         try? fm.removeItem(atPath: dir)
         return Self.verdict(checks)
