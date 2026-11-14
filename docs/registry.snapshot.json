@@ -1,5 +1,5 @@
 {
-  "count": 54,
+  "count": 55,
   "names": [
     "app",
     "app_write_file",
@@ -35,6 +35,7 @@
     "project",
     "prompt.read_mode",
     "py",
+    "re",
     "reminder",
     "rescue",
     "root",
@@ -328,6 +329,14 @@
       "requires_jailbreak": false,
       "requires_trollstore": false,
       "verified": true
+    },
+    "re": {
+      "category": "macho",
+      "file": "ReTool.swift",
+      "remote_only": false,
+      "requires_jailbreak": false,
+      "requires_trollstore": false,
+      "verified": false
     },
     "reminder": {
       "category": "system",

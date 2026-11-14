@@ -35,7 +35,8 @@ final class ReTool: MCPTool {
             + "Use for: turning an unpacked package into a readable report, finding which methods reference a "
             + "string, recovering class layout / superclass (decrypted dylib, framework binary). "
             + "Don't use for: decryption (app decrypt), dumping a running process's ObjC runtime (inject), "
-            + "disassembling one address (disasm), .deb/.ipa containers (package unpack first, then re analyze).",
+            + "disassembling one address (disasm), .deb/.ipa containers (package unpack first, then re analyze). "
+            + "Example: re analyze path:/var/mobile/Documents/unpacked/com.xxx.dylib.",
         parameters: [
             "command": "analyze (default) / strings / selftest",
             "path": "absolute path to a Mach-O file, or a directory to scan for Mach-O files",
