@@ -181,6 +181,19 @@ struct DataManagementView: View {
                     }
                 }
 
+                Section(header: SettingSectionHeader(title: "会话")) {
+                    // v10.5：会话导出的总入口——抽屉里是单会话，这里是把全部会话拼成一份存档
+                    SettingRowButton(
+                        title: "导出全部会话",
+                        subtitle: "按更新时间倒序拼成一份 Markdown，存到工作区 exports/",
+                        icon: "square.and.arrow.up",
+                        color: .blue
+                    ) {
+                        ConversationExport.presentAll()
+                        refresh()
+                    }
+                }
+
                 Section(header: SettingSectionHeader(title: "导入")) {
                     SettingRowButton(
                         title: "导入文件到工作区",

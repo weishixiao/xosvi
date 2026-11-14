@@ -167,8 +167,9 @@ struct ConversationDrawerView: View {
         .onAppear(perform: refreshReadiness)
     }
 
-    /// v9.11：顶部统一头部 + 搜索框/编辑键同一行（搜索框与编辑键仍并排）
+    /// v9.11：顶部统一头部 + 搜索框（搜索框独占一行）
     /// 右上角圆圈 X 关闭键已删除；抽屉用点遮罩/侧滑关闭。
+    /// v10.5：新建会话键移到底栏设置齿轮右侧（用户要求），头部只留标题与搜索框。
     private var header: some View {
         VStack(alignment: .leading, spacing: 10) {
             // 抽屉顶部统一头部（与设置页二级页同一套 XHeroHeader）
@@ -176,22 +177,7 @@ struct ConversationDrawerView: View {
                         title: L10n.t("drawer_title"),
                         subtitle: L10n.t("drawer_count")
                             .replacingOccurrences(of: "{n}", with: "\(store.conversations.count)"))
-            HStack(spacing: 10) {
-                searchBar
-                // 编辑（新建会话）——移到最右侧，与搜索框同一条水平线
-                Button(action: {
-                    withAnimation { ui.drawerOpen = false }
-                    store.newConversation()
-                    NotificationCenter.default.post(name: .tmNewConversation, object: nil)
-                }) {
-                    Image(systemName: "square.and.pencil")
-                        .font(.system(size: 19, weight: .medium))
-                        .foregroundColor(XColor.text)
-                        .frame(width: 36, height: 36)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(PlainButtonStyle())
-            }
+            searchBar
         }
         .padding(.horizontal, 16)
         .padding(.top, topSafeArea + 6)
@@ -267,7 +253,14 @@ struct ConversationDrawerView: View {
                                         store.select(conv.id)
                                         withAnimation { ui.drawerOpen = false }
                                     },
-                                    onDelete: { deleteSingle(conv.id) }
+                                    onDelete: { deleteSingle(conv.id) },
+                                    onExport: {
+                                        // v10.5：先收抽屉再弹自建分享菜单（ShareCenter 自己延迟 0.28s 呈现）
+                                        withAnimation { ui.drawerOpen = false }
+                                        AuditLog.shared.log("drawer.export", detail: conv.title)
+                                        ConversationExport.present(conv)
+                                    },
+                                    exportTitle: L10n.t("btn_export")
                                 )
                                 .id(conv.id)
                             }
@@ -379,23 +372,54 @@ struct ConversationDrawerView: View {
         _ = probe.lastReport?.ready
     }
 
+    /// 设置齿轮（左下角第一枚）
+    private var settingsButton: some View {
+        Button(action: {
+            withAnimation { ui.drawerOpen = false }
+            ui.settingsPresented = true
+        }) {
+            Image(systemName: "gearshape.fill")
+                .font(.system(size: 22, weight: .semibold))
+                .foregroundColor(XColor.text)
+                .frame(width: XMetric.fab, height: XMetric.fab)
+                .background(
+                    RoundedRectangle(cornerRadius: XRadius.row, style: .continuous)
+                        .fill(XColor.fill)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(L10n.t("settings"))
+    }
+
+    /// 新建会话（v10.5：由头部右上角移到底栏、设置齿轮右侧，同尺寸同间距；
+    /// 齿轮用弱填充、这枚用反色实心，主次一眼可分）
+    private var newConversationButton: some View {
+        Button(action: {
+            withAnimation { ui.drawerOpen = false }
+            store.newConversation()
+            NotificationCenter.default.post(name: .tmNewConversation, object: nil)
+        }) {
+            Image(systemName: "square.and.pencil")
+                .font(.system(size: 21, weight: .semibold))
+                .foregroundColor(XColor.invertText)
+                .frame(width: XMetric.fab, height: XMetric.fab)
+                .background(
+                    RoundedRectangle(cornerRadius: XRadius.row, style: .continuous)
+                        .fill(XColor.invertBg)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(PlainButtonStyle())
+        .accessibilityLabel(L10n.t("drawer_new"))
+    }
+
     private var bottomWorkbench: some View {
         // v6.6.7：删除本机环境入口卡片；设置齿轮移到此界面左边（用户要求）
+        // v10.5：新建会话键从头部移来，紧挨齿轮右侧——两枚同 52×52、间距 12（与齿轮内部尺寸一致）
         HStack(spacing: 12) {
-            Button(action: {
-                withAnimation { ui.drawerOpen = false }
-                ui.settingsPresented = true
-            }) {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundColor(XColor.text)
-                    .frame(width: 52, height: 52)
-                    .background(
-                        RoundedRectangle(cornerRadius: XRadius.row, style: .continuous)
-                            .fill(XColor.fill)
-                    )
-                    .contentShape(Rectangle())
-            }
+            settingsButton
+            newConversationButton
             Spacer()
         }
         .padding(.horizontal, 16)

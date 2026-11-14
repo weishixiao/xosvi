@@ -135,6 +135,7 @@ enum L10n {
     "drawer_ready": ["zh": "就绪 · 可注入", "en": "Ready · Injectable"],
     "drawer_env_limited": ["zh": "环境受限 · 点按查看", "en": "Limited · Tap to view"],
     "drawer_probe": ["zh": "点按检测本机", "en": "Tap to probe"],
+    "drawer_new": ["zh": "新建会话", "en": "New Chat"],
 
     // ===== 设置分组 =====
     "sec_models": ["zh": "模型", "en": "Models"],
@@ -276,16 +277,22 @@ enum L10n {
     "term_cd_failed": ["zh": "无法进入：%@", "en": "Cannot enter: %@"],
     "term_no_such_dir": ["zh": "目录不存在：%@", "en": "No such directory: %@"],
     "term_banner": ["zh": "Alpine %2$@ · %1$@ · iSH 沙盒（无 PTY）", "en": "Alpine %2$@ · %1$@ · iSH sandbox (no PTY)"],
+    // v10.5：本机 / root 后端不是 Alpine，横幅不能再印「iSH 沙盒」（root 会话尤其误导）
+    "term_banner_native": ["zh": "本机原生 · %1$@ · %2$@ · 一次性执行（无 PTY）", "en": "Native iOS · %1$@ · %2$@ · one-shot (no PTY)"],
+    "term_banner_root": ["zh": "root 守护 · %1$@ · %2$@ · uid=0 一次性执行（无 PTY）", "en": "Root daemon · %1$@ · %2$@ · uid=0 one-shot (no PTY)"],
     "term_banner_hint": ["zh": "输入命令回车执行；vim/top 等全屏交互程序不可用。", "en": "Type a command and press return; full-screen TUIs like vim/top are not supported."],
     "term_key_clear": ["zh": "清屏", "en": "Clear"],
     "term_key_paste": ["zh": "粘贴", "en": "Paste"],
     "term_key_root": ["zh": "su", "en": "su"],
-    "term_root_home_hint": ["zh": "iOS 没有 /root：root 用户的家目录是 /var/root（本机后端以 mobile 身份运行，无 root 权限）", "en": "iOS has no /root: root's home is /var/root (native backend runs as mobile, without root privileges)"],
+    "term_root_home_hint": ["zh": "iOS 没有 /root：root 用户的家目录是 /var/root。本机后端以 mobile 身份运行，要真正的 uid=0 请点 su 切到 root 后端", "en": "iOS has no /root: root's home is /var/root. The native backend runs as mobile; tap su to switch to the root backend for real uid=0"],
     "term_spawn_failed": ["zh": "无法启动 shell：%@", "en": "Cannot start shell: %@"],
     "term_native_no_shell": ["zh": "本机没有可用的 shell：iOS 本身不带 /bin/sh，只有越狱 bootstrap（rootless 的 /var/jb 或 roothide）里才有 sh；先用 Alpine 沙盒后端", "en": "No shell on device: iOS ships no /bin/sh; only a jailbreak bootstrap (rootless /var/jb or roothide) provides one. Use the Alpine sandbox backend."],
     "term_boot_hint": ["zh": "正在启动沙盒内核…（首次要装 rootfs，稍等）", "en": "Starting the sandbox kernel… (first run installs a rootfs, please wait)"],
     "term_backend_alpine": ["zh": "Alpine 沙盒", "en": "Alpine sandbox"],
     "term_backend_ios": ["zh": "本机原生", "en": "iOS native"],
+    "term_backend_root": ["zh": "root 守护（uid 0）", "en": "root daemon (uid 0)"],
+    "term_root_unavailable": ["zh": "root 后端不可用：没找到 xosvi-cli，或 root 守护（xosvid）没有在跑", "en": "root backend unavailable: xosvi-cli not found, or the root daemon (xosvid) is not running"],
+    "term_root_no_stop": ["zh": "root 命令由守护进程执行，无法中途停止；请等它跑完", "en": "root commands run in the daemon and cannot be stopped midway; wait for it to finish"],
     "term_backend_switched": ["zh": "后端已切换到 %@（工作目录重置为该后端的家目录）", "en": "Backend switched to %@ (cwd reset to that backend's home)"],
 
     "ui_0": ["zh": "AI 可读网页全文", "en": "AI can read full page text"],

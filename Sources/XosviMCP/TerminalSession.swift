@@ -16,15 +16,18 @@ import ISHBridge
 // 线程模型：KelivoISHExecutor 的 chunk/done 回调在后台线程，这里一律
 // DispatchQueue.main.async 再改 @Published，避免 SwiftUI 后台发布警告。
 
-/// 终端后端：alpine = iSH 沙盒（默认，有 apk/python/git）；ios = 直接 fork 本机 shell（能读写真实文件系统）
+/// 终端后端：alpine = iSH 沙盒（默认，有 apk/python/git）；ios = 直接 fork 本机 shell（能读写真实文件系统）；
+/// root = 经 root 守护（xosvid）以 uid=0 执行（v10.5）
 enum TermBackend: String, CaseIterable, Identifiable {
     case alpine
     case ios
+    case root
     var id: String { rawValue }
     var title: String {
         switch self {
         case .alpine: return L10n.t("term_backend_alpine")
         case .ios: return L10n.t("term_backend_ios")
+        case .root: return L10n.t("term_backend_root")
         }
     }
     /// 分段条上的短标签（宽顶栏放不下整句译名）
@@ -32,10 +35,23 @@ enum TermBackend: String, CaseIterable, Identifiable {
         switch self {
         case .alpine: return "Alpine"
         case .ios: return "本机"
+        case .root: return "root"
         }
     }
     /// 该后端的家目录：切换后端时 cwd 必须跟着走，否则提示符会停在另一个根里
-    var home: String { self == .ios ? "/var/mobile" : "/root" }
+    var home: String {
+        switch self {
+        case .alpine: return "/root"
+        case .ios: return "/var/mobile"
+        case .root:
+            // v10.5：root 守护跑在 bootstrap 视图里，真实系统挂在 /rootfs；
+            // 家目录按运行期前缀拼，绝不写死解析结果（roothide 重启会换 jbroot）。
+            let rf = JBEnvironment.rootfsPrefix
+            return (rf.isEmpty ? "" : rf) + "/var/mobile"
+        }
+    }
+    /// ios / root 都走本机原生执行链（cd 要按原生路径解析，不能用 guest 的 pwd）
+    var isNative: Bool { self != .alpine }
 }
 
 // v10.4：值类型。
@@ -139,6 +155,10 @@ final class TermSession: Identifiable, ObservableObject {
     }
 
     private func runInGuest(_ command: String) {
+        if backend == .root {
+            runInRoot(command)
+            return
+        }
         if backend == .ios {
             runIniOS(command)
             return
@@ -326,6 +346,126 @@ final class TermSession: Identifiable, ObservableObject {
         source.resume()
     }
 
+    // MARK: root 后端（v10.5）
+    //
+    // 本机后端以 mobile 身份跑，拿不到 uid=0。真正的 root 身份走设备上已有的 root 守护：
+    // 用 `<bootstrap>/usr/bin/xosvi-cli` 把命令交给 xosvid（MachService wiki.qaq.xosvi.service，
+    // 以 root 启动的 LaunchDaemon），它再以 root 执行 `xosvi-build --exec <cwd> <命令>`。
+    //
+    // 两点必须记住：
+    //   ① 必须走子进程（cli），不要在 App 里直接用 libxpc 连守护 —— 本机那条路有
+    //      EXC_GUARD / LIBXPC 的崩溃史（见 XosviXPC.swift 的长注释）。
+    //   ② cli 的 `helper <name> <project-dir> [args...]` 会把第三个参数**原样透传**，
+    //      所以 `--exec` 要放在 project-dir 的位置上（实测：放后面会被当成脚本名）。
+    //
+    // 代价：cli 一次性返回，没有流式输出；命令跑完才整段上屏。
+    static let rootCLIPath: String? = JBEnvironment.firstExistingPath("/usr/bin/xosvi-cli")
+
+    private func runInRoot(_ command: String) {
+        guard Self.rootCLIPath != nil else {
+            running = false
+            append(L10n.t("term_root_unavailable") + "\n", kind: .notice)
+            return
+        }
+        running = true
+        lastExit = 0
+        stoppedByUser = false
+
+        let quotedCwd = cwd.replacingOccurrences(of: "'", with: "'\\''")
+        // cwd 两种视图都试一次；都不存在就留在守护的默认目录里，命令照跑。
+        // 末尾塞哨兵：xosvi-build 会再打一行 [exit N]，用它取真实退出码。
+        let script = "cd '\(quotedCwd)' 2>/dev/null || true; ( \(command) ) 2>&1; "
+            + "__xosvi_rc=$?; echo \"__XOSVI_ROOT_RC__$__xosvi_rc\"; exit $__xosvi_rc"
+
+        rootRun(script, timeout: 3600) { [weak self] code, text, timedOut in
+            guard let self = self else { return }
+            if !text.isEmpty { self.appendChunk(text) }
+            self.finishRun(code: code, runId: "",
+                           dict: timedOut ? ["timedOut": NSNumber(value: true)] : [:])
+        }
+    }
+
+    /// 把一段脚本交给 root 守护执行，回调一律在主线程。
+    /// - Note: 一次性返回，没有流式输出（cli 收齐守护的 stdout 才打印）。
+    private func rootRun(_ script: String, timeout: TimeInterval,
+                         completion: @escaping (Int32, String, Bool) -> Void) {
+        guard let cli = Self.rootCLIPath else {
+            completion(127, L10n.t("term_root_unavailable") + "\n", false)
+            return
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let res = BuildRunner.shared.run(
+                executable: cli,
+                args: ["helper", "xosvi-build", "--exec", XDirs.work, script],
+                timeout: timeout)
+            let raw = res.stdout.isEmpty ? res.stderr : res.stdout
+            let parsed = Self.parseRootOutput(raw)
+            let code = parsed.code ?? res.exitCode
+            DispatchQueue.main.async { completion(code, parsed.text, res.timedOut) }
+        }
+    }
+
+    /// root 守护跑在 bootstrap 视图里：`pwd` 给 `/rootfs/private/var/mobile/…`，
+    /// App 侧看到的是同一个目录的 `/var/mobile/…`。只把这一对前缀折成 App 写法，
+    /// 其余（bootstrap 自己的 /usr 等）原样保留 —— 折了反而 cd 不回去。
+    static func normalizeRootPath(_ p: String) -> String {
+        var s = p
+        if s == "/rootfs" { return "/" }
+        if s.hasPrefix("/rootfs/") { s = String(s.dropFirst("/rootfs".count)) }
+        if s == "/private/var" { return "/var" }
+        if s.hasPrefix("/private/var/") { s = String(s.dropFirst("/private".count)) }
+        return s
+    }
+
+    /// 从 `xosvi-cli` 的文本输出里剥出命令本身的输出与退出码。
+    ///
+    /// cli 的格式（xosvi-cli.c / xosvi-build.c）：
+    ///   status: OK … exit_code: N
+    ///   --- stdout ---
+    ///   bootstrap=… shell=… uid=0 cwd=…      ← xosvi-build 的诊断头，丢掉
+    ///   <命令输出>
+    ///   __XOSVI_ROOT_RC__<rc>
+    ///   [exit <rc>]
+    static func parseRootOutput(_ raw: String) -> (text: String, code: Int32?) {
+        guard let marker = raw.range(of: "--- stdout ---") else {
+            // 通道层失败（连不上守护）：cli 的报错本来就在这段文本里，原样给用户
+            let msg = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (msg.isEmpty ? "" : msg + "\n", nil)
+        }
+        var body = String(raw[marker.upperBound...])
+        // 去掉 xosvi-build 的 4 行诊断头（只在最前面，且只认这几种前缀）
+        var lines = body.components(separatedBy: "\n")
+        var i = 0
+        while i < lines.count && i < 8 {
+            let l = lines[i]
+            if l.isEmpty { i += 1; continue }
+            if l.hasPrefix("bootstrap=") || l.hasPrefix("shell=")
+                || l.hasPrefix("uid=") || l.hasPrefix("cwd=") {
+                lines.remove(at: i)
+                continue
+            }
+            break
+        }
+        body = lines.joined(separator: "\n")
+
+        var code: Int32?
+        if let rc = body.range(of: "__XOSVI_ROOT_RC__") {
+            let digits = body[rc.upperBound...].prefix { $0 == "-" || ($0 >= "0" && $0 <= "9") }
+            if let v = Int32(digits) { code = v }
+            body = String(body[..<rc.lowerBound])
+        }
+        if let ex = body.range(of: "[exit ", options: .backwards) {
+            if code == nil {
+                let digits = body[ex.upperBound...].prefix { $0 == "-" || ($0 >= "0" && $0 <= "9") }
+                if let v = Int32(digits) { code = v }
+            }
+            body = String(body[..<ex.lowerBound])
+        }
+        while body.hasSuffix("\n\n") { body.removeLast() }
+        if !body.isEmpty && !body.hasSuffix("\n") { body += "\n" }
+        return (body, code)
+    }
+
     private func finishRun(code: Int32, runId: String, dict: [String: Any]) {
         running = false
         self.runId = nil
@@ -359,6 +499,12 @@ final class TermSession: Identifiable, ObservableObject {
                              original: "")
             return
         }
+        if backend == .root {
+            // root 后端由守护侧解析（权限与视图都跟 App 侧不同）
+            resolveCwdRoot("cd '\(cwd.replacingOccurrences(of: "'", with: "'\\''"))' 2>/dev/null && pwd",
+                           original: "")
+            return
+        }
         _ = KelivoISHExecutor.startCommand(
             "pwd",
             runId: UUID().uuidString,
@@ -380,6 +526,11 @@ final class TermSession: Identifiable, ObservableObject {
     }
 
     func stop() {
+        if backend == .root {
+            // 守护侧的命令在另一个进程里跑，cli 只能等它结束 —— 这里杀不到，也不谎报「已停止」。
+            if running { append(L10n.t("term_root_no_stop") + "\n", kind: .notice) }
+            return
+        }
         if iosPid > 0 {
             // v10.4：「已停止」交给收尾的 finishRun 统一写一行（原来这里再加一次 = 两行）
             stoppedByUser = true
@@ -427,7 +578,7 @@ final class TermSession: Identifiable, ObservableObject {
         return arg
     }
 
-    private var homeDir: String { backend == .ios ? "/var/mobile" : "/root" }
+    private var homeDir: String { backend.home }
 
     private func applyCD(_ target: String, original: String) {
         var resolved = target
@@ -441,6 +592,11 @@ final class TermSession: Identifiable, ObservableObject {
             let base = cwd.replacingOccurrences(of: "'", with: "'\\''")
             let arg = resolved.replacingOccurrences(of: "'", with: "'\\''")
             resolveCwdNative("cd '\(base)' 2>/dev/null; cd '\(arg)' 2>/dev/null && pwd", original: original)
+        } else if backend == .root {
+            // root 后端同样本机解析，但要在守护里跑（/var/root 这类目录 mobile 进不去）
+            let base = cwd.replacingOccurrences(of: "'", with: "'\\''")
+            let arg = resolved.replacingOccurrences(of: "'", with: "'\\''")
+            resolveCwdRoot("cd '\(base)' 2>/dev/null; cd '\(arg)' 2>/dev/null && pwd", original: original)
         } else {
             // 相对路径：交给 guest 解析（符号链接 / .. 都按真实结果）
             let base = cwd.replacingOccurrences(of: "'", with: "'\\''")
@@ -502,8 +658,26 @@ final class TermSession: Identifiable, ObservableObject {
         }
     }
 
+    /// root 后端里解析 cd：脚本交给守护以 root 跑，成功就把 pwd 归一化后当新 cwd
+    private func resolveCwdRoot(_ script: String, original: String) {
+        rootRun(script, timeout: 20) { [weak self] code, text, _ in
+            guard let self = self else { return }
+            let out = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if code == 0, out.hasPrefix("/") {
+                self.cwd = Self.normalizeRootPath(out)
+            } else if !original.isEmpty {
+                self.append(L10n.t("term_no_such_dir", original) + "\n", kind: .notice)
+            }
+        }
+    }
+
     /// 校验目录存在（Alpine 后端）：在 guest 里 cd 一次，成功才改 cwd
     private func setCwd(_ p: String) {
+        if backend == .root {
+            resolveCwdRoot("cd '\(p.replacingOccurrences(of: "'", with: "'\\''"))' 2>/dev/null && pwd",
+                           original: "cd \(p)")
+            return
+        }
         if backend == .ios {
             resolveCwdNative("cd '\(p.replacingOccurrences(of: "'", with: "'\\''"))' && pwd", original: "cd \(p)")
             return
@@ -532,13 +706,16 @@ final class TermSession: Identifiable, ObservableObject {
     // MARK: 提示符
 
     var promptText: String {
-        let home = backend == .ios ? "/var/mobile" : "/root"
+        // root 后端的 pwd 来自 bootstrap 视图，按 App 写法归一化后再与 home 比
+        let home = backend.isNative ? TermSession.normalizeRootPath(backend.home) : backend.home
+        let cur = backend == .root ? TermSession.normalizeRootPath(cwd) : cwd
         let shown: String
-        if cwd == home { shown = "~" }
-        else if cwd.hasPrefix(home + "/") { shown = "~" + cwd.dropFirst(home.count) }
-        else { shown = cwd }
+        if cur == home { shown = "~" }
+        else if cur.hasPrefix(home + "/") { shown = "~" + cur.dropFirst(home.count) }
+        else { shown = cur }
         let device = TermSession.deviceName
-        return "\(device):\(shown)$"
+        // v10.5：root 后端的提示符按惯例用 #，一眼能看出当前是 uid=0
+        return "\(device):\(shown)\(backend == .root ? "#" : "$")"
     }
 
     /// 提示符里的设备名一律用 guest 的 hostname，这里是编译期常量，避免每帧查内核
@@ -547,8 +724,25 @@ final class TermSession: Identifiable, ObservableObject {
     // MARK: 启动横幅
 
     func greet() {
-        let ver = ISH.runtimeVersion
-        append(L10n.t("term_banner", TermSession.deviceName, ver) + "\n", kind: .prompt)
+        // v10.5：横幅按后端区分——root / 本机会话之前也印「Alpine … iSH 沙盒」，
+        // 切到 uid=0 之后仍然写着沙盒，看起来就像没切过去。
+        // 非 Alpine 后端没有 guest 运行时，写 iOS 版本更有意义。
+        let info = ProcessInfo.processInfo.operatingSystemVersion
+        let bannerVer = "iOS \(info.majorVersion).\(info.minorVersion)"
+        let key: String
+        let ver: String
+        switch backend {
+        case .alpine:
+            key = "term_banner"
+            ver = ISH.runtimeVersion
+        case .ios:
+            key = "term_banner_native"
+            ver = bannerVer
+        case .root:
+            key = "term_banner_root"
+            ver = bannerVer
+        }
+        append(L10n.t(key, TermSession.deviceName, ver) + "\n", kind: .prompt)
         append(L10n.t("term_banner_hint") + "\n\n", kind: .prompt)
     }
 }

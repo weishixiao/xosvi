@@ -306,10 +306,14 @@ struct TerminalPageView: View {
                     }
                 }
                 key(L10n.t("term_key_root")) {
-                    // Alpine guest 默认就是 root：cd 到 /root 对照 uid=0。
-                    // v9.13.1：本机后端没有 /root（iOS 上 root 用户家目录是 /var/root），
-                    // 旧实现写死 /root，在本机后端必报 can't cd to /root —— 按后端填对应家目录。
-                    input = session?.backend == .ios ? "cd /var/root && id" : "cd /root && id"
+                    // v10.5：su 键不再往输入框里摆一条命令 —— 旧实现只是填字不提交，
+                    // 看起来就是「点了没反应」；本机后端又是 mobile 身份，id 永远是 501。
+                    // 现在切到 root 后端（经 xosvid 以 uid=0 执行）并立刻跑一次 id。
+                    guard let s = session else { return }
+                    if s.backend != .root { s.switchBackend(to: .root) }
+                    s.submit("id")
+                    input = ""
+                    focused = true
                 }
             }
             .padding(.horizontal, 10)

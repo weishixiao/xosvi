@@ -215,7 +215,8 @@ final class ShareCenter: ObservableObject {
         AuditLog.shared.log("share.fallback_clipboard", detail: "texts=1")
     }
 
-    private func showNotice(_ text: String) {
+    /// v10.5：会话导出等模块也要报「写不进工作区」这类结果，从 private 放开成本模块可见。
+    func showNotice(_ text: String) {
         DispatchQueue.main.async {
             self.clipboardNotice = text
             DispatchQueue.main.asyncAfter(deadline: .now() + 2.5) {

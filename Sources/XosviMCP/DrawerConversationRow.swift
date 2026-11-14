@@ -39,6 +39,10 @@ struct DrawerConversationRow: View {
     let onSwipeChange: (Bool) -> Void
     let onOpen: () -> Void
     let onDelete: () -> Void
+    /// v10.5：导出这段会话（Markdown 落盘 + 自建分享菜单）
+    let onExport: () -> Void
+    /// v10.5：导出键标题（与 deleteTitle 一样由调用方给本地化文案）
+    var exportTitle: String = "导出"
 
     /// 行内位移：手势过程只改这里
     @State private var offset: CGFloat = 0
@@ -89,6 +93,10 @@ struct DrawerConversationRow: View {
                 }
                 .highPriorityGesture(dragGesture)
                 .contextMenu {
+                    // v10.5：导出放在删除上面——长按是「留下这份对话」的入口，破坏性操作压到最后
+                    Button(action: onExport) {
+                        Label(exportTitle, systemImage: "square.and.arrow.up")
+                    }
                     Button(action: onDelete) {
                         Label(deleteTitle, systemImage: "trash")
                     }
@@ -149,6 +157,9 @@ struct DrawerConversationRow: View {
                 }
                 if selected {
                     Menu {
+                        Button(action: onExport) {
+                            Label(exportTitle, systemImage: "square.and.arrow.up")
+                        }
                         Button(action: onDelete) {
                             Label(deleteTitle, systemImage: "trash")
                         }
