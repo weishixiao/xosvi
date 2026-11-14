@@ -34,3 +34,10 @@ tests/loopguard/fetch_tmp
 tests/loopguard/fetch_tmp.m
 tests/loopguard/paths.txt
 tests/loopguard/tree.json
+
+# 逆向引擎自测（CReCore/.selftest）：fixture 源码、run.sh、xre.ent.plist 入库，
+# 编出来的 dylib / xre 与报告目录不入库
+CReCore/.selftest/*.dylib
+CReCore/.selftest/xre
+CReCore/.selftest/out*/
+CReCore/.selftest/o/

@@ -264,6 +264,17 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
   `runViaDirectory`；业务错误/超时**不**退回——注入、安装这类有副作用的命令不能跑两遍。
   回包看 `transport`（xpc / directory）、`xpc.state`（ready / cooldown）、`xpc.cooldown_remaining`。
 
+## 逆向引擎自测（`CReCore/.selftest/run.sh`）
+
+改 `CReCore/src/xosvi_re.c` 后跑 `sh CReCore/.selftest/run.sh [<Mach-O>]`：用 `-DXRE_TOOL` 编出
+`xre`、`ldid -S` 签 `xre.ent.plist`（没签名内核按信号 9 杀进程），跑三个 fixture 校验
+类/方法/ivar/属性/导入计数，可选再分析一个真实二进制并打印概览。脚本一律用相对路径调
+clang/ldid —— roothide 下 `$(pwd)` 会带 `/rootfs` 前缀，链接器写文件不认。
+
+fixture 揭示的两条 clang 事实，别当解析缺陷改：分类与类在同一 TU 时 clang 直接合并进类的方法表
+（`__objc_catlist` 为空、分类数 0）；类遵循协议时 clang 把协议（含 NSObject）的属性一并写进
+`class_ro_t.baseProperties`。引擎调试用 `XRE_DEBUG=1`（stderr 打每个类的 ro 地址与属性条目）。
+
 ## 静态门禁（`scripts/check.sh`，改完先跑）
 
 从 Apelin 借来的做法：**设备上踩过的坑要变成可执行的检查**，而不是留在文档里等下一次会话记住。

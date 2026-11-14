@@ -435,7 +435,7 @@ static void load_chained_fixups(u32 dataoff, u32 datasize) {
         for (u16 pg = 0; pg < pageCount; pg++) {
             u16 start = le16(p + 22 + (size_t)pg * 2);
             if (start == 0xFFFF) continue;
-            u64 pageVA = segOff + (u64)pg * (u64)pageSize;
+            u64 pageVA = g_image_base + segOff + (u64)pg * (u64)pageSize;
             if (!(start & 0x8000)) {
                 walk_chain(pageVA + start, fmt);
                 continue;
@@ -1034,6 +1034,8 @@ static int parse_prop_list(u64 va, Prop **out) {
     if (count == 0 || count > 4000) return 0;
     u32 entsize = ef & 0x0000FFFCu;
     if (entsize < 16 || entsize > 64) entsize = 16;
+    if (getenv("XRE_DEBUG")) fprintf(stderr, "[prop] va=0x%llx ef=0x%x count=%u entsize=%u\n",
+                                     (unsigned long long)va, ef, count, entsize);
     Prop *pp = (Prop *)ax(sizeof(Prop) * count);
     if (!pp) return 0;
     int n = 0;
@@ -1047,6 +1049,7 @@ static int parse_prop_list(u64 va, Prop **out) {
         v->name = np ? cstr_at(np) : NULL;
         v->attrs = ap ? cstr_at(ap) : NULL;
         if (!v->name) continue;
+        if (getenv("XRE_DEBUG")) fprintf(stderr, "   prop[%u] %s | %s\n", i, v->name, v->attrs ? v->attrs : "-");
         n++;
     }
     *out = pp;
@@ -1094,8 +1097,12 @@ static int parse_class(u64 va) {
     }
     if (!ci->name) ci->name = sym_at(va);
     if (!ci->name) ci->name = afmt("<class@0x%llx>", (unsigned long long)va);
+    if (getenv("XRE_DEBUG")) fprintf(stderr, "[class] %s ro=0x%llx data=0x%llx props=0x%llx nprop=%d\n",
+        ci->name, (unsigned long long)ro, (unsigned long long)datap,
+        (unsigned long long)(ro ? dec(ro + 64) : 0), ci->nprop);
     u64 sp = dec(va + 8);
     if (sp) ci->super_name = class_name_at(sp);
+    if (!ci->super_name && dec_name(va + 8)) ci->super_name = strip_objc_prefix(dec_name(va + 8));
     g_nclasses++;
     return 1;
 }
@@ -1110,6 +1117,7 @@ static int parse_category(u64 va) {
     if (np) ci->name = cstr_at(np);
     u64 cp = dec(va + 8);
     if (cp) ci->cls_name = class_name_at(cp);
+    if (!ci->cls_name && dec_name(va + 8)) ci->cls_name = strip_objc_prefix(dec_name(va + 8));
     ci->ncatmeth = parse_method_list(dec(va + 16), &ci->catmeth, 0);
     ci->ncls = parse_method_list(dec(va + 24), &ci->clsm, 1);
     ci->nproto = parse_proto_list(dec(va + 32), &ci->proto);

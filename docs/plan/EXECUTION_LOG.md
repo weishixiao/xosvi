@@ -238,5 +238,26 @@ tool failed: [UNKNOWN] tool failed: [UNKNOWN] 无法连接服务器。 (category
 - `CI#111` SUCCESS 41s，含 `swiftc -parse` 语法门禁与工具契约检查；
 - 滚动 Release 已更新为 **v7.18.0-b101**。
 
-**设备侧表现未测**：本机装的是旧构建，`re` 从未在这台设备上真正跑过。要核对的是 `analyze` 对真实
-Mach-O 的类/方法计数与交叉引用、目录模式的多目标去重、`selftest` 的期望值 —— 都得先装上 b101 的 IPA。
+### 设备侧实测（引擎层，2026-11-14）
+
+`CReCore/.selftest/run.sh` 用 `-DXRE_TOOL` 把引擎单独编成本机可执行文件来测，不必先装 App
+（`clang -O1 -DXRE_TOOL -ICReCore/include -o xre CReCore/src/xosvi_re.c` 后必须 `ldid -S` 签
+`xre.ent.plist`，否则内核按信号 9 直接杀进程）。对象是设备上现成的 29 MB `Xosvi` 主二进制
+（arm64，chained fixups fmt=6）与三个 fixture（arm64e，fmt=12）。
+
+首轮就撞到一个致命缺陷：**主二进制解析出 0 类 0 方法**。根因是 `load_chained_fixups()` 没把
+`segment_offset` 加上 image base —— dylib（image base 0）完全看不出问题，主程序（0x100000000）
+则整片错位。修掉后 Xosvi 得 300 类 / 703 方法 / 813 ivar / 204 属性 / 22 协议 / 2791 导入符号 /
+8495 bind / 52309 rebase，耗时 0.37 s。类、分类、协议数与节大小独立对照一致
+（`__objc_classlist` 2400 B ÷ 8 = 300；`__objc_catlist` 8 B = 1；`__objc_protolist` 176 B ÷ 8 = 22）。
+
+同轮另修两处：父类与分类所属类的指针是 bind 时只走 `dec()` 会得 0（`class_ro_t.baseClass` 指向
+`_OBJC_CLASS_$_NSObject`），现在回退到 `dec_name()` 取导入名 —— 修前 Xosvi 300 个类的父类全是
+「（未声明）」、分类是「（未知类）」。另确认两件「看着像 bug 其实是 clang」的事：分类与类在同一 TU
+时 clang 直接合并进类的方法表（`__objc_catlist` 为空，分类数 0）；类遵循协议时 clang 把协议（含
+NSObject）的属性一并写进 `class_ro_t.baseProperties`（fixture A 源码 2 个属性、二进制 6 个，
+去掉协议遵循即回到 2）。选项串 `max_strings=` / `min_len=` / `xrefs=` 实测生效
+（`max_strings=200000` 得真实 20576 条，默认 20000 只截掉 576 条）。
+
+仍未测：MCP 层的 `analyze` 目录模式、`strings --query` 过滤、`selftest` 期望值 —— 那些是 Swift 侧，
+需要先装上 b101 的 IPA。
