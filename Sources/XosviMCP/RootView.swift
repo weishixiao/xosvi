@@ -393,7 +393,8 @@ struct ConversationDrawerView: View {
     }
 
     /// 新建会话（v10.5：由头部右上角移到底栏、设置齿轮右侧，同尺寸同间距）
-    /// v10.6：反色实心底（浅色下是纯黑块）太扎眼，改回次级填充，与齿轮只差一档灰度。
+    /// v10.6：反色实心底（浅色下是纯黑块）太扎眼；底色与其他功能按钮统一用 XColor.fill，
+    /// 与齿轮同款——两枚靠图标区分，不再靠深浅。
     private var newConversationButton: some View {
         Button(action: {
             withAnimation { ui.drawerOpen = false }
@@ -406,7 +407,7 @@ struct ConversationDrawerView: View {
                 .frame(width: XMetric.fab, height: XMetric.fab)
                 .background(
                     RoundedRectangle(cornerRadius: XRadius.row, style: .continuous)
-                        .fill(XColor.fillStrong)
+                        .fill(XColor.fill)
                 )
                 .contentShape(Rectangle())
         }
