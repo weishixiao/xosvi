@@ -153,7 +153,8 @@ enum ISH {
             // v10.4：符号链接必须建成链接。原来不管 entry 类型一律 data.write，
             // 于是 /bin/sh、/bin/ls、/usr/bin/python3 全成了「内容是目标路径的小文本文件」
             // （12 字节的 "/bin/busybox"），guest 里 exec 直接失败 —— Alpine 终端敲什么都没反应。
-            if entry.type == .symbolicLink {
+            // ZIPFoundation 的 EntryType 成员是 .symlink（不是 .symbolicLink）
+            if entry.type == .symlink {
                 var target = String(decoding: data, as: UTF8.self)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 if target.hasPrefix("alpine-rootfs/") || target.hasPrefix("ish-rootfs/") {
