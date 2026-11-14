@@ -417,11 +417,11 @@ struct ConversationDrawerView: View {
 
     private var bottomWorkbench: some View {
         // v6.6.7：删除本机环境入口卡片
-        // v10.5：新建会话键从头部移来，紧挨齿轮右侧——两枚同 52×52、间距 12
-        // v10.6：整组靠右（用户要求「设置键往右移」），黑底实心改次级填充
+        // v10.5：新建会话键从头部移来，两枚同 52×52
+        // v10.7：改为两端分布——设置齿轮在左、新建会话在右（用户要求），中间 Spacer 顶开
         HStack(spacing: 12) {
-            Spacer(minLength: 0)
             settingsButton
+            Spacer(minLength: 0)
             newConversationButton
         }
         .padding(.horizontal, 16)

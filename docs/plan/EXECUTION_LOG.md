@@ -261,3 +261,46 @@ NSObject）的属性一并写进 `class_ro_t.baseProperties`（fixture A 源码 
 
 仍未测：MCP 层的 `analyze` 目录模式、`strings --query` 过滤、`selftest` 期望值 —— 那些是 Swift 侧，
 需要先装上 b101 的 IPA。
+
+## 终端三档收成两档 + 会话导出 + 抽屉底栏（v10.5 / v10.6，2026-11-14，ba23651 / 534e351）
+
+### 终端后端：`root` 不再是独立后端
+
+原来 `TermBackend` 有 `alpine` / `ios` / `root` 三档，但 `root` 与 `ios` 跑的是同一个 shell、同一个
+cwd，只是外层多套一次提权 —— 用户看到的是两个几乎一样的选项，切过去还得重来一遍。现在后端只剩
+`alpine` / `ios` 两档，提权变成 `ios` 上的一个身份开关：
+
+| 改动 | 位置 | 说明 |
+|---|---|---|
+| `TermBackend` 删 `.root` | `TerminalSession.swift` | title / shortTitle / home 的 switch 同步只剩两支 |
+| `@Published var elevated` + `isRoot` | 同上 | `isRoot = (backend == .ios && elevated)`，只影响提示符与底部键标签 |
+| `switchBackend(to:)` | 同上 | 先 guard 同值；停掉在跑的进程 → 设 backend → 非 `ios` 时强制 `elevated = false` → `cwd = target.home` |
+| `setElevated(_:)` | 同上 | `@discardableResult`；backend 不是 `ios` 时先 `switchBackend`；`rootCLIPath == nil` 报 `term_root_unavailable`；**运行中拒绝换身份**（`term_root_no_stop` / `term_busy`，返回原值）；成功追加 `term_root_on` / `term_root_off` |
+| 提示符 | `promptText` | 按 `isRoot` 归一化，`#` / `$` 两态 |
+| 底栏 su 键 | `TerminalPageView.swift` | 变成身份开关：标签 `term_key_exit_root` / `term_key_root`；已提权则 `setElevated(false)`，否则成功后自动 `submit("id")` |
+
+保留的全是运行期解析：`rootCLIPath` 取自 `JBEnvironment.firstExistingPath("/usr/bin/xosvi-cli")`，
+不写死 jbroot 路径。root 链路此前已实测通过（`xosvi-cli helper xosvi-build --exec <cwd> '<cmd>'` →
+`uid=0(root)`、exit 0）。
+
+### 会话导出
+
+会话页的「导出」不再走系统分享面板（侧载环境下它必崩），统一经 `ShareCenter.saveToFiles` /
+`presentShareMenuText` 落到「存储到文件」。导出页沿用既有硬编码中文段标题（「会话」「导出全部会话」），
+未接 `L10n`。
+
+### 抽屉底栏（v10.6）
+
+新建会话键从头部右上角移到抽屉底栏、设置齿轮右侧，同尺寸（`XMetric.fab` = 52）同圆角
+（`XRadius.row`），间距一致。底色两次调整后统一为 `XColor.fill` —— 与齿轮、以及 App 里其他弱填充
+按钮（头像底、选中态）同一个值；两枚按钮只靠图标区分，不再靠灰度深浅。反色实心底（浅色模式下是一块
+纯黑）已弃用。
+
+### 验证
+
+- `CI#114`（run 43566702919，`ba23651`）SUCCESS 40s；`build-xosvi-ios#103`（run 43566702896）SUCCESS 13m13s。
+- `CI#115`（run 43580397388，`534e351`）SUCCESS 42s，工具契约检查 / `swiftc -parse` / 静态解析自检全绿。
+- `build-xosvi-ios#104`（run 43580397380，`534e351`）：见下条设备验证记录。
+
+设备侧仍未测：抽屉底栏两枚按钮在浅色 / 深色下的实际观感是否与齿轮一致；终端底栏 su 键的提权与退出提权；
+会话导出的落盘路径（这些都要装上本批次 IPA 才能看）。
