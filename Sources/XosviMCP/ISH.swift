@@ -162,7 +162,10 @@ enum ISH {
                 }
                 if !target.isEmpty {
                     try? fm.removeItem(at: destURL)
-                    let dest = relativeLinkTarget(fromLinkAt: "/" + rel, to: target) ?? target
+                    // v10.8：链接位置要按 guest 路径算（zip 里 rel 是 data/bin/sh → /bin/sh），
+                    // 否则 data/ 这一层会被算进相对目标
+                    let dest = relativeLinkTarget(fromLinkAt: guestPath(fromInstallRelative: rel),
+                                                  to: target) ?? target
                     if (try? fm.createSymbolicLink(atPath: destURL.path, withDestinationPath: dest)) != nil {
                         written += 1
                     } else {
@@ -198,12 +201,16 @@ enum ISH {
         let metaOK = isRegular(staging.appendingPathComponent("meta.db").path)
         let busyboxPath = staging.appendingPathComponent("data/bin/busybox").path
         let busyboxOK = isRegular(busyboxPath) && size(busyboxPath) > 100_000
+        // v10.8：源 zip 的 symlink 目标不带前导 /（`bin/busybox`），解压完先按 guest 路径统一重算，
+        // 否则 302 个 applet（sh/ls/apk/wget…）全是悬空链接，校验却只看到「是个链接」就放行。
+        let linkRepair = repairDanglingRootfsLinks(at: staging.appendingPathComponent("data").path)
         let shPath = staging.appendingPathComponent("data/bin/sh").path
-        let shOK = isLink(shPath) || (isRegular(shPath) && size(shPath) > 100_000)
+        let shOK = (isLink(shPath) && fm.fileExists(atPath: shPath))
+            || (isRegular(shPath) && size(shPath) > 100_000)
         guard metaOK, busyboxOK, shOK else {
             let listing = (try? fm.contentsOfDirectory(atPath: staging.path).prefix(8).joined(separator: ", ")) ?? "?"
             try? fm.removeItem(at: staging)
-            throw InstallError.failed("rootfs 解压不完整：条目 \(entries.count)，写入 \(written)，失败 \(failed)；meta.db=\(metaOK)·busybox=\(busyboxOK)·data/bin/sh=\(shOK)；顶层：\(listing)")
+            throw InstallError.failed("rootfs 解压不完整：条目 \(entries.count)，写入 \(written)，失败 \(failed)；meta.db=\(metaOK)·busybox=\(busyboxOK)·data/bin/sh=\(shOK)·链接修复 \(linkRepair.converted)；顶层：\(listing)")
         }
 
         // 提交：换掉旧目录
@@ -223,14 +230,18 @@ enum ISH {
     }
 
     /// rootfs 是否完整可用（不只看目录存在）
+    /// v10.8：正常 rootfs 的 data/bin/sh 是**符号链接**（→ busybox），v10.4 用 isRegularFile 判，
+    /// 链接形态一律判坏 → 每次启动都重解压 172MB，还把 apk 装的 75 个包全清掉。
+    /// 现在按「能解析到真实文件」判（fileExists 会跟随链接，悬空链接返回 false）。
     static func isRootfsValid() -> Bool {
         let fm = FileManager.default
-        for probe in ["meta.db", "data/bin/sh"] {
-            let path = installRoot.appendingPathComponent(probe).path
-            let regular = (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile ?? false
-            if !regular { return false }
-        }
-        return fm.fileExists(atPath: installRoot.path)
+        let meta = installRoot.appendingPathComponent("meta.db").path
+        let sh = installRoot.appendingPathComponent("data/bin/sh").path
+        let busybox = installRoot.appendingPathComponent("data/bin/busybox").path
+        guard fm.fileExists(atPath: meta), fm.fileExists(atPath: sh) else { return false }
+        // busybox 必须是真的二进制，挡住「空壳 / 文本文件」的坏解压
+        let bbSize = ((try? fm.attributesOfItem(atPath: busybox))?[.size] as? NSNumber)?.int64Value ?? 0
+        return bbSize > 100_000
     }
 
     /// 「修复」= 强制重装 rootfs
@@ -264,6 +275,33 @@ enum ISH {
         if parts.isEmpty { return nil }
         let rel = parts.joined(separator: "/")
         return rel.isEmpty ? nil : rel
+    }
+
+    /// zip 条目相对 installRoot 的路径（"data/bin/sh"）→ guest 路径（"/bin/sh"）
+    private static func guestPath(fromInstallRelative rel: String) -> String {
+        var r = rel
+        if r.hasPrefix("data/") { r = String(r.dropFirst("data/".count)) }
+        return "/" + r
+    }
+
+    /// 链接目标的落盘形态：先认「同目录相对」，再认「guest 根的绝对路径」，两者都不成立返回 nil。
+    /// v10.8：源 zip 里的 symlink 目标是不带前导 / 的 `bin/busybox`，v10.4 原样写盘，
+    /// 于是 `data/bin/sh -> bin/busybox` 从 /bin 解析成 /bin/bin/busybox —— 全悬空。
+    private static func linkDestination(linkGuestPath: String, target: String, dataRoot: String) -> String? {
+        let fm = FileManager.default
+        func hostExists(_ guest: String) -> Bool {
+            let rel = guest.hasPrefix("/") ? String(guest.dropFirst()) : guest
+            return fm.fileExists(atPath: dataRoot + "/" + rel)
+        }
+        if target.hasPrefix("/") {
+            guard hostExists(target) else { return nil }
+            return relativeLinkTarget(fromLinkAt: linkGuestPath, to: target)
+        }
+        let dir = (linkGuestPath as NSString).deletingLastPathComponent
+        let sibling = dir == "/" ? "/" + target : dir + "/" + target
+        if hostExists(sibling) { return target }              // 真·同目录相对（usr/bin/2to3 -> 2to3-3.12）
+        guard hostExists("/" + target) else { return nil }     // 否则按 guest 根解析
+        return relativeLinkTarget(fromLinkAt: linkGuestPath, to: "/" + target)
     }
 
     /// 单个 token 的路径形状（不含空白/换行/#/:），才可能是符号链接的目标
@@ -325,11 +363,10 @@ enum ISH {
             // 只认「整个文件就是一个目标路径」（允许尾部换行），多行文本一律不碰
             guard raw == target || raw == target + "\n" || raw == target + "\r\n" else { continue }
             guard looksLikeLinkTarget(target) else { continue }
-            let resolved = target.hasPrefix("/")
-                ? dataRoot + target
-                : url.deletingLastPathComponent().appendingPathComponent(target).path
-            guard fm.fileExists(atPath: resolved) else { continue }
-            guard let linkDest = relativeLinkTarget(fromLinkAt: "/" + relPath, to: target) else { continue }
+            // v10.8：目标按「同目录相对」或「guest 根绝对」解析，两种都不成立才跳过
+            guard let linkDest = linkDestination(linkGuestPath: "/" + relPath,
+                                                 target: target,
+                                                 dataRoot: dataRoot) else { continue }
             do {
                 try fm.removeItem(at: url)
                 try fm.createSymbolicLink(atPath: full, withDestinationPath: linkDest)
@@ -338,6 +375,50 @@ enum ISH {
                 // 建链接失败就把原文写回去：data/bin/sh 缺失会让 isRootfsValid() 判坏 →
                 // 下次启动重装 rootfs，把 apk 装的 python3/git/npm 全清掉。宁可修不动。
                 try? data.write(to: url)
+                st.failed += 1
+            }
+        }
+        return st
+    }
+
+    /// v10.8：悬空链接自愈。
+    /// v10.4 把源 zip 里的相对目标（`bin/busybox`）原样写盘，`data/bin/sh`、`data/bin/ls`、
+    /// `data/usr/bin/*` 等 300 多个链接从各自目录解析都是 `/bin/bin/busybox` 之类 —— 全悬空。
+    /// guest 里 sh/apk/wget 于是全部 exec 失败，环境页的启动沙盒、刷新工具状态、修复、
+    /// 装预设、切源一起失效。这里按 linkDestination 重算，不动 apk 装的包。
+    @discardableResult
+    static func repairDanglingRootfsLinks(at dataRootOverride: String? = nil) -> LinkRepair {
+        var st = LinkRepair()
+        let fm = FileManager.default
+        let dataRoot = dataRootOverride ?? dataPath
+        guard !dataRoot.isEmpty,
+              let en = fm.enumerator(at: URL(fileURLWithPath: dataRoot),
+                                     includingPropertiesForKeys: [.isSymbolicLinkKey],
+                                     options: [],
+                                     errorHandler: { _, _ in true }) else { return st }
+        let skipTop: Set<String> = ["proc", "sys", "dev", "run", "mounts"]
+        for case let url as URL in en {
+            let full = url.path
+            let relPath = full.hasPrefix(dataRoot + "/") ? String(full.dropFirst(dataRoot.count + 1)) : url.lastPathComponent
+            let top = relPath.split(separator: "/").first.map(String.init) ?? ""
+            if skipTop.contains(top) {
+                en.skipDescendants()
+                continue
+            }
+            st.scanned += 1
+            guard let v = try? url.resourceValues(forKeys: [.isSymbolicLinkKey]),
+                  v.isSymbolicLink == true,
+                  fm.fileExists(atPath: full) == false,               // 能解析的是好链接
+                  let raw = try? fm.destinationOfSymbolicLink(atPath: full),
+                  let dest = linkDestination(linkGuestPath: "/" + relPath,
+                                             target: raw,
+                                             dataRoot: dataRoot),
+                  dest != raw else { continue }
+            do {
+                try fm.removeItem(at: full)
+                try fm.createSymbolicLink(atPath: full, withDestinationPath: dest)
+                st.converted += 1
+            } catch {
                 st.failed += 1
             }
         }
@@ -357,6 +438,14 @@ enum ISH {
         defer { bootLock.unlock() }
         lastError = nil
         if isBooted { return 0 }
+        // v10.8：已装的 rootfs 若只剩悬空链接（v10.4 遗留），先就地修好再判有效性，
+        // 否则 isRootfsValid 判坏 → 白重装一次 172MB，还会清掉 apk 装的包
+        if !isRootfsValid() {
+            let pre = repairDanglingRootfsLinks()
+            if pre.converted > 0 {
+                Log.browser("ISH rootfs 预修复悬空链接：converted=\(pre.converted) failed=\(pre.failed)")
+            }
+        }
         do {
             try installRootfsIfNeeded()
         } catch {
@@ -370,6 +459,12 @@ enum ISH {
         if rootfsLinksLookBroken() {
             let rep = repairBrokenRootfsLinks()
             Log.browser("ISH rootfs 链接自愈：converted=\(rep.converted) scanned=\(rep.scanned) failed=\(rep.failed)")
+        }
+        // v10.8：v10.4 写坏的悬空链接（相对目标少了目录层）在这里修好；
+        // 不修的话 guest 里 sh 都起不来，环境页所有动作都会失败。
+        let dangling = repairDanglingRootfsLinks()
+        if dangling.converted > 0 || dangling.failed > 0 {
+            Log.browser("ISH rootfs 悬空链接自愈：converted=\(dangling.converted) failed=\(dangling.failed)")
         }
         let rc = KelivoISHKernel.shared().boot(withRootPath: installRoot.path)
         if rc != 0 {
