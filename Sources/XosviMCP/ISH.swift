@@ -415,7 +415,7 @@ enum ISH {
                                              dataRoot: dataRoot),
                   dest != raw else { continue }
             do {
-                try fm.removeItem(at: full)
+                try fm.removeItem(atPath: full)
                 try fm.createSymbolicLink(atPath: full, withDestinationPath: dest)
                 st.converted += 1
             } catch {
