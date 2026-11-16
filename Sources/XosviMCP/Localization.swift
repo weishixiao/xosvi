@@ -469,6 +469,13 @@ enum L10n {
     "ui_194": ["zh": "创建于", "en": "Created"],
     "ui_195": ["zh": "删除", "en": "Delete"],
     "ui_182": ["zh": "控制会话已结束，可查看结果", "en": "Control session finished, see result below"],
+    // v10.8：导出全部会话（设置 ▸ 文件页的段标题与行文案，此前是硬编码中文）
+    "settings_sec_sessions": ["zh": "会话", "en": "Sessions"],
+    "btn_export_all": ["zh": "导出全部会话", "en": "Export all chats"],
+    "btn_export_all_sub": ["zh": "按更新时间倒序拼成一份 Markdown，存到工作区 exports/", "en": "Concatenate them into one Markdown (newest first) in the workspace's exports/"],
+    "export_no_sessions": ["zh": "还没有会话可导出", "en": "No chats to export yet"],
+    "export_empty": ["zh": "没有可导出的内容", "en": "Nothing to export"],
+    "export_failed": ["zh": "导出失败：写不进工作区", "en": "Export failed: cannot write to the workspace"],
     ]
 
     static func t(_ key: String) -> String {

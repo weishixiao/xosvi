@@ -156,7 +156,7 @@ enum ConversationExport {
     static func presentAll() {
         let convs = ConversationStore.shared.conversations
         guard !convs.isEmpty else {
-            ShareCenter.shared.showNotice("还没有会话可导出")
+            ShareCenter.shared.showNotice(L10n.t("export_no_sessions"))
             return
         }
         present(text: allMarkdown(convs), base: "全部会话")
@@ -164,11 +164,11 @@ enum ConversationExport {
 
     private static func present(text: String, base: String) {
         guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            ShareCenter.shared.showNotice("没有可导出的内容")
+            ShareCenter.shared.showNotice(L10n.t("export_empty"))
             return
         }
         guard let url = write(text, base: base) else {
-            ShareCenter.shared.showNotice("导出失败：写不进工作区")
+            ShareCenter.shared.showNotice(L10n.t("export_failed"))
             return
         }
         AuditLog.shared.log("conversation.export", detail: "\(url.lastPathComponent) chars=\(text.count)")

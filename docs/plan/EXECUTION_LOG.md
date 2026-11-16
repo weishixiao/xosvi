@@ -286,8 +286,9 @@ cwd，只是外层多套一次提权 —— 用户看到的是两个几乎一样
 ### 会话导出
 
 会话页的「导出」不再走系统分享面板（侧载环境下它必崩），统一经 `ShareCenter.saveToFiles` /
-`presentShareMenuText` 落到「存储到文件」。导出页沿用既有硬编码中文段标题（「会话」「导出全部会话」），
-未接 `L10n`。
+`presentShareMenuText` 落到「存储到文件」。导出页段标题 v10.5 时是硬编码中文，v10.8 已接入 `L10n`
+（`settings_sec_sessions` / `btn_export_all` / `btn_export_all_sub`，以及 `ConversationExport`
+三条提示 `export_no_sessions` / `export_empty` / `export_failed`）。
 
 ### 抽屉底栏（v10.6 / v10.7）
 
@@ -307,3 +308,39 @@ v10.7 再调排布：由「整组靠右」改成两端分布 —— `HStack { se
 
 设备侧仍未测：抽屉底栏两枚按钮在浅色 / 深色下的实际观感是否与齿轮一致、是否分居左右两端；
 终端底栏 su 键的提权与退出提权；会话导出的落盘路径（都要装上本批次 IPA 才能看）。
+
+## v10.8 — 内置 Alpine rootfs 符号链接自愈（设置 ▸ 环境全灭的根因）
+
+### 症状与根因
+
+设置 ▸ 环境 页所有检测项报错、终端 Alpine 起不来。查证到两个叠加缺陷：
+
+1. **解压把相对符号链接写错**：`alpine-rootfs.zip` 里 `bin/sh` 一类条目在 zip 内的路径是
+   `data/bin/sh`，v10.4 的 `relativeLinkTarget` 拿整条 zip 相对路径（含 `data/` 层）去算相对目标，
+   结果 `data/bin/sh` 指向 `bin/busybox`（= `data/bin/bin/busybox`，不存在）而不是同目录的 `busybox`。
+   设备上实测 673 个链接全部悬空。
+2. **`isRootfsValid` 恒为假**：它用 `URLIsRegularFileKey` 判 `data/bin/sh`，而正常 rootfs 的
+   `data/bin/sh` **本来就是符号链接**，该键对链接恒返 false → 每次启动都判定「rootfs 坏了」再重解压，
+   于是修复永远被下一次启动覆盖，症状看起来像「怎么改都没用」。
+
+### 改动（`Sources/XosviMCP/ISH.swift`）
+
+| 位置 | 改动 |
+|---|---|
+| 解压 | `relativeLinkTarget(fromLinkAt: guestPath(fromInstallRelative:))`，guest 路径换算时剥掉安装层前缀后再算相对目标 |
+| `repairDanglingRootfsLinks(at:)` | 枚举 `data/` 下的悬空链接，用 `linkDestination` 重算相对目标写回；同时把「12 字节文本壳」之类的伪链接转成真链接（`repairBrokenRootfsLinks`） |
+| `isRootfsValid()` | 改为 `fileExists(meta.db) && fileExists(data/bin/sh)` + busybox 大小 > 100_000 |
+| `boot()` | 启动前先跑一次预修复；解压后对 staging 修一次；启动后再修一次，并把 converted / failed 计数写 `Log.browser` |
+
+### 构建
+
+- `build-xosvi-ios#106`（`353f1e3`）**失败**：`removeItem(at:)` 传了 `String`。修成 `atPath`（`eaee77b`）。
+- `CI#117`（`353f1e3`）SUCCESS 43s；`CI#118`（`eaee77b`）SUCCESS 35s；
+  `build-xosvi-ios#107`（`eaee77b`，run 43710468592）SUCCESS 18m01s → **Release v7.18.0-b107**。
+
+### 未验证（需装 b107 才能看）
+
+- 设备上仍装着 b105；本批次未在真机跑过：`设置 ▸ 环境` 各检测项、终端 Alpine 起没起来、
+  `Log.browser` 里的 converted/failed 计数。
+- 遗留：`MCPCore.swift` 的 `elapsedMs` 少报 —— 现有代码里成功/失败两处都是从 `invoke` 前起算，
+  没能复现「少报」，待补充具体现象（审计页还是气泡、差值多少）后再改。

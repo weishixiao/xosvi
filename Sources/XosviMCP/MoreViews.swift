@@ -181,11 +181,11 @@ struct DataManagementView: View {
                     }
                 }
 
-                Section(header: SettingSectionHeader(title: "会话")) {
+                Section(header: SettingSectionHeader(title: L10n.t("settings_sec_sessions"))) {
                     // v10.5：会话导出的总入口——抽屉里是单会话，这里是把全部会话拼成一份存档
                     SettingRowButton(
-                        title: "导出全部会话",
-                        subtitle: "按更新时间倒序拼成一份 Markdown，存到工作区 exports/",
+                        title: L10n.t("btn_export_all"),
+                        subtitle: L10n.t("btn_export_all_sub"),
                         icon: "square.and.arrow.up",
                         color: .blue
                     ) {
