@@ -114,23 +114,8 @@ struct SettingsView: View {
                          destination: AnyView(ModelsView())),
         ]))
 
-        // v9.10：合并功能块——「模型破甲提示词 / 知识库 / Agents 与 skills」三项原来散在
-        // 「模型」与「工具与管理」两个分组里，按用户要求合成一个独立功能块。
-        groups.append(SettingsGroup(header: "知识与指令", items: [
-            SettingsItem(title: L10n.t("row_dev_instructions"),
-                         subtitle: devInstructionsSubtitle(),
-                         icon: "doc.text.magnifyingglass", color: .orange,
-                         destination: AnyView(DeveloperInstructionsView())),
-            // v8.4：知识库——FTS5 索引管理 + 试检索
-            SettingsItem(title: "知识库",
-                         subtitle: "内置知识包 · FTS5 检索 · 试查询",
-                         icon: "books.vertical", color: .tmCyan,
-                         destination: AnyView(KnowledgeSettingsView())),
-            SettingsItem(title: L10n.t("row_agents"),
-                         subtitle: "隔离指令 · 工作流",
-                         icon: "person.3.fill", color: .indigo,
-                         destination: AnyView(AgentsAndSkillsView()))
-        ]))
+        // v11.0：按用户要求删掉「知识与指令」整块（模型破甲提示词 / 知识库 / Agents 与 Skills），
+        // 对应的 store、页面与 MCP 工具（knowledge / skills.*）一并移除，详见 commit 记录。
 
         // 网络与抓包（v3.3.1：独立分组，不依赖开发者模式——普通用户也能直接看到抓包入口）
         groups.append(SettingsGroup(header: "网络与抓包", items: [
@@ -202,9 +187,9 @@ struct SettingsView: View {
                              subtitle: "绑定目录 · 命令执行 · 文件读写",
                              icon: "folder", color: .gray,
                              destination: AnyView(WorkspaceSettingsView())),
-                // v9.10：「Agents 与 skills」入口已并入上面的「知识与指令」分组
-                // v9.4：按用户要求删除「本机知识库」入口——其导入能力并入上面的「知识库」页
-                // （KnowledgeSettingsView），KnowledgeBaseView 源码一并移除。
+                // v9.10：「Agents 与 skills」入口曾并入「知识与指令」分组
+                // v11.0：该分组（模型破甲提示词 / 知识库 / Agents 与 Skills）已按要求整体删除
+                // v9.4：更早删掉的「本机知识库」入口（KnowledgeBaseView）已无关。
             ]
             groups.append(SettingsGroup(header: "工具与管理", items: devItems))
 
@@ -355,11 +340,6 @@ struct SettingsView: View {
 
     private func permissionCount() -> Int {
         7
-    }
-
-    private func devInstructionsSubtitle() -> String {
-        let count = DeveloperInstructionStore.shared.list().count
-        return "\(count) 条 · 长按设默认"
     }
 
     private func sshConfigSubtitle() -> String {

@@ -13,7 +13,7 @@
 
 Xosvi 是部署在 iOS 设备上的原生 MCP 服务，让 AI 直接操作真实 iOS 系统：App 管理、dylib 注入、网络抓包、SQLite 取证、跨环境文件、内存修改、包解剖、设备/定位等。
 Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine**（Linux 工具链）两套环境。
-工具总数与可用性不写死：**以 `system.overview` 的 `total_tools` 或 `tools/list` 的实时输出为准**（当前默认启用 51 个，源码注册表共 53 个，含未启用的历史工具）。
+工具总数与可用性不写死：**以 `system.overview` 的 `total_tools` 或 `tools/list` 的实时输出为准**（当前源码注册表 51 个，全部默认启用；历史工具已在 v11.0 一并移除）。
 
 ## 工具调用规范（先读这段）
 ## 执行档位（探测驱动，禁止假设）
@@ -36,8 +36,8 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
    例：`app command:launch bundle_id:com.xxx`、`inject command:enable bundle_id:com.xxx`、`network.capture action:start bundle_id:com.xxx`。
 3. **不要给工具名加任何前缀或别名**：不存在前缀别名机制，加前缀会报 `unknownTool`。
 4. **不要把"工具名 + 点 + 子命令"当成可调用名**：`app` 的 `launch`、`inject` 的 `enable`、`control` 的 `tap` 都只是参数值，不是工具名。
-   仅下列 **13 个真实注册名本身含点**，可以直接调用：
-   `shell.exec`、`web.search`、`web.fetch`、`network.capture`、`vpn.capture`、`skills.list`、`skills.read`、`skills.set_enabled`、`system.overview`、`tools.audit`、`tool.install`、`env.setup_re`、`prompt.read_mode`。
+   仅下列 **10 个真实注册名本身含点**，可以直接调用：
+   `shell.exec`、`web.search`、`web.fetch`、`network.capture`、`vpn.capture`、`system.overview`、`tools.audit`、`tool.install`、`env.setup_re`、`prompt.read_mode`。
 5. 拿不准子命令/参数时：先看 `tools/list` 里该工具的 `parameters` / `param_specs` / `variants` / `prerequisites`（或调用该工具时不带参数看报错里的 usage），仍不确定就先做只读探测。
 6. **熔断规则**：同一工具 + 同一参数 + 同一类错误连续 2 次，运行时置 `RunScope` 中止标志并终止本轮 run。不要重复撞同一面墙：换工具、换参数、或先跑诊断。
 
@@ -55,7 +55,7 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 | device | `device`、`location` |
 | shell / terminal | `shell.exec`、`root`、`py`、`disasm`、`macho`、`re`、`memory` |
 | automation | `automation`、`macro`、`subagent` |
-| knowledge / skills | `knowledge`、`assistant_memory`、`skills.list`、`skills.read`、`skills.set_enabled` |
+| knowledge | `assistant_memory` |
 | system | `system.overview`、`tools.audit`、`verify`、`server`、`ssh`、`git`、`jb`、`reminder`、`prompt.read_mode` |
 | browser | `web.search`、`web.fetch` |
 | build | `project`、`tool.install`、`env.setup_re` |
@@ -82,9 +82,8 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 | `memory` | 进程内存修改 | `memory command:search ...` |
 | `device` / `location` | 设备信息与伪装 / 定位 | `device command:info` |
 | `shell.exec` | 原生 shell（iOS 原生或 Alpine） | `shell.exec command:"ls -l /..."` |
-| `knowledge` | 知识库导入/检索 | `knowledge command:search query:...` |
+| `assistant_memory` | 跨会话记忆读写 | `assistant_memory command:set key:... value:...` |
 | `web.search` / `web.fetch` | 联网搜索 / 网页正文抓取 | `web.search query:...` |
-| `skills.list` / `skills.read` | 技能发现与读取 | `skills.list query:inject` → `skills.read name:...` |
 | `tool.install` | 安装工具/依赖（缺工具时先装） | `tool.install ...` |
 | `system.overview` | 实时工具目录与版本 | `system.overview` |
 | `tools.audit` | 注册表一致性审计（查幽灵工具引用） | `tools.audit` |
@@ -94,9 +93,9 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 0. **排障/修复类任务先读 `docs/TROUBLESHOOTING.md`**：证据驱动六步（现象→事实→对回代码→同类扫描→闭环验证→回写），
    以及「已查证 / 推断 / 未验证」三态必须分开表述的规矩。
 1. **读 `RULES.md`** 的操作契约（MUST / SHOULD 语义）。
-2. **路由**：用 `skills.list` 搜索匹配技能（`query` 用任务关键词，如 `inject` / `capture` / `db` / `package` / `memory`）。
-   命中则 `skills.read name:<技能名>` 读取完整指令并**按指令执行**；输出应包含所选技能的 **PRIMARY 路径 + 一句话依据**。
-3. **未命中**：按 `system.overview` 的实时工具分类组合调用；复杂多步流程优先参考既有技能方法论。
+2. **路由**：先看 `docs/` 下与任务相关的文档（`TROUBLESHOOTING.md`、`EXECUTION_LOG.md`），
+   再用 `web.search` 查已知方法论；命中就按其中的工作流执行，输出应包含 **采用的路径 + 一句话依据**。
+3. **未命中**：按 `system.overview` 的实时工具分类组合调用（先做只读探测，再动手）。
 4. 执行时**直接调用工具名**，产出结构化结果与证据。
 
 ## 环境与桥接（关键约束）
@@ -160,7 +159,7 @@ Shell 分为 **iOS 原生**（直接读写真实文件系统）与 **iSH Alpine*
 ## 定位
 
 Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 + 经验记忆。
-遇到不熟悉的逆向/抓包/注入流程，先查技能库；缺技能可建议新增，不要把任务硬塞到不匹配的工具。
+遇到不熟悉的逆向/抓包/注入流程，先查 `docs/` 与联网资料，再组合基础工具；不要把任务硬塞到不匹配的工具。
 
 ## 数据目录与 App Group（v9.12 起）
 
@@ -170,7 +169,7 @@ Xosvi 是一个**轻量 iOS 操作路由包**：AI 路由 + 原生工具执行 +
 |---|---|
 | 数据根 | `/var/mobile/Documents/wiki.qaq.xosvi` |
 | 工作区 / 日志 / 临时 | `<数据根>/Workspace`、`<数据根>/logs`、`<数据根>/tmp` |
-| 知识库 / 技能 / 审计 / 崩溃 | `<数据根>/Knowledge`、`KnowledgeBase`、`audit`、`CrashLogs` |
+| 审计 / 崩溃 | `<数据根>/audit`、`<数据根>/CrashLogs` |
 | 持久注入资产 | `<数据根>/persist/PersistentPlugins/<bundleId>/` |
 | rootd 通道 | `<数据根>/Rootd` |
 | App Group | `group.wiki.qaq.xosvi`（上游旧的 `group.com.ai.iosxcode` 只在一次性迁移里读） |

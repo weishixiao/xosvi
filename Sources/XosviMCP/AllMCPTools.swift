@@ -34,7 +34,7 @@ final class SystemOverviewTool: MCPTool {
             "system": "Xosvi",
             "version": ver,
             "total_tools": names.count,
-            "important_note": "The callable tools are the BIG TOOLS below — call them as `name` + `command`/`action` subcommand (e.g. `app` + command:decrypt, `inject` + command:enable). Dotted names like app.decrypt are NOT separate tool names. A few single tools are callable as-is: shell.exec, web.search, web.fetch, network.capture, vpn.capture, skills.read, env.setup_re.",
+            "important_note": "The callable tools are the BIG TOOLS below — call them as `name` + `command`/`action` subcommand (e.g. `app` + command:decrypt, `inject` + command:enable). Dotted names like app.decrypt are NOT separate tool names. A few single tools are callable as-is: shell.exec, web.search, web.fetch, network.capture, vpn.capture, env.setup_re.",
             "tool_categories": cats,
             "ios_version_support": [
                 "trollstore_supported": [
@@ -698,7 +698,6 @@ final class WorkspaceInfoTool: MCPTool {
             "tweaks": "内置 dylib 插件 (ControlAgent / ProbeAgent / MemoryTweak 等)",
             "bridge_exports": "桥接导出文件",
             "artifacts": "生成的产物 (编译结果 / 分析报告等)",
-            "knowledge": "知识库文件",
             "backups": "备份文件 (注入前自动备份)",
             "logs": "日志文件",
             "cache": "缓存文件"

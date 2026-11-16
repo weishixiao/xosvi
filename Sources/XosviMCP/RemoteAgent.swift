@@ -43,7 +43,7 @@ public final class RemoteAgent: ObservableObject {
         "apps.list", "apps.cache_inspect", "app.info", "app.status",
         "system.cleanup_scan", "cleanup.scan",
         "network.status", "diagnose.startup",
-        "crash.list", "skills.list", "tools.list",
+        "crash.list", "tools.list",
     ]
 
     public init() {

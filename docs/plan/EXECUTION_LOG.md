@@ -11,6 +11,9 @@
 - D-004：`longCacheTools` 统一为注册名 `skills.list` / `skills.read`（旧 `skill.*` 永不命中）。
 - D-005：缓存前缀中的 `device.fake` / `injection.mem` 为死条目（子命令不是工具名），已从名单移除。
 - D-006：文档工具数口径改为“默认启用 49 / 注册 166，以 system.overview 实时值为准”。
+- D-007（v11.0）：按用户要求整体删除「模型破甲提示词 / 知识库 / Agents 与 Skills」三块设置——store、页面、MCP 工具
+  （`knowledge`、`skills.list`、`skills.read`、`skills.set_enabled`）一并移除，注册表 55 → 51；`XDirs` 的
+  Knowledge / KnowledgeBase 目录不再创建。诊断用的 `FailureKnowledgeBase`（kb 工具，非知识库页面）保留。
 
 ## 阻塞记录（Blockers）
 

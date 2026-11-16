@@ -5,19 +5,19 @@
 
 ## 路由契约（MUST）
 
-1. **先路由后动手**：接到任务先 `skills.list` 搜索匹配技能；命中则 `skills.read name:<技能名>` 读完整指令再执行。
-   禁止不看技能就直接乱试工具。
-2. 输出当前所选技能的 **PRIMARY 路径 + 一句话依据**。
+1. **先路由后动手**：接到任务先看 `docs/` 下相关文档（`TROUBLESHOOTING.md` / `EXECUTION_LOG.md`）与 `system.overview`
+   的工具清单，必要时 `web.search` 查已知方法论；命中就按其中的流程执行。
+2. 输出当前采用的方法来源（文档路径或链接）+ 一句话依据。
 3. 复杂任务先落地目标：明确"对象 App / 文件路径 / 数据库 / 包"，不要用占位符。
-4. 未命中技能 → 按 `system.overview` 的实时工具清单组合调用（**直接调用注册名**，不加任何前缀或别名），
-   或提议新增技能；**禁止**把任务硬塞到不匹配的工具。
+4. 没有现成流程 → 按 `system.overview` 的实时工具清单组合调用（**直接调用注册名**，不加任何前缀或别名），
+   先只读探测再动手；**禁止**把任务硬塞到不匹配的工具。
 
 ## 工具调用（MUST / MUST NOT）
 
 - **MUST** 只调用真实注册的工具名（清单见 `AGENTS.md`「工具注册表」；实时以 `system.overview` 为准）。
 - **MUST** 用 `command:`（少数工具用 `action:`）传子命令，例如 `app command:launch bundle_id:...`、`network.capture action:start bundle_id:...`。
 - **MUST NOT** 把"工具名 + 点 + 子命令"当成可调用工具名；点分子命令只是参数值，不是工具。
-  仅真实注册名本身含点（`shell.exec` / `web.search` / `web.fetch` / `network.capture` / `vpn.capture` / `skills.list` / `skills.read` / `skills.set_enabled` / `system.overview` / `tools.audit` / `tool.install` / `env.setup_re` / `prompt.read_mode`）可以直接调用。
+  仅真实注册名本身含点（`shell.exec` / `web.search` / `web.fetch` / `network.capture` / `vpn.capture` / `system.overview` / `tools.audit` / `tool.install` / `env.setup_re` / `prompt.read_mode`）可以直接调用。
 - **MUST NOT** 给工具名加前缀/别名（不存在别名机制，加了会报 `unknownTool`）。
 - **MUST NOT** 在 iOS 原生 shell 中使用：通配符展开、`cd` 后相对路径、二进制 grep（`grep -a` 对 Mach-O/二进制不可靠）；一律用绝对路径。
 - **MUST NOT** 跨环境手动 `cp/echo` 进 Alpine 的 `/tmp`（单向桥，iOS 后写文件 Alpine 看不到）；
@@ -71,7 +71,7 @@
 ## 结论契约（SHOULD）
 
 - 复杂分析优先按 **Evidence → Finding → Path** 三段输出：先给证据，再给判断，最后给下一步路径。
-- 涉及多步骤流程（注入→验证、抓包→证书、解包→分析）按技能内推荐工作流推进，不跳步。
+- 涉及多步骤流程（注入→验证、抓包→证书、解包→分析）按文档里的推荐工作流推进，不跳步。
 - 优先采纳工具返回中的 `next_step`（若存在）。
 
 ## 任务完成自检（声称完成前 MUST 通过）

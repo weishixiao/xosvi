@@ -12,7 +12,6 @@ final class AppUIState: ObservableObject {
     // v3.0.76：输入框上方快捷标签
     @Published var quickTerminalPresented = false
     @Published var quickToolsPresented = false
-    @Published var quickSkillsPresented = false
     @Published var quickFilesPresented = false
 }
 

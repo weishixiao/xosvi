@@ -1432,9 +1432,6 @@ final class ConversationStore: ObservableObject {
         if let router = SystemPrompts.shared.routerBlock(), !router.isEmpty {
             systemBlocks.append(router)
         }
-        if let devInstr = DeveloperInstructionStore.shared.defaultInjectionContent(), !devInstr.isEmpty {
-            systemBlocks.append("以下是开发者指令，请始终遵守：\n" + devInstr)
-        }
         systemBlocks.append(Self.toolArbitration)
         systemBlocks.append(Self.dynamicStatePrompt())
         history.insert(ChatMessage(role: "system", content: systemBlocks.joined(separator: "\n\n---\n\n")), at: 0)
@@ -1554,16 +1551,7 @@ final class ConversationStore: ObservableObject {
                     self.requestRound = 0
                     self.runningTool = nil
                     self.thinkBuffer = "" // 重置缓冲区
-                    // v2.9.138：自动会话记忆——一轮完整回复后落库 (供下会话 BM25 检索）
-                    if let idx = self.activeConvIndex {
-                        let msgs = self.conversations[idx].messages
-                        let lastUser = msgs.last { $0.role == "user" }?.content ?? ""
-                        let usedTools = msgs.compactMap { $0.toolName }
-                        KnowledgeStore.shared.appendSessionMemory(
-                            user: String(lastUser.prefix(80)),
-                            reply: String(text.prefix(150)),
-                            tools: Array(Set(usedTools)).sorted().suffix(8))
-                    }
+                    // v11.0：自动会话记忆（写 knowledge/session_memory.md）已随知识库整体删除
                     // v2.9.127：轨迹——回复done，附到消息持久化
                     self.trailStep(.done(.note, "AI 回复done", detail: String(text.prefix(80))))
                     // v2.9.82：done通知 (后台时）

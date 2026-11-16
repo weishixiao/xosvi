@@ -32,10 +32,7 @@ final class AppDelegate: UIResponder, UIApplicationDelegate {
 
         CrashCatcher.install()  // v2.9.145c：最先注册崩溃捕获，闪退自动落盘 crash/ 可查
         CrashReporter.shared.start()   // v8.2：补 NSException 捕获 + 工具面包屑（与 CrashCatcher 互补）
-        // v8.4：知识库 FTS5 索引后台构建（不阻塞启动）
-        DispatchQueue.global(qos: .utility).async {
-            KnowledgeIndex.shared.rebuild(packs: KnowledgeLoader.loadAll())
-        }
+        // v11.0：知识库已按要求整体删除（含 FTS5 索引后台构建）
 
         // v7.16.11：卸载即清空数据。
         // 必须在任何 Store 单例读 UserDefaults **之前**执行，否则内存里会先加载旧值。

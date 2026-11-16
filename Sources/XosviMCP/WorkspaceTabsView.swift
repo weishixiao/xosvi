@@ -13,7 +13,7 @@ struct WorkspaceToolsPane: View {
         ("文件", "folder", ["artifact.read_text", "artifact.write_text", "artifact.list",
                             "workspace.info", "file.inspect"]),
         ("命令", "terminal", ["shell.exec", "workspace", "process.list"]),
-        ("检索", "magnifyingglass", ["web.search", "web.fetch", "knowledge.search"]),
+        ("检索", "magnifyingglass", ["web.search", "web.fetch"]),
         ("App", "square.grid.2x2", ["app", "bind_app", "app_write_file", "app_decrypt"]),
         ("注入", "syringe", ["injection.enable", "injection.disable", "injection.status",
                              "injection.list", "injection.inspect"]),

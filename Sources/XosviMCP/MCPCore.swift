@@ -628,7 +628,6 @@ public final class ToolRegistry: ObservableObject {
         "device.info", "device.probe",  // 设备信息
         "injection.list", "process.list",  // 进程列表
         "artifact.list", "macro.list",  // 列表类
-        "skills.list", "skills.read",  // v8（PR-A2）：注册名是 skills.*（旧名 skill.* 永不命中）
     ]
 
     // MARK: - v8（PR-D4）：熔断后「替代工具推荐表」（数据化，便于持续维护与测试）
@@ -945,7 +944,7 @@ public final class ToolRegistry: ObservableObject {
     private static let defaultEnabledTools: Set<String> = [
         // v3.1.66：全量注册工具默认启用
         "artifact", "device", "memory", "assistant_memory", "verify", "container",
-        "ssh", "diagnose", "knowledge", "location", "macro", "app", "control",
+        "ssh", "diagnose", "location", "macro", "app", "control",
         "inject", "automation", "network.capture", "server", "project", "workspace", "subagent", "ghost",
         "shell.exec", "reminder", "rescue",
         // v7.16.7：rootd 桥——不默认启用的话 isEnabled 返回 false，AI 根本看不到这个工具
@@ -954,13 +953,11 @@ public final class ToolRegistry: ObservableObject {
         "tool.install", "env.setup_re",
         // v4.3.65：补齐"已注册但漏在白名单外"的分析工具——否则 AI 看不到 db/file/package，
         // 无法用原生 sqlite3 直读 App 数据容器、无法解包分析；vpn.capture 随 VPN 抓包恢复一并默认启用；
-        // skills.* 让技能系统真正按需加载生效
         "file", "db", "package", "vpn.capture",
         // v7.18.0：REA 式静态取证默认启用——armor（加固/语言溯源/diff）、crash.ips（崩溃报告）
         "armor", "crash.ips", "macho", "disasm",
         // v10.x：内置逆向引擎（Mach-O/ObjC/字符串交叉引用 → 报告），不默认启用 AI 就看不见
         "re",
-        "skills.list", "skills.read", "skills.set_enabled",
         // v8.2：ish.doctor / health.summary 移出默认白名单（健康度体系已删；ish.doctor 仍注册，
         // 需要时用户可在工具权限页手动开启；gateway 不动）
         "gateway",
@@ -1316,7 +1313,7 @@ public final class ToolRegistry: ObservableObject {
                     "编译": ["build.", "github."],
                     "崩溃": ["crash", "diagnose.", "log.collect"],
                     "设备": ["device.", "system.overview"],
-                    "聊天": ["knowledge.", "assistant.memory"],
+                    "聊天": ["assistant.memory"],
                     "微信": ["wechat."],
                     "定位": ["location."],
                     "备份": ["backup."],
@@ -2237,17 +2234,12 @@ public final class ToolRegistry: ObservableObject {
         // v3.1.57: 删 ReminderScheduleTool / ReminderScheduleRecurringTool (已合并到 ReminderExecTool）
         // v3.1.62: 删 DeviceSnapshotTool (已合并到 DeviceExecTool：device snapshot）
         // v3.1.54: 删 WebSearchTool / WebFetchTool (shell.exec curl 可以实现）
-        // v3.1.50: knowledge 大工具 + 子命令 (合并 4 个 knowledge.* 工具）
-        register(KnowledgeExecTool())
-        // v3.1.50: 删旧的 4 个 knowledge.* 工具 (已合并到 knowledge 大工具）
+        // v11.0: 删 knowledge 大工具（模型破甲提示词 / 知识库 / Agents 与 Skills 已按要求整体移除）
+        // v3.1.50: 删旧的 4 个 knowledge.* 工具
         // v3.1.64: 删 PhoneExecTool (用得少，用系统电话 App 打电话）
         // v3.1.61: 删旧的电话工具 (已合并到 PhoneExecTool）
         // v3.1.64: 删 SkillsSetEnabledTool (用 shell.exec 修改配置文件代替）
-        // v3.6.19l: 恢复注册 skills.* —— 之前注释说"用 shell.exec 代替"但 shell.exec 并无 skills 子命令，
-        //           导致 AI 永远拿不到 skills.list/read/set_enabled 工具，"AI 说调用不了技能"。恢复后按需加载机制真正生效。
-        register(SkillsListTool())        // v2.9.17：技能可被 AI 发现（按需搜索，不塞全量）
-        register(SkillsReadTool())        // v2.9.17：技能可被 AI 读取（完整指令）
-        register(SkillsSetEnabledTool())  // 技能启停
+        // v11.0: 删 skills.list / skills.read / skills.set_enabled（技能系统整体移除）
         // v3.1.31: 之前 shell 是 Alpine，访问不到 iOS 文件系统，所以 fs.* 工具加回来了
         // v3.1.46: 现在 shell.exec 已经做了 iOS 原生命令，可以访问 iOS 文件系统了！
         // 删掉 12 个 fs.* 工具 (shell.exec 可以实现）

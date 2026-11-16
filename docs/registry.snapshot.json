@@ -1,5 +1,5 @@
 {
-  "count": 55,
+  "count": 51,
   "names": [
     "app",
     "app_write_file",
@@ -25,7 +25,6 @@
     "inject",
     "ish.doctor",
     "jb",
-    "knowledge",
     "location",
     "macho",
     "macro",
@@ -42,9 +41,6 @@
     "save",
     "server",
     "shell.exec",
-    "skills.list",
-    "skills.read",
-    "skills.set_enabled",
     "ssh",
     "subagent",
     "system.overview",
@@ -250,14 +246,6 @@
       "requires_trollstore": false,
       "verified": false
     },
-    "knowledge": {
-      "category": "knowledge",
-      "file": "Tools.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
     "location": {
       "category": "device",
       "file": "Tools.swift",
@@ -381,30 +369,6 @@
     "shell.exec": {
       "category": "",
       "file": "ShellTool.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "skills.list": {
-      "category": "skills",
-      "file": "SkillStore.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "skills.read": {
-      "category": "skills",
-      "file": "SkillStore.swift",
-      "remote_only": false,
-      "requires_jailbreak": false,
-      "requires_trollstore": false,
-      "verified": true
-    },
-    "skills.set_enabled": {
-      "category": "skills",
-      "file": "MissingTools.swift",
       "remote_only": false,
       "requires_jailbreak": false,
       "requires_trollstore": false,

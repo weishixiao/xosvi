@@ -48,7 +48,6 @@ struct WorkspaceBrowserView: View {
         "decrypted": "解密(砸壳)产物",
         "downloads": "下载文件",
         "duplicates": "重复文件",
-        "knowledge": "知识库",
         "logs": "运行日志",
         "macros": "宏/脚本",
         "network_capture": "抓包数据",

@@ -5,7 +5,7 @@ import Foundation
 final class DebugDumpConversationsTool: MCPTool {
     let definition = ToolDefinition(
         name: "debug.dump_conversations",
-        summary: "Debug: export list of chat conversations. Use for: debug conversation issues, see what chats exist internally. Don't use for: read a specific conversation (use `debug.dump_conversation`), list skills (use skills.list). Example: user says 'export conversation list' → dump conversations.",
+        summary: "Debug: export list of chat conversations. Use for: debug conversation issues, see what chats exist internally. Don't use for: read a specific conversation (use `debug.dump_conversation`). Example: user says 'export conversation list' → dump conversations.",
         parameters: ["limit": "How many conversations to export (default: 5, max: 30)"], verified: true, category: "debug")
 
     func invoke(_ params: [String: Any]) throws -> [String: Any] {

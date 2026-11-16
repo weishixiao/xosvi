@@ -567,7 +567,6 @@ func toolSymbol(_ name: String) -> String {
     if n.hasPrefix("device") { return "iphone" }
     if n.hasPrefix("package") { return "shippingbox" }
     if n.hasPrefix("macho") || n.hasPrefix("disasm") || n == "re" { return "cpu" }
-    if n.hasPrefix("skills") || n.hasPrefix("knowledge") { return "book" }
     if n.hasPrefix("diagnose") || n.hasPrefix("verify") { return "stethoscope" }
     return "wrench.and.screwdriver"
 }

@@ -160,32 +160,16 @@ struct SystemPromptsView: View {
         )
     }
 
-    // 说明卡
+    // 说明卡（v11.0：模型破甲提示词已按要求删除，这里只解释系统指令本身）
     private var explainCard: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Label("系统指令 vs 模型破甲提示词", systemImage: "info.circle.fill")
+            Label("系统指令", systemImage: "info.circle.fill")
                 .font(.subheadline.weight(.semibold))
                 .foregroundColor(.tmCyan)
-            Text(L10n.t("ui_14"))
+            Text("系统指令由 App 内置，每个模式一套，决定 AI 的基本行为模式与执行规范。")
                 .font(XType.note)
                 .foregroundColor(.secondary)
-            Text(L10n.t("ui_13"))
-                .font(XType.note)
-                .foregroundColor(.secondary)
-            Text(L10n.t("ui_12"))
-                .font(XType.note)
-                .foregroundColor(.secondary)
-
-            Divider()
-                .padding(.vertical, 4)
-
-            Label("模型破甲提示词 = 破甲测试专用", systemImage: "hammer.fill")
-                .font(.subheadline.weight(.semibold))
-                .foregroundColor(.orange)
-            Text("选择「开发者模式」可以让 AI 执行破甲、越狱、注入、绕过等高级测试任务，适合做 App 破解和安全测试。")
-                .font(XType.note)
-                .foregroundColor(.secondary)
-            Text("其他模式（逆向、渗透、游戏修改等）也都有各自的专业提示词，直接选对应模式即可。")
+            Text("点上方卡片切换模式；模式只影响之后的对话，不会改写历史消息。")
                 .font(XType.note)
                 .foregroundColor(.secondary)
         }

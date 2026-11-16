@@ -7,8 +7,6 @@ import Foundation
 //   <root>/Rootd          —— root 通道落盘目录（Support/rootd/rootd.sh 用同一路径）
 //   <root>/logs           —— App 级日志（hud.log / kfd_helper.log）
 //   <root>/work           —— xosvid 守护的 helper 工作区（Support/xosvi/*.c 里写死的就是它）
-//   <root>/Knowledge      —— 知识库 FTS 索引（kb.sqlite）
-//   <root>/KnowledgeBase  —— 技能 / 开发者指令 / agent 定义
 //   <root>/audit          —— 工具审计日志（tool_log.jsonl）
 //   <root>/CrashLogs      —— 崩溃报告
 //   <root>/persist        —— 持久化注入资产（App 重装后可从持久区恢复注入）
@@ -34,8 +32,6 @@ enum XDirs {
     static let logs = dataRoot + "/logs"
     static let work = dataRoot + "/work"
     static let tmp = dataRoot + "/tmp"
-    static let knowledge = dataRoot + "/Knowledge"
-    static let knowledgeBase = dataRoot + "/KnowledgeBase"
     static let audit = dataRoot + "/audit"
     static let crashLogs = dataRoot + "/CrashLogs"
     static let persist = dataRoot + "/persist"
@@ -59,7 +55,7 @@ enum XDirs {
         // workspace/logs 也要提前建：appex 的 appex.log / hev.log 是 fopen 直写，
         // 目录不存在就静默丢弃（旧路径能写是因为上游早把那个目录建好了）。
         for d in [dataRoot, workspace, workspace + "/logs", rootd, logs, work, tmp,
-                  knowledge, knowledgeBase, audit, crashLogs, persist] {
+                  audit, crashLogs, persist] {
             try? fm.createDirectory(atPath: d, withIntermediateDirectories: true)
         }
     }
@@ -81,8 +77,6 @@ enum XDirs {
         let sharedMoves: [(String, String)] = [
             (sharedDocuments + "/Workspace", workspace),
             (sharedDocuments + "/Rootd", rootd),
-            (sharedDocuments + "/Knowledge", knowledge),
-            (sharedDocuments + "/KnowledgeBase", knowledgeBase),
             (sharedDocuments + "/audit", audit),
             (sharedDocuments + "/CrashLogs", crashLogs),
         ]

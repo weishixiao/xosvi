@@ -880,67 +880,6 @@ final class ModelExecTool: MCPTool {
     }
 }
 
-// MARK: - v3.1.50: knowledge 大工具 + 子命令 (合并 4 个 knowledge.* 工具）
-
-final class KnowledgeExecTool: MCPTool {
-    let definition = ToolDefinition(
-        name: "knowledge",
-        summary: "Persistent knowledge base. Commands: import_text / import_file / search / delete / clear. Params: text (import_text), name (import_text/delete), path (import_file), query (search). Chat memory use memory.*.",
-        parameters: [
-            "command": "Subcommand: import_text / import_file / search / delete / clear",
-            "text": "Text to import (for import_text)",
-            "name": "Entry name (optional for import_text, required for delete)",
-            "path": "File path (for import_file)",
-            "query": "Search query (for search)",
-            "id": "Knowledge entry name (alias for name, for delete)"
-        ],
-        verified: true, category: "knowledge")
-    
-    func invoke(_ params: [String: Any]) throws -> [String: Any] {
-        guard let command = params["command"] as? String else {
-            throw MCPError.invalidParams("command required")
-        }
-        
-        AuditLog.shared.log("knowledge", detail: command)
-        
-        switch command {
-        case "import_text":
-            guard let text = params["text"] as? String else {
-                throw MCPError.invalidParams("text required")
-            }
-            // v4.3.66：子工具要求 name+content（此前只传 text 必崩）；name 缺省自动生成
-            let name = params["name"] as? String ?? "笔记-\(Int(Date().timeIntervalSince1970))"
-            return try KnowledgeImportTextTool().invoke(["name": name, "content": text])
-            
-        case "import_file":
-            guard let path = params["path"] as? String else {
-                throw MCPError.invalidParams("path required")
-            }
-            return try KnowledgeImportFileTool().invoke(["path": path])
-            
-        case "search":
-            guard let query = params["query"] as? String else {
-                throw MCPError.invalidParams("query required")
-            }
-            return try KnowledgeSearchTool().invoke(["query": query])
-            
-        case "delete":
-            // v4.3.66：子工具要求 name（此前传 id 必崩）；兼容 name/id 两种入参
-            guard let name = params["name"] as? String ?? params["id"] as? String else {
-                throw MCPError.invalidParams("name required")
-            }
-            return try KnowledgeDeleteTool().invoke(["name": name])
-
-        case "clear":
-            let removed = KnowledgeStore.shared.clearAll()
-            return ["cleared": true, "removed": removed, "note": "已清空知识库（含 session_memory.md，将自动重建）"]
-
-        default:
-            throw MCPError.invalidParams("Unknown command: \(command). Available: import_text/import_file/search/delete/clear")
-        }
-    }
-}
-
 // MARK: - v3.1.51: location 大工具 + 子命令 (合并 4 个 location.* 工具）
 
 final class LocationExecTool: MCPTool {

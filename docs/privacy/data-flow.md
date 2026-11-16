@@ -7,6 +7,5 @@
 | 远程通道指令（8790） | 配对过的服务器（RemoteAgent 配置 URL） | 否，人工开启 | 设置 → 远程 关闭；指令白名单见 RemoteAgent.safeTools，越界命令直接 DENIED 并记审计 |
 | 设备安装信息上报 | 同上服务器（同版本只报一次） | 视配置 | 关闭远程通道即停 |
 | Gateway 工具调用 | 只在本机监听端口响应 | 否，手动 start | `gateway command:stop` |
-| session_memory.md | 仅本地知识库 | 是 | 设置 → 知识库 → 会话记忆关闭（`xosvi.session_memory_enabled=false`） |
 | 审计日志 | 仅本地 | 是 | 不清除则滚动保留 |
 | MITM 证书/明文 | 仅本机 Workspace/certs、network_capture | 否，手动开启 | 删除对应目录 |
