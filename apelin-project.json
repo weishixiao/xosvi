@@ -3,7 +3,7 @@
   "projectID": "1d2fe77d-ac3b-468f-bb99-9348d02b8a3c",
   "kind": "workspace",
   "buildSystem": "external",
-  "displayName": "xosvi",
+  "displayName": "Xov",
   "autoName": false,
   "external": {
     "script": "apelin/build.sh",
