@@ -11,7 +11,7 @@
   2) 目标名必须命中注册表（由 dump_registry/lint 校验）。
   3) 改完必须复跑 lint_tool_descriptions.py，L2 引用检查必须清零。
 
-目标形态约定：`大工具` command:子命令（或真实注册名，如 skills.read / web.fetch）。
+目标形态约定：`大工具` command:子命令（或真实注册名，如 prompt.read_mode / web.fetch）。
 """
 from __future__ import annotations
 

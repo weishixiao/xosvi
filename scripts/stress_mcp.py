@@ -23,7 +23,7 @@ from collections import Counter
 READONLY_CALLS = [
     ("device", {"command": "info"}),
     ("inject", {"command": "status"}),
-    ("skills.list", {}),
+    ("assistant_memory", {"command": "list"}),
     ("tools.audit", {}),
     ("system.overview", {}),
 ]

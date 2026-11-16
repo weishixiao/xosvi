@@ -119,7 +119,7 @@ static void drawPage(CGContextRef ctx, double y0, bool legacy,
     const char *heads[2] = { "LLM PROVIDERS", "AGENT RUNTIME" };
     const char *titles[2][3] = {
         { "Manage Providers", "Model Groups", "Token Usage" },
-        { "Agent Tools", "Sub Agents", "Skills" },
+        { "Agent Tools", "Sub Agents", "Remote Access" },
     };
     double colors[2][3][3] = {
         { {0, 122, 255}, {175, 82, 222}, {88, 86, 214} },

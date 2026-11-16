@@ -292,7 +292,6 @@ enum L10n {
 
     "ui_0": ["zh": "AI 可读网页全文", "en": "AI can read full page text"],
     "ui_1": ["zh": "AI 联网检索并引用来源", "en": "AI searches the web and cites sources"],
-    "ui_2": ["zh": "Agents 通过 agents.json 配置，放入 KnowledgeBase 目录即可加载。", "en": "Agents are configured via agents.json; place it in the KnowledgeBase folder to load."],
     "ui_3": ["zh": "App 会在请求被中转站拒绝或超时时自动逐级简化请求参数（降级），成功后记住可用级别。级别 5 走 Responses API（Codex 同款端点），可保留工具调用；级别 ≥3 表示仅可纯对话。", "en": "The app auto-degrades request params step by step when the relay rejects or times out; the working level is remembered. Level 5 uses the Responses API (Codex endpoint) and keeps tool calls; levels >=3 mean chat-only."],
     "ui_4": ["zh": "App 内置行为规范 · 不可编辑 · 切换立即生效", "en": "Built-in behavior rules · read-only · takes effect immediately"],
     "ui_5": ["zh": "App 注入后打不开 → 先「一键全恢复」；仍不行再「清理残留」。不要卸载重装（会丢数据）。", "en": "If an app won't open after injection → try 'Restore All' first; then 'Clean Residuals'. Don't uninstall & reinstall (loses data)."],
@@ -371,9 +370,7 @@ enum L10n {
     "ui_85": ["zh": "暂无待批准操作", "en": "No pending approvals"],
     "ui_86": ["zh": "暂无执行记录", "en": "No execution records"],
     "ui_88": ["zh": "暂无模型配置", "en": "No model configs"],
-    "ui_89": ["zh": "暂无知识库文件", "en": "No knowledge base files"],
     "ui_90": ["zh": "暂无自动化任务", "en": "No automation tasks"],
-    "ui_91": ["zh": "暂无自定义 Agent", "en": "No custom Agents"],
     "ui_92": ["zh": "暂无记录", "en": "No records"],
     "ui_93": ["zh": "暂无记录。发起一次对话后，这里会显示每次请求的载荷级别与结果。", "en": "No records yet. After a chat, each request's level and result appears here."],
     "ui_94": ["zh": "暂无运行中的任务", "en": "No running tasks"],
