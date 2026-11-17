@@ -515,3 +515,64 @@ OpenAIClient 还无条件下发「调工具前必须先解说」。四层信号�
   ③「删掉 /tmp/x.log」全量工具 + 先说后做；④后台排队会话能跑完不中途停。
 - 本地无 swiftc（toolchain 只装了 C 组件，Swift 需 iOS 26 / A13+），本次**判定逻辑未在本机跑过**，
   可靠性完全压在 CI 的 `intent-selftest` 与真机四点上。
+
+---
+
+## v10.14 · 提示词三层拆到底 + 工具核心 12（「一次性全改」）
+
+用户批准「一次性全改」，三件事一轮做完，不再分步等确认。
+
+### ① 环境提示词：2.4 万字符常驻 → 常驻硬规则 + 按需知识卡
+
+拆前实测：`environmentPrompt` **= 33,208 字节 / 24,656 字符**（此前文档里写的「2.9 万」是字节数口径），
+每轮无条件进 system。现在：
+
+| 层 | 内容 | 字符 | 说明 |
+|---|---|---|---|
+| 常驻 `PromptCards.resident` | 工具调用定式 / 协作纪律 1-11 / 回复语言 | **1,592**（CJK 900 + ASCII 692，32 行） | 硬规则，一字不减，只压措辞 |
+| 按需卡 `PromptCardText.*` | 小白 / 终端 / 逆向静态 / 逆向动态 / 引擎 / 存档 / 越狱 / Git / 自检 / 方法论 / 已知问题 | 11 张共 23,336 字节 | **原文照抄**（含标题行），关键词命中才注入 |
+| 注入规则 | `PromptCards.cards(for:limit:2)` | — | 打分取前 2 张，分数 0 一张都不注入 |
+
+常驻层 token：约 **800–830**（900 CJK×0.7 + 692 ASCII/3.5），达到 ≤800 量级的目标。
+
+### ② `conversationCore` 与 default 模式正文去重
+
+- `conversationCore` 保持 1,443 字节 / 613 字符，未动（已经在预算内）。
+- default 模式正文 **6,999 → 2,653 字符（−62%）**：删掉与常驻层重复的 TOOL CALLING CONTRACT、
+  输出风格、安全段，只留本模式特有的 ROLE / CHAT FIRST / 工具选型速查 / 停止条件 / 参考。
+  「工具选型速查」保留是有意的——它讲的是**选哪条路更省事**，常驻层讲的是**怎么调用**，不重复。
+
+### ③ 工具：核心 12 + 按需工具池（含 `tools.load`）
+
+- `PromptCards.coreToolNames`（13 个含逃生口）：`shell.exec` / `file` / `artifact` / `workspace` /
+  `web.search` / `web.fetch` / `app` / `control` / `device` / `inject` / `assistant_memory` /
+  `prompt.read_mode` / `tools.load`。
+- `send()` 干活档不再按协议分叉：**两条通道都走 `enabledOpenAIToolSchema(only: coreToolNames)`**。
+  旧写法在 Anthropic 通道传 `nil` + 靠 `approvedToolNames()` 兜底，等于把全量工具又灌回去，
+  渐进披露形同虚设。`preDisclosed` 也从 `approvedToolNames()` 改成 `runtimeDisclosedNames()`。
+- 新增 `tools.load`（`ToolsLoadTool`）：传组名或精确工具名 → `loaded` / `already` / `unknown` / `disabled`。
+  组表 `PromptCards.toolGroups` 11 组，与模型看到的 `toolPoolCard` 逐条对应。
+  用户手动关掉的工具**装不上**（`disabled`），否则设置里的 Toggle 就成了摆设。
+- `runLoop` 每轮把 `disclosed ∪ runtimeDisclosedNames()` 叠进白名单；`send()` 开头清空运行时披露
+  ——每轮按这句话重新判断要装什么。
+- `docs/registry.snapshot.json` 手补 `tools.load`（本机无 python3，`--check` 只比 names 集合，已对齐）。
+
+### 效果（干活的 system 提示词，单轮）
+
+- 拆前：1,443 + 24,656 + 6,999 ≈ **33,098 字符**
+- 拆后：613 + 1,592 + 2,653 + 817（池说明）= **5,675 字符**，**−83%**；命中 1–2 张卡再加卡片本身。
+- 工具 schema：51 → 13（核心 12 + `tools.load`），模型每轮少读约 38 个工具描述。
+
+### 这次踩到的第四个坑
+
+**中文占 3 字节**，用 `awk length()` 量预算会把中文字符数当成 3 倍——第一版误判「常驻层 3,392 token」。
+预算必须同时看「字节」和「CJK/ASCII 字符数」：`tr -d '\200-\377' | wc -c` 得 ASCII 字节，
+其余除以 3 约等于 CJK 字符数。800 token 对中文大约是 **1,200 字符**量级。
+
+### 待验证
+
+- 本机 `bash scripts/check.sh` 5 段全过（42.9s，0 FAIL）。
+- `apelin_project_build` roothide/arm64e 通过，0 diagnostics。
+- CI：`swift-syntax`（`swiftc -parse`）、`intent-selftest`、`tool-contract`（快照 names 集合）、`ios-build`。
+- 真机四点：①闲聊不调工具；②问「怎么逆向这个 App」→ 命中 `reverse_static` 卡 + 模型自己 `tools.load reverse`；
+  ③「帮我抓个包」→ `tools.load pentest` 后 `network.capture` 可用；④关掉的工具 `tools.load` 拿不到（回 `disabled`）。

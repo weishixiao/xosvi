@@ -585,6 +585,9 @@ public final class ToolRegistry: ObservableObject {
     private let disabledKey = "xosvi.disabled_tools"
     /// v2.9.22：会话内已授权工具 (AI 调用即自动放行，无需用户手动开 Toggle）。新会话时清空。
     private var sessionApproved: Set<String> = []
+    /// v10.14（L2 第三刀）：`tools.load` 装进来的工具。只在本轮用户请求内有效，
+    /// 下一次 send() 开头清空——每轮重新按这句话判断要装什么，避免上下文越滚越大。
+    private var runtimeDisclosed: [String] = []
     /// v2.9.26：策略版本号。setEnabled 时递增，通过 @Published 可靠触发
     /// 工具权限策略页刷新 (修复 iOS16 List 内 Toggle 只靠 objectWillChange.send()
     /// 刷新不可靠、开关点了没反应/弹回的问题）。
@@ -1034,6 +1037,27 @@ public final class ToolRegistry: ObservableObject {
         withLock { sessionApproved.contains(name) }
     }
 
+    // MARK: - v10.14（L2 第三刀）：tools.load 运行时装配
+
+    /// 记下 `tools.load` 装上的工具（去重保序）。runLoop 每轮把它并进工具白名单。
+    public func discloseRuntimeTools(_ names: [String]) {
+        lock.lock()
+        for n in names where !runtimeDisclosed.contains(n) { runtimeDisclosed.append(n) }
+        lock.unlock()
+    }
+
+    /// 本轮 tools.load 装过的工具名（原名，仅已注册的）。
+    public func runtimeDisclosedNames() -> [String] {
+        withLock { runtimeDisclosed.filter { tools[$0] != nil } }
+    }
+
+    /// 新一轮用户请求开头清空（send() 调用）。
+    public func clearRuntimeDisclosed() {
+        lock.lock()
+        runtimeDisclosed.removeAll()
+        lock.unlock()
+    }
+
     // MARK: - v8（PR-A6）：环境可用性矩阵（机器可判定部分）
 
     public func availability(of def: ToolDefinition) -> (available: Bool, reason: String?) {
@@ -1351,6 +1375,16 @@ public final class ToolRegistry: ObservableObject {
             return hits.map { ["name": $0.0, "summary": $0.1] }
         }
         return hits.prefix(limit).map { ["name": $0.0, "summary": $0.1] }
+    }
+
+    /// v10.14：把名字解析成注册原名（支持 deprecatedAliases）。找不到返回 nil。
+    /// tools.load 用它判定 unknown，避免把别名装进白名单（白名单按原名比）。
+    public func resolveName(_ name: String) -> String? {
+        withLock {
+            if tools[name] != nil { return name }
+            if let canonical = aliasMap[name], tools[canonical] != nil { return canonical }
+            return nil
+        }
     }
 
     /// 返回单个工具的完整 OpenAI function schema (供模型按名动态注入）
@@ -2312,6 +2346,8 @@ public final class ToolRegistry: ObservableObject {
         // 手动 bind 工具对 AI 是误导（会以为要手动挂载）。类定义保留供开发者调试/真机验证。
         // v6.9.10：模式自动路由——AI 按需拉取某个模式的完整细则（懒加载，避免 2.1 万字符全量进 context）
         register(PromptModeTool())
+        // v10.14（L2 第三刀）：按需装工具——本轮默认只给核心 12 个，缺的由模型自己装
+        register(ToolsLoadTool())
         AuditLog.shared.log("core", detail: "已注册 \(definitions.count) 个工具")
     }
 }
@@ -2355,6 +2391,61 @@ final class PromptModeTool: MCPTool {
     }
 }
 
+
+// MARK: - v10.14（L2 第三刀）按需装工具
+
+/// 本轮默认只给核心 12 个工具，缺的工具由模型自己装。
+/// 这是「渐进披露」的逃生口：没有它，模型一旦缺工具就会开始编不存在的工具名。
+final class ToolsLoadTool: MCPTool {
+    let definition = ToolDefinition(
+        name: "tools.load",
+        summary: "Load extra tools for this turn. Use for: the tool you need is not in the current list (only core tools are loaded by default) — pass a group id or exact tool names. Don't use for: tools you already have, or guessing names. Example: user wants to decrypt an IPA → tools.load {names:\"reverse\"} → then call macho / inject in the next step. Loaded tools stay available for the rest of this request.",
+        parameters: [
+            "names": "Group id (reverse / pentest / build / filex / device / data / auto / mem / server / dev / introspect) or exact tool names, comma-separated. Multiple allowed.",
+            "list": "true = return the group → members table without loading anything"
+        ],
+        returns: [
+            "loaded": "已装上、下一次调用即可用的工具名",
+            "already": "本来就在本轮工具集里的",
+            "unknown": "不存在的名字（别猜变体，看 unknown 里有什么）",
+            "disabled": "被用户关掉、装不上的工具"
+        ],
+        verified: false, category: "misc", uiSummary: "按需装工具（本轮生效）")
+
+    func invoke(_ params: [String: Any]) throws -> [String: Any] {
+        let registry = ToolRegistry.shared
+        if params["list"] as? Bool == true {
+            return [
+                "groups": PromptCards.toolGroups.mapValues { $0 },
+                "core": PromptCards.coreToolNames.sorted()
+            ]
+        }
+        let raw = (params["names"] as? String) ?? ""
+        let wanted = PromptCards.expandToolRequest(raw)
+        guard !wanted.isEmpty else {
+            throw MCPError.invalidParams("names required. Groups: "
+                + PromptCards.toolGroups.keys.sorted().joined(separator: " / ")
+                + ". Or pass list:true to see members.")
+        }
+        let current = PromptCards.coreToolNames.union(registry.runtimeDisclosedNames())
+        var loaded: [String] = [], already: [String] = [], unknown: [String] = [], disabled: [String] = []
+        for name in wanted {
+            guard let real = registry.resolveName(name) else { unknown.append(name); continue }
+            if current.contains(real) { already.append(real); continue }
+            // 用户手动关掉的工具不能靠装工具绕过——否则 Toggle 形同虚设
+            guard registry.isEnabled(name: real) else { disabled.append(real); continue }
+            loaded.append(real)
+        }
+        registry.discloseRuntimeTools(loaded)
+        return [
+            "loaded": loaded,
+            "already": already,
+            "unknown": unknown,
+            "disabled": disabled,
+            "note": "loaded 里的工具下一次调用就能用；unknown 是不存在的名字，别猜变体；disabled 是被用户在设置里关掉的。"
+        ]
+    }
+}
 
 // MARK: - 工作区
 

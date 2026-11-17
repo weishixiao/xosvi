@@ -1,5 +1,5 @@
 {
-  "count": 51,
+  "count": 52,
   "names": [
     "app",
     "app_write_file",
@@ -46,6 +46,7 @@
     "system.overview",
     "tool.install",
     "tools.audit",
+    "tools.load",
     "verify",
     "vpn.capture",
     "web.fetch",
@@ -413,6 +414,14 @@
       "requires_jailbreak": false,
       "requires_trollstore": false,
       "verified": true
+    },
+    "tools.load": {
+      "category": "misc",
+      "file": "MCPCore.swift",
+      "remote_only": false,
+      "requires_jailbreak": false,
+      "requires_trollstore": false,
+      "verified": false
     },
     "verify": {
       "category": "system",

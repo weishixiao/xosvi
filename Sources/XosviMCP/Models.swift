@@ -1261,6 +1261,10 @@ final class ConversationStore: ObservableObject {
                                                     previousAssistant: prevAssistant)
             currentUserText = judgedText
         }
+        // v10.14（L2 第三刀）：新一轮用户请求，清掉上一轮 tools.load 装的工具。
+        // 每轮按这句话重新判断要装什么；不清会把上一轮（可能是别的任务）的工具集带进来。
+        ToolRegistry.shared.clearRuntimeDisclosed()
+
         var msg = ChatMessage(role: "user", content: text)
         if let imgs = imageDataURLs, !imgs.isEmpty {
             msg.imageDataURLs = imgs
@@ -1281,12 +1285,16 @@ final class ConversationStore: ObservableObject {
         case .lookup:
             baseTools = ToolRegistry.shared.enabledOpenAIToolSchema(only: RunPolicy.lookupTools)
         case .operate:
-            baseTools = config.apiProtocol == "Anthropic Messages"
-                ? nil : ToolRegistry.shared.enabledOpenAIToolSchema()
+            // v10.14（L2 第三刀）：核心 12 + tools.load。两条通道统一走白名单——
+            // 旧写法在 Anthropic 通道传 nil + 依赖 approvedToolNames 兜底，等于把全量工具
+            // 又灌了回去，渐进披露就白做了。缺的工具由模型 tools.load 装（见 runLoop 合并）。
+            baseTools = ToolRegistry.shared.enabledOpenAIToolSchema(only: PromptCards.coreToolNames)
         }
         // v3.1.66：已授权工具的 schema 只在干活档叠加——否则 chat/lookup 轮会把全量工具
         // 顺着 disclosed 重新灌回白名单，L2 的白名单就白做了。
-        let preDisclosed = currentPolicy.allowsAllTools ? ToolRegistry.shared.approvedToolNames() : []
+        // v10.14：干活档不再预灌 approvedToolNames()（那等于绕过核心 12），
+        // 本轮真正要用的工具由 tools.load 自己声明，从空集开始。
+        let preDisclosed = currentPolicy.allowsAllTools ? ToolRegistry.shared.runtimeDisclosedNames() : []
         runLoop(config: config, tools: baseTools, disclosed: preDisclosed, depth: 0, reasoningLevel: reasoningLevel)
     }
 
@@ -1429,14 +1437,17 @@ final class ConversationStore: ObservableObject {
         let policy = self.currentPolicy
         var effectiveTools = tools ?? []
         // v10.13（L2）：已披露/已授权工具的 schema 只在干活档叠加
-        if policy.allowsAllTools && !disclosed.isEmpty {
+        // v10.14：叠加来源除了 disclosed，还要加上本轮 tools.load 装进来的（runtimeDisclosed），
+        // 否则模型装了工具，下一次请求里依然没有它，装工具就成了空转。
+        if policy.allowsAllTools {
             var existing = Set<String>()
             for t in effectiveTools {
                 if let fn = t["function"] as? [String: Any], let n = fn["name"] as? String {
                     existing.insert(n)
                 }
             }
-            for name in disclosed {
+            let extras = Array(Set(disclosed).union(ToolRegistry.shared.runtimeDisclosedNames()))
+            for name in extras {
                 let apiName = name.components(separatedBy: CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-").inverted).joined(separator: "_")
                 if existing.contains(apiName) { continue }
                 if let schema = ToolRegistry.shared.openAISchema(for: name) {
