@@ -1984,10 +1984,40 @@ struct MessageBubble: View {
         return MonoChat.stroke
     }
 
-    /// v8.6：分层气泡容器（文档要求）——思考块 / 附件 / 正文同处一张卡片
-    ///   · 用户：accent 实色 + 白字
-    ///   · AI：卡片底 + 0.6pt 描边
-    ///   两者都贴合内容宽度、上限 86% 屏宽（ChatMetrics.bubbleMaxWidth）。
+    /// v10.16：本轮产出的文件——正文里提到的 + 本轮各工具返回里提到的，
+    /// 交叉核对磁盘确实存在、扩展名在预览白名单内，去重后返回。
+    /// 为什么要连工具返回一起扫：模型收尾那句话未必复述路径，
+    /// 只扫正文会「文件明明生成了，卡片还是不出现」。
+    /// 流式生成中不算（content 还在一截一截长，扫出来的路径也是半截）；多选模式不算（点击要留给选中）。
+    private var deliveredFiles: [URL] {
+        guard !isUser, !isStreaming, !selectionMode else { return [] }
+        var texts: [String] = []
+        if !message.content.isEmpty { texts.append(message.content) }
+        for p in message.effectiveParts {
+            if case .toolCall(let c) = p, let r = c.result, !r.isEmpty { texts.append(r) }
+        }
+        guard !texts.isEmpty else { return [] }
+        var seen = Set<String>()
+        var out: [URL] = []
+        for t in texts {
+            for u in FilePathExtractor.extractFiles(from: t) where !seen.contains(u.path) {
+                seen.insert(u.path)
+                out.append(u)
+            }
+        }
+        return out
+    }
+
+    /// v10.16：产物文件卡片（点卡片 → 预览页，可"存储到文件"）
+    private func deliveredFileStrip(_ urls: [URL]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(urls, id: \.self) { url in
+                FileCardRow(url: url)
+            }
+        }
+        .padding(.top, 2)
+    }
+
     private var textBubble: some View {
         let shown = (isStreaming || forceType)
             ? String(message.content.prefix(revealedCount))
@@ -2019,6 +2049,13 @@ struct MessageBubble: View {
                         // ③ 过程区（工具步骤，默认折叠成一行）+ 正文（最重：16pt / 行距 6.5）
                         if hasBody || hasToolParts {
                             bubbleContent(shown)
+                        }
+                        // ④ v10.16：本轮产出的文件 → 会话页直出卡片
+                        // 旧实现只在「工具结果详情页」的"相关文件"里列，主会话流看不到，
+                        // 用户只能在正文里看到一串路径文本，拿不到文件本身
+                        // （用户原话："AI 做成某个文件后不能直接在会话页面生成后给我保存"）。
+                        if !deliveredFiles.isEmpty {
+                            deliveredFileStrip(deliveredFiles)
                         }
                     }
                 )
@@ -2152,6 +2189,7 @@ struct FileCardRow: View {
         case "deb","zip","tar","gz": return "archivebox"
         case "dylib","framework": return "hammer"
         case "plist","json": return "doc.text"
+        case "list","conf","cfg","yaml","yml","ini","rule","csv","sgmodule","module","sh": return "doc.plaintext"
         case "pdf": return "doc.richtext"
         case "swift","h","m","c","cpp": return "chevron.left.slash.chevron.right"
         default: return "doc"

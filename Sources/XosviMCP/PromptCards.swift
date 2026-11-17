@@ -120,6 +120,8 @@ enum PromptCardText {
       Work on the binary via the auto-bound bundle (/ios_containers/.../xxx.app binary) or a bind_app'd data container
       (/ios_data_<app>); decrypt (cryptid=0) only the encrypted main binary when needed.
     - Workspace = /var/mobile/Documents/wiki.qaq.xosvi/Workspace (artifact list/read). Fetch web/GitHub via web.fetch (falls back provider reader → Jina → local).
+    - 交付文件：用 `artifact write`（或 shell 写进 Workspace）；写完在回复里给出**完整绝对路径**，
+      会话页会自动生成可点开预览、"存储到文件"的文件卡片。不要只在正文里贴全文让用户自己复制。
 
 """
 

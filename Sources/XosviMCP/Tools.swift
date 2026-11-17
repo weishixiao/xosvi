@@ -392,7 +392,11 @@ final class ArtifactExecTool: MCPTool {
                 withIntermediateDirectories: true
             )
             try text.write(to: url, atomically: true, encoding: .utf8)
-            return ["written": true, "bytes": text.utf8.count]
+            // v10.16：返回值必须带绝对路径。
+            // 会话里的文件卡片（ChatView / ToolResultSheet）靠扫文本里的绝对路径生成，
+            // 旧实现只回 written/bytes → 卡片永远不出现，用户只能看到"已保存"却拿不到文件
+            // （用户原话："AI 做成某个文件后不能直接在会话页面生成后给我保存"）。
+            return ["written": true, "bytes": text.utf8.count, "path": url.path]
             
         case "list":
             // v4.0.0: 内联自 ArtifactListTool（subpath 可选；文件返回单条，目录返回前 50 条）

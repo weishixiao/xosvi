@@ -30,7 +30,7 @@ struct QLFilePreview: View {
     }
 
     private var isImage: Bool { ["png", "jpg", "jpeg", "gif", "webp", "heic", "heif"].contains(ext) }
-    private var isText: Bool { ["txt", "log", "md", "json", "plist", "swift", "h", "m", "mm", "c", "cpp", "html", "css", "js", "xml", "yml", "yaml", "ini", "conf", "sh"].contains(ext) }
+    private var isText: Bool { ["txt", "log", "md", "json", "plist", "swift", "h", "m", "mm", "c", "cpp", "html", "css", "js", "xml", "yml", "yaml", "ini", "conf", "sh", "list", "cfg", "rule", "csv", "sgmodule", "module"].contains(ext) }
 
     var body: some View {
         NavigationView {
@@ -156,13 +156,17 @@ struct QLFilePreview: View {
 /// 匹配常见路径格式：/var/mobile/... 或 ~/... 或 Workspace 下的相对路径
 enum FilePathExtractor {
     /// 支持的文件扩展名（才显示文件卡片）
+    /// v10.16：补齐"AI 交付物"常见后缀——用户要的规则集/脚本（surge .list、hosts .sh、
+    /// 配置 .conf/.yaml/.ini、规则 .rule、表格 .csv、surge .sgmodule）此前全被挡在白名单外，
+    /// 路径命中也不出卡片，等于"文件做了但拿不到"。
     static let previewableExts: Set<String> = [
         "png","jpg","jpeg","gif","webp","heic","heif",
         "plist","json","txt","log","md","swift","h","m","mm","c","cpp",
         "ipa","tipa","deb","zip","tar","gz",
         "dylib","framework","app",
         "pdf","html","css","js",
-        "macho","bin","nib","xcassets"
+        "macho","bin","nib","xcassets",
+        "list","sh","conf","cfg","yaml","yml","ini","rule","xml","csv","sgmodule","module"
     ]
 
     /// 从文本中提取所有存在于磁盘上的文件路径

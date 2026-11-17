@@ -346,7 +346,7 @@ final class ContainerWriteTextTool: MCPTool {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
         try content.write(to: url, atomically: true, encoding: .utf8)
         AuditLog.shared.log("container.write_text", detail: "\(bid):\(path)")
-        return ["written": true, "bytes": content.utf8.count]
+        return ["written": true, "bytes": content.utf8.count, "path": url.path]
     }
 }
 
