@@ -576,3 +576,54 @@ OpenAIClient 还无条件下发「调工具前必须先解说」。四层信号�
 - CI：`swift-syntax`（`swiftc -parse`）、`intent-selftest`、`tool-contract`（快照 names 集合）、`ios-build`。
 - 真机四点：①闲聊不调工具；②问「怎么逆向这个 App」→ 命中 `reverse_static` 卡 + 模型自己 `tools.load reverse`；
   ③「帮我抓个包」→ `tools.load pentest` 后 `network.capture` 可用；④关掉的工具 `tools.load` 拿不到（回 `disabled`）。
+
+---
+
+## v10.15 · 三处硬伤：工具结果 abort / 会话从不落盘 / 工作区被 root 占死
+
+用 `Xosvi-2026-11-17-173625.ips`（bug_type 309，SIGABRT）把这三件事一次查清了。
+
+### 1 崩溃：工具**成功**返回后 abort
+
+报告的主线程是 `com.apple.root.default-qos`，栈自下而上：
+`dispatchCore` → `+[NSJSONSerialization dataWithJSONObject:options:error:]` → `_writeJSONObject`
+→ `_SwiftDeferredNSDictionary.enumerateKeysAndObjects` → `_writeJSONValue` 抛异常 → `std::terminate`
+→ `_objc_terminate` → `abort()`。
+
+定位到 `MCPCore.swift` 的审计行 `Self.resultBytes(result)` → `try? JSONSerialization.data(...)`：
+**NSJSONSerialization 遇非法值（Date / Data / NaN / ±Infinity / 自定义对象）是抛 ObjC 异常**，
+不走 error 出参，`try?` 根本抓不住；异常穿出 dispatch 闭包就是 abort。
+因为任何工具成功返回都要过这一行，表现就是「用着用着就闪退」。
+
+- 新增 `Sources/XosviMCP/JSONSafe.swift`：把工具结果整棵树递归规整成 JSON 合法值
+  （Date→ISO8601 串、Data→"data(N bytes)"、NaN/±Inf→字符串、未知对象→description，深度上限 16）。
+  布尔用 `CFBooleanGetTypeID()` 判，避免「数字 1 变 true」这类桥接失真。
+- `dispatchCore` 在工具返回后、进一切后续处理（返回式错误判定 / 审计 / 缓存 / 压缩 / 回模型）**之前**清洗一次。
+- `resultBytes` 自己再加 `JSONSerialization.isValidJSONObject` 守卫，双保险。
+
+### 2 会话历史一次都没落过盘
+
+`ConversationStore.save()` 的目录是 `Workspace/store`，而设备上
+`/var/mobile/Documents/wiki.qaq.xosvi/Workspace` 属主是 **root:mobile 755**（某次 root 身份的操作建的），
+App 以 mobile 跑 —— `try? createDirectory` 静默失败，之后每次写盘也静默失败。
+实测：以 mobile 身份 `mkdir Workspace/__wtest` → `Permission denied`。**这是会话丢失的直接原因。**
+
+- `XDirs`：`workspace` 由 `ensure()` 解析（`prepareWorkspace()`）：能写就用首选路径；
+  写不进就把整个 Workspace 挪成 `Workspace.root-owned-<ts>`（不删数据）再建一个自己的；
+  仍不行退到 `dataRoot/workspace`。`ensure()` 末尾对全部目录写探针文件复核，写不进就 `NSLog` 报出来。
+- `ConversationStore.storeDir`：按 `workspace/store` → `dataRoot/store` → `tmp/store` 逐个试写，
+  选第一个真能写的，不再只看 `createDirectory` 的返回值。
+
+### 3 落盘读写的跨线程撕裂（同一份报告的旁证）
+
+`save()` 旧实现在**调用线程**直接 `let snapshot = conversations`，而它会在工具队列
+（`com.apple.root.default-qos`）被调用，同时主线程正在改写这个数组。
+现在快照一律在主线程取（主线程就是写方本身），取完交给 `saveQueue` 编码写盘；
+两层都用 `async`，不用 `main.sync`，不会死锁。
+
+### 待验证
+
+- 本机 `bash scripts/check.sh`：5 段全过，0 FAIL。
+- CI：`swiftc -parse` / `intent-selftest` / `tool-contract` / `ios-build`（本地无 swiftc，只能靠 CI 做类型检查）。
+- 真机三点：①跑一个返回含 Date/Data 的工具（如 `device.info`）不闪退；
+  ②杀掉 App 重开，历史会话还在；③`ls /var/mobile/Documents/wiki.qaq.xosvi` 出现 `Workspace.root-owned-*`。

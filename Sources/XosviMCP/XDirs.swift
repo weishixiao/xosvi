@@ -27,7 +27,14 @@ enum XDirs {
 
     /// 数据根（真实文件系统路径，App 带 no-sandbox 才写得到）
     static let dataRoot = sharedDocuments + "/wiki.qaq.xosvi"
-    static let workspace = dataRoot + "/Workspace"
+    /// 工作区首选位置。注意「首选」不等于「能用」：这个目录一旦被 root 身份的进程
+    /// （root 通道的 shell / 某个 root 工具）建过，属主就是 root:mobile 755，
+    /// App 以 mobile 跑，**再也写不进去**，而 createDirectory 对已存在目录总是静默成功。
+    /// 所以真实可用路径由 ensure() 解析，见 workspace。
+    static let workspacePreferred = dataRoot + "/Workspace"
+    private static var workspaceResolved: String = workspacePreferred
+    /// 工作区（artifact / shell / 抓包日志 / 证书 / 项目），ensure() 之后才是最终值
+    static var workspace: String { workspaceResolved }
     static let rootd = dataRoot + "/Rootd"
     static let logs = dataRoot + "/logs"
     static let work = dataRoot + "/work"
@@ -52,12 +59,57 @@ enum XDirs {
 
     static func ensure() {
         let fm = FileManager.default
+        // v10.15：工作区必须先「验」再「用」——见 workspacePreferred 的注释。
+        prepareWorkspace()
         // workspace/logs 也要提前建：appex 的 appex.log / hev.log 是 fopen 直写，
         // 目录不存在就静默丢弃（旧路径能写是因为上游早把那个目录建好了）。
         for d in [dataRoot, workspace, workspace + "/logs", rootd, logs, work, tmp,
                   audit, crashLogs, persist] {
             try? fm.createDirectory(atPath: d, withIntermediateDirectories: true)
         }
+        // 建完再核一遍：还是写不进去就留下明确痕迹，别再让上层静默丢数据
+        for d in [workspace, rootd, logs, work, tmp, audit, crashLogs, persist] {
+            if !isWritable(directory: d) {
+                NSLog("[XDirs] ⚠️ 目录不可写，本 App 以 mobile 运行，写入会全部失败: %@", d)
+            }
+        }
+    }
+
+    /// 工作区自愈：能写就用首选路径；写不进（属主被 root 拿走了）就把它挪到一边重建；
+    /// 还是不行就退到数据根下的备用目录。三条路都不通时宁可换个目录，也不静默丢数据。
+    private static func prepareWorkspace() {
+        let fm = FileManager.default
+        try? fm.createDirectory(atPath: workspacePreferred, withIntermediateDirectories: true)
+        if isWritable(directory: workspacePreferred) {
+            workspaceResolved = workspacePreferred
+            return
+        }
+        // 属主错了。App 没有 chown 权限，但对父目录（dataRoot，mobile 所有）有写权限，
+        // 所以可以把整个 Workspace 挪走再新建一个自己的。旧内容原样留着，不删。
+        let aside = dataRoot + "/Workspace.root-owned-\(Int(Date().timeIntervalSince1970))"
+        if (try? fm.moveItem(atPath: workspacePreferred, toPath: aside)) != nil,
+           (try? fm.createDirectory(atPath: workspacePreferred, withIntermediateDirectories: true)) != nil,
+           isWritable(directory: workspacePreferred) {
+            NSLog("[XDirs] 工作区属主异常已自愈：旧目录移到 %@", aside)
+            workspaceResolved = workspacePreferred
+            return
+        }
+        let fallback = dataRoot + "/workspace"
+        try? fm.createDirectory(atPath: fallback, withIntermediateDirectories: true)
+        workspaceResolved = fallback
+        NSLog("[XDirs] ⚠️ 工作区无法自愈，改用 %@", fallback)
+    }
+
+    /// 真写一个探针文件来判定，别信 fileExists / isWritableFile 的近似结果。
+    static func isWritable(directory path: String) -> Bool {
+        let fm = FileManager.default
+        if !fm.fileExists(atPath: path) {
+            try? fm.createDirectory(atPath: path, withIntermediateDirectories: true)
+        }
+        let probe = path + "/.wprobe-\(getpid())"
+        let ok = fm.createFile(atPath: probe, contents: Data())
+        if ok { try? fm.removeItem(atPath: probe) }
+        return ok
     }
 
     // MARK: - 一次性迁移

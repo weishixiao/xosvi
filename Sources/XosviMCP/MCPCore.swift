@@ -1739,6 +1739,11 @@ public final class ToolRegistry: ObservableObject {
                     }
                 }
                 timeoutWorkItem.cancel()
+                // v10.15 崩溃修复：工具返回的结果在进入一切后续处理（返回式错误判定、
+                // 审计写 JSON、缓存、压缩、回模型）之前先把整棵树规整成 JSON 合法值。
+                // 见 JSONSafe.swift 头注释：非法值会让 NSJSONSerialization 抛 ObjC 异常，
+                // try? 抓不住 → std::terminate → SIGABRT。
+                result = JSONSafe.sanitize(result)
                 let elapsedMs = Int((CFAbsoluteTimeGetCurrent() - start) * 1000)
                 // v4.3.25: 超时看门狗落地——timedOut 标记此前只写不读（死代码），
                 // 长工具（ai_analyze 砸壳/LLM 等待可达分钟级）跑超 15s 后 AI 收不到任何
@@ -2107,6 +2112,12 @@ public final class ToolRegistry: ObservableObject {
 
     // v2.9.36：结果数据量 (JSON 序列化字节估算）
     private static func resultBytes(_ result: [String: Any]) -> Int {
+        // v10.15 崩溃修复：NSJSONSerialization 对非法值（Date/Data/NaN/自引用/野对象）是
+        // **抛 ObjC 异常**，不走 error 出参，`try?` 抓不住 → 异常穿出 dispatchCore 的
+        // com.apple.root.default-qos 闭包 → std::terminate → abort()。
+        // 报告 Xosvi-2026-11-17-173625 的主因就在这一行。先 isValidJSONObject 探一次，
+        // 不合法的结果按“量不出来”处理（返回 0，走保留 message 那一支），绝不抛。
+        guard JSONSerialization.isValidJSONObject(result) else { return 0 }
         guard let data = try? JSONSerialization.data(withJSONObject: result) else { return 0 }
         return data.count
     }

@@ -2807,10 +2807,25 @@ final class ConversationStore: ObservableObject {
 
     // v4.3.66：会话存储从 UserDefaults 全量迁移到独立文件（对齐微信/WCDB：大对象不进
     // UserDefaults 同步 IO；文件原子写 + 备份轮换，编码/写盘放后台串行队列，不阻塞主线程）
+    // v10.15：目录要挑一个真能写的。旧实现只有 XDirs.workspace + "/store"，
+    // 而 workspace 曾被 root 拥有（App 是 mobile）→ createDirectory 静默失败 →
+    // 之后每次 save() 的写盘也静默失败，会话历史一次都没落到盘上（重启即丢）。
+    private static var resolvedStoreDir: String?
     private var storeDir: String {
-        let p = XDirs.workspace + "/store"
-        try? FileManager.default.createDirectory(atPath: p, withIntermediateDirectories: true)
-        return p
+        if let cached = Self.resolvedStoreDir { return cached }
+        let fm = FileManager.default
+        var chosen: String?
+        for candidate in [XDirs.workspace + "/store", XDirs.dataRoot + "/store", XDirs.tmp + "/store"] {
+            try? fm.createDirectory(atPath: candidate, withIntermediateDirectories: true)
+            if XDirs.isWritable(directory: candidate) {
+                chosen = candidate
+                break
+            }
+            NSLog("[ConversationStore] ⚠️ 会话存储目录不可写，换下一个: %@", candidate)
+        }
+        let dir = chosen ?? XDirs.tmp + "/store"
+        Self.resolvedStoreDir = dir
+        return dir
     }
     private var storeFile: String { storeDir.appending("/conversations.json") }
     private let saveQueue = DispatchQueue(label: "xosvi.conversations.save", qos: .utility)
@@ -2818,7 +2833,25 @@ final class ConversationStore: ObservableObject {
     private func save() {
         // 后台 worker 的 conversations 只有一份临时副本，写盘会把真实历史覆盖掉
         guard !isBackgroundWorker else { return }
-        let snapshot = conversations
+        // v10.15 崩溃修复（报告 Xosvi-2026-11-17-173625）：conversations 是普通 @Published
+        // 数组，写方几乎全在主线程（appendToCurrent / updateMessageContent / attachTrail …），
+        // 但 save() 会在工具队列（com.apple.root.default-qos）里被调用。旧实现直接在调用线程
+        // `let snapshot = conversations`：主线程正改写数组时后台拿到的可能是撕裂的存储，
+        // JSONEncoder 顺着坏指针 encode → Data Abort / SIGABRT。
+        // 现在快照一律在主线程取（主线程就是写方本身，取值不会撕裂），取完再交给 saveQueue
+        // 编码写盘，两层都是异步，谁都不会被阻塞（不用 main.sync，避免死锁）。
+        if Thread.isMainThread {
+            persist(snapshot: conversations)
+        } else {
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.persist(snapshot: self.conversations)
+            }
+        }
+    }
+
+    /// v10.15：落盘本体。入参必须是主线程取好的快照；本方法可在任意队列调用。
+    private func persist(snapshot: [ChatConversation]) {
         let dir = storeDir
         let path = storeFile
         saveQueue.async {
