@@ -150,10 +150,10 @@ enum ISH {
                 failed += 1
                 continue
             }
-            // v10.4：符号链接必须建成链接。原来不管 entry 类型一律 data.write，
-            // 于是 /bin/sh、/bin/ls、/usr/bin/python3 全成了「内容是目标路径的小文本文件」
-            // （12 字节的 "/bin/busybox"），guest 里 exec 直接失败 —— Alpine 终端敲什么都没反应。
-            // ZIPFoundation 的 EntryType 成员是 .symlink（不是 .symbolicLink）
+            // 真符号链接条目必须建成链接（ZIPFoundation 的成员是 .symlink）。
+            // v10.10：注意 fakefs 的 rootfs 里链接本来就不是真链接，而是「内容是目标路径」的
+            // 常规文件（见 isFakefsSymlinkStub），所以内置 zip 的 links=0 是正常的 —— 走下面的
+            // data.write 原样落盘才对，绝不能把这种文本壳改写成 host 真链接。
             if entry.type == .symlink {
                 var target = String(decoding: data, as: UTF8.self)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -182,9 +182,8 @@ enum ISH {
             }
         }
 
-        // 校验：meta.db 是常规文件，busybox 是真的二进制（>100KB）
-        // v10.4：data/bin/sh 现在可能是符号链接（正常形态），不能再要求 isRegularFile；
-        // 反过来也要拦住「12 字节文本当 shell」的坏包。
+        // 校验：meta.db 是常规文件，busybox 是真的二进制（>100KB），data/bin/sh 是可解析的 shell
+        // v10.10：三种形态都放行（fakefs 文本壳 / 真链接 / 真二进制），见 isFakefsSymlinkStub
         func isRegular(_ path: String) -> Bool {
             (try? URL(fileURLWithPath: path).resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true
         }
@@ -199,14 +198,23 @@ enum ISH {
             return n.int64Value
         }
         let metaOK = isRegular(staging.appendingPathComponent("meta.db").path)
-        let busyboxPath = staging.appendingPathComponent("data/bin/busybox").path
+        let stagingData = staging.appendingPathComponent("data").path
+        let busyboxPath = stagingData + "/bin/busybox"
         let busyboxOK = isRegular(busyboxPath) && size(busyboxPath) > 100_000
-        // v10.8：源 zip 的 symlink 目标不带前导 /（`bin/busybox`），解压完先按 guest 路径统一重算，
-        // 否则 302 个 applet（sh/ls/apk/wget…）全是悬空链接，校验却只看到「是个链接」就放行。
-        let linkRepair = repairDanglingRootfsLinks(at: staging.appendingPathComponent("data").path)
-        let shPath = staging.appendingPathComponent("data/bin/sh").path
-        let shOK = (isLink(shPath) && fm.fileExists(atPath: shPath))
-            || (isRegular(shPath) && size(shPath) > 100_000)
+        // v10.10：`data/bin/sh` 是 12 字节文本（"/bin/busybox"）**属于正常形态**，不是坏包。
+        // fakefs 的符号链接在 host 上就是一个「内容为目标路径」的常规文件 —— 内核 fs/fake.c 的
+        // fakefs_symlink 自己就这么写（写文件 + meta.db 记 S_IFLNK|0777），读回时 fakefs_readlink
+        // 先试 realfs.readlink，EINVAL 再回退 file_readlink 把文件内容当目标；
+        // 上游这么做是因为 iOS App 里不能带断链（注释：broken symlinks can't be included in an
+        // iOS app or else Xcode craps out）。v10.4 起「必须是真链接」的判定让安装每次都在这里
+        // 抛错回滚，rootfs 根本装不上（现象：条目 523、写入 425、data/bin/sh=false、链接修复 0）。
+        let shPath = stagingData + "/bin/sh"
+        let shOK = (isLink(shPath) && fm.fileExists(atPath: shPath))       // 老包的真链接形态
+            || (isRegular(shPath) && size(shPath) > 100_000)              // 真的 shell 二进制
+            || isFakefsSymlinkStub(shPath, guestPath: "/bin/sh", dataRoot: stagingData)  // fakefs 正典形态
+        // v10.8：只对**真链接**形态兜底 —— 目标不带前导 / 时（`bin/busybox`）会解析成
+        // /bin/bin/busybox。文本壳形态不受影响（内核按 guest 根解析），扫不到就什么都不做。
+        let linkRepair = repairDanglingRootfsLinks(at: stagingData)
         guard metaOK, busyboxOK, shOK else {
             let listing = (try? fm.contentsOfDirectory(atPath: staging.path).prefix(8).joined(separator: ", ")) ?? "?"
             try? fm.removeItem(at: staging)
@@ -230,9 +238,9 @@ enum ISH {
     }
 
     /// rootfs 是否完整可用（不只看目录存在）
-    /// v10.8：正常 rootfs 的 data/bin/sh 是**符号链接**（→ busybox），v10.4 用 isRegularFile 判，
-    /// 链接形态一律判坏 → 每次启动都重解压 172MB，还把 apk 装的 75 个包全清掉。
-    /// 现在按「能解析到真实文件」判（fileExists 会跟随链接，悬空链接返回 false）。
+    /// v10.10：`data/bin/sh` 的三种合法形态都要放行 —— fakefs 文本壳（常规文件，内容为目标
+    /// "/bin/busybox"，这是正典形态；fileExists 对它返回 true，跟随链接语义也成立）、
+    /// 真符号链接、真的 shell 二进制。判坏只需看 meta.db 在、sh 路径能解析、busybox 是真二进制。
     static func isRootfsValid() -> Bool {
         let fm = FileManager.default
         let meta = installRoot.appendingPathComponent("meta.db").path
@@ -312,73 +320,24 @@ enum ISH {
         return s.contains(where: { $0 != "." && $0 != "/" })
     }
 
-    /// 内置 alpine-rootfs.zip 把符号链接打成了普通文件：`data/bin/sh` 是 12 字节文本
-    /// "/bin/busybox"，`data/bin/ls`、`data/usr/bin/python3` 同理（这台机器上近 800 个）。
-    /// guest 里这些路径于是都是**文本文件**，exec 必然失败 —— Alpine 终端连 sh 都起不来，
-    /// 敲任何命令都报错。这里就地改回真正的符号链接：不动 apk 装的包，也不重装 rootfs。
-    static func rootfsLinksLookBroken() -> Bool {
+    /// fakefs 符号链接在 host 上的正典形态判定：常规文件，内容只有目标路径。
+    /// 内核 fs/fake.c 的 fakefs_symlink 就是这么落盘的（写文件 + meta.db 记 S_IFLNK|0777），
+    /// fakefs_readlink 在 realfs.readlink 返回 EINVAL 时回退 file_readlink 读文件内容当目标 ——
+    /// 因为 iOS App 包里不能带断链（上游注释：Xcode craps out）。
+    /// 判据：单 token 路径形状 + 目标在 guest 里真实存在（同目录相对、guest 根绝对两种都认）。
+    private static func isFakefsSymlinkStub(_ path: String, guestPath: String, dataRoot: String) -> Bool {
         let fm = FileManager.default
-        let root = installRoot.path
-        for rel in ["data/bin/sh", "data/bin/ls", "data/usr/bin/env", "data/usr/bin/python3"] {
-            let path = root + "/" + rel
-            guard let attr = try? fm.attributesOfItem(atPath: path) else { continue }
-            let type = attr[.type] as? FileAttributeType
-            if type == FileAttributeType.typeSymbolicLink { continue }     // 这条是好的
-            let size = (attr[.size] as? NSNumber)?.int64Value ?? 0
-            if size > 0 && size <= 255 { return true }                     // 文本壳 = 坏的
-        }
-        return false
-    }
-
-    /// 扫描 data/，把「内容只是目标路径的小文本文件」还原成符号链接。
-    /// 只认：单 token、无空白、目标真实存在（相对目标按同目录解析）。幂等，修完再跑就没事可做。
-    @discardableResult
-    static func repairBrokenRootfsLinks() -> LinkRepair {
-        var st = LinkRepair()
-        let fm = FileManager.default
-        let dataRoot = dataPath
-        guard !dataRoot.isEmpty,
-              let en = fm.enumerator(at: URL(fileURLWithPath: dataRoot),
-                                     includingPropertiesForKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey],
-                                     options: [],
-                                     errorHandler: { _, _ in true }) else { return st }
-        let skipTop: Set<String> = ["proc", "sys", "dev", "run", "mounts"]
-        for case let url as URL in en {
-            let full = url.path
-            let relPath = full.hasPrefix(dataRoot + "/") ? String(full.dropFirst(dataRoot.count + 1)) : url.lastPathComponent
-            let top = relPath.split(separator: "/").first.map(String.init) ?? ""
-            if skipTop.contains(top) {
-                en.skipDescendants()
-                continue
-            }
-            st.scanned += 1
-            guard let v = try? url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey]),
-                  v.isSymbolicLink != true,
-                  v.isRegularFile == true,
-                  let sz = v.fileSize, sz > 1, sz <= 255,
-                  let data = try? Data(contentsOf: url),
-                  data.count == Int(sz),
-                  let raw = String(data: data, encoding: .utf8) else { continue }
-            let target = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            // 只认「整个文件就是一个目标路径」（允许尾部换行），多行文本一律不碰
-            guard raw == target || raw == target + "\n" || raw == target + "\r\n" else { continue }
-            guard looksLikeLinkTarget(target) else { continue }
-            // v10.8：目标按「同目录相对」或「guest 根绝对」解析，两种都不成立才跳过
-            guard let linkDest = linkDestination(linkGuestPath: "/" + relPath,
-                                                 target: target,
-                                                 dataRoot: dataRoot) else { continue }
-            do {
-                try fm.removeItem(at: url)
-                try fm.createSymbolicLink(atPath: full, withDestinationPath: linkDest)
-                st.converted += 1
-            } catch {
-                // 建链接失败就把原文写回去：data/bin/sh 缺失会让 isRootfsValid() 判坏 →
-                // 下次启动重装 rootfs，把 apk 装的 python3/git/npm 全清掉。宁可修不动。
-                try? data.write(to: url)
-                st.failed += 1
-            }
-        }
-        return st
+        guard let attr = try? fm.attributesOfItem(atPath: path),
+              (attr[.type] as? FileAttributeType) == .typeRegular,
+              let sz = (attr[.size] as? NSNumber)?.int64Value, sz > 1, sz <= 255,
+              let data = fm.contents(atPath: path),
+              data.count == Int(sz),
+              let raw = String(data: data, encoding: .utf8) else { return false }
+        let target = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // 只认「整个文件就是一个目标路径」（允许尾部换行），多行文本一律不算链接
+        guard raw == target || raw == target + "\n" || raw == target + "\r\n" else { return false }
+        guard looksLikeLinkTarget(target) else { return false }
+        return linkDestination(linkGuestPath: guestPath, target: target, dataRoot: dataRoot) != nil
     }
 
     /// v10.8：悬空链接自愈。
@@ -454,14 +413,10 @@ enum ISH {
             return -2
         }
         try? FileManager.default.createDirectory(atPath: dataPath, withIntermediateDirectories: true)
-        // v10.4：源 rootfs.zip 把符号链接打成了文本文件 —— 不修的话 guest 里 sh/ls/python3
-        // 全是 12 字节的 "/bin/busybox" 文本，exec 直接失败，Alpine 终端敲什么都不会有输出。
-        if rootfsLinksLookBroken() {
-            let rep = repairBrokenRootfsLinks()
-            Log.browser("ISH rootfs 链接自愈：converted=\(rep.converted) scanned=\(rep.scanned) failed=\(rep.failed)")
-        }
-        // v10.8：v10.4 写坏的悬空链接（相对目标少了目录层）在这里修好；
-        // 不修的话 guest 里 sh 都起不来，环境页所有动作都会失败。
+        // v10.10：这里原本有 v10.4 的「文本壳 = 坏链接」自愈，把 data/ 里 300 多个小文本文件
+        // 重写成真符号链接。那是基于误判的反向修复：文本壳正是 fakefs 的正典形态（见
+        // isFakefsSymlinkStub），每次启动白改几百个文件、还可能算错相对目标把好 rootfs 弄坏，已删除。
+        // v10.8：只对付**真链接**形态的悬空目标（v10.4 写坏的遗留）；文本壳扫不到，什么都不做。
         let dangling = repairDanglingRootfsLinks()
         if dangling.converted > 0 || dangling.failed > 0 {
             Log.browser("ISH rootfs 悬空链接自愈：converted=\(dangling.converted) failed=\(dangling.failed)")

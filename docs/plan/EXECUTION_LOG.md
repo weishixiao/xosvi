@@ -347,3 +347,52 @@ v10.7 再调排布：由「整组靠右」改成两端分布 —— `HStack { se
   `Log.browser` 里的 converted/failed 计数。
 - 遗留：`MCPCore.swift` 的 `elapsedMs` 少报 —— 现有代码里成功/失败两处都是从 `invoke` 前起算，
   没能复现「少报」，待补充具体现象（审计页还是气泡、差值多少）后再改。
+
+## v10.10 — 撤回 v10.4/v10.8 的「文本壳 = 坏链接」误判（rootfs 装不上的真因）
+
+### 纠正上一节的结论
+
+v10.8 那两处「自愈」建立在错误前提上。内核侧证据（`fs/fake.c` @ `3f6384c`）说明：
+
+```c
+static int fakefs_symlink(...) {
+    // create a file containing the target
+    write(fd, target, strlen(target));
+    ishstat.mode = S_IFLNK | 0777;   // meta.db 里记成链接
+}
+static ssize_t file_readlink(...) {
+    // broken symlinks can't be included in an iOS app or else Xcode craps out
+    int fd = openat(mount->root_fd, fix_path(path), O_RDONLY);
+    return read(fd, buf, bufsize);   // 文件内容就是链接目标
+}
+static ssize_t fakefs_readlink(...) {
+    if (!S_ISLNK(ishstat.mode)) return _EINVAL;
+    ssize_t err = realfs.readlink(mount, path, buf, bufsize);
+    if (err == _EINVAL) err = file_readlink(...);   // 常规文件回退读内容
+}
+```
+
+也就是说：**「常规文件，内容为目标路径」+ meta.db 记 `S_IFLNK|0777` 才是 fakefs 的正典链接形态**。
+设备实测吻合 —— 已装 rootfs 434 个文件里 367 个是这种小文本壳，只有 1 个真符号链接；
+`meta.db` 里 `/bin/sh`、`/bin/ls`、`/usr/bin/env` 的 mode 全是 `0xA1FF`（`S_IFLNK|0777`）。
+内置 `alpine-rootfs.zip` 的 `links=0` 同理，不是打包缺陷。
+
+所以 v10.4 的问题不是「没建成链接」，而是**安装校验**把正典形态判成了坏包：
+`shOK = (isLink && exists) || (isRegular && size > 100_000)` —— 12 字节文本壳两条都不满足，
+于是每次安装都在校验处抛错回滚（现象：条目 523、写入 425、`data/bin/sh=false`、链接修复 0）。
+
+### 改动（`Sources/XosviMCP/ISH.swift`）
+
+| 位置 | 改动 |
+|---|---|
+| `installRootfsIfNeeded` 校验 | `shOK` 增加第三种形态 `isFakefsSymlinkStub(...)`：常规文件 + 单 token 目标 + 目标在 guest 里真实存在 |
+| 新增 `isFakefsSymlinkStub(_:guestPath:dataRoot:)` | 形态判定，复用 `looksLikeLinkTarget` / `linkDestination` |
+| 删除 `rootfsLinksLookBroken()` + `repairBrokenRootfsLinks()` | 基于误判的反向修复：把正确的文本壳改写成 host 真链接，每次启动白改几百个文件，还可能算错相对目标 |
+| `boot()` | 去掉上述自愈调用；`repairDanglingRootfsLinks()` 保留，只对**真链接**形态兜底 |
+| 解压 `.symlink` 分支 | 只在 zip 真含链接条目时生效（内置包 links=0，不触发）；注释改为正确表述 |
+| `isRootfsValid()` | 注释更新为三形态俱可（逻辑不变，`fileExists` 对文本壳返回 true） |
+
+### 待验证（需 CI 构建 + 装包）
+
+- `swiftc` 本机没有（工具链只装了 c 组件），Swift 正确性只能由 CI 判定。
+- 装好后看：`设置 ▸ 环境` 是否不再报「rootfs 安装失败」、Alpine 终端 `sh` 能否起来。
