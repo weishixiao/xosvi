@@ -396,3 +396,34 @@ static ssize_t fakefs_readlink(...) {
 
 - `swiftc` 本机没有（工具链只装了 c 组件），Swift 正确性只能由 CI 判定。
 - 装好后看：`设置 ▸ 环境` 是否不再报「rootfs 安装失败」、Alpine 终端 `sh` 能否起来。
+
+## v10.11 — iOS 构建 #111 失败：MachOKit 0.56 把 `MachOFile.url` 改成可选（2026-11-17）
+
+### 结论
+
+rootfs 修复（`86c27d9`）本身没问题，CI #122 已通过（42s）。失败的是 iOS 构建
+build-xosvi-ios #111，红点在 `Sources/XosviMCP/MachoTools.swift` 的 10 行，
+原因与 rootfs 改动无关，是依赖被静默升级：
+
+- `Package.swift` 写的是 `.package(url: .../MachOKit.git, from: "0.55.0")`，
+  `from:` 允许升到同一个大版本内任意新版。上游 11-16 发布 0.56.2，本次构建解析到它。
+- 0.56.0 新增「从内存 `Data` 构造 `MachOFile`」（上游 #360），于是
+  `public let url: URL` 变成 `public let url: URL?`（源码注释：nil 表示不是从磁盘文件加载的）。
+  我们 10 处 `file.url.path` 全部报「value of optional type 'URL?' must be unwrapped」。
+- #110（11-16）解析到 0.55.0 所以是绿的，属于时间差踩坑，不是回归。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `Sources/XosviMCP/MachoTools.swift` | 新增 `static func fsPath(_ file: MachOFile) -> String`（`file.url?.path ?? file.imagePath`）；10 处 `file.url.path` → `Self.fsPath(file)`（含字符串插值） |
+| `Package.swift` | MachOKit 依赖 `from: "0.55.0"` → `exact: "0.56.2"`，并注明升级必须同步跑一次 iOS 构建 |
+
+回退取值用 `imagePath`：它优先返回 `LC_ID_DYLIB`/`LC_ID_DYLINKER` 里的逻辑路径，
+再退到 `url?.path`，最后空串——对磁盘文件行为与旧版一致。
+
+### 待验证
+
+- `swiftc` 本机没有，Swift 正确性只能由 CI 判定：推上去看 build-xosvi-ios 是否转绿。
+- 若 0.56.2 还有其它 API 漂移（本次 annotation 只覆盖到第一批错误），按同样方式就地适配，
+  不要为了变绿而把版本继续往下钉。

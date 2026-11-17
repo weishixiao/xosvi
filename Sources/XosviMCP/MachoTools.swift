@@ -143,6 +143,13 @@ final class MachoExecTool: MCPTool {
 
     // MARK: - load
 
+    /// v10.11：MachOKit 0.56 起 `MachOFile.url` 变成可选（0.56.0 新增「从内存 Data 构造
+    /// MachOFile」，源码注释：nil 表示不是从磁盘文件加载的）。所有输出路径统一走这里：
+    /// 磁盘文件用 `url.path`，内存构造的回退到 `imagePath`（LC_ID_DYLIB / 空串）。
+    static func fsPath(_ file: MachOFile) -> String {
+        file.url?.path ?? file.imagePath
+    }
+
     private static func describeHeader(_ file: MachOFile) -> [String: Any] {
         let h = file.header
         // CPUType / FileType 是库里的枚举，直接取描述即可（未知值返回 raw value）
@@ -151,7 +158,7 @@ final class MachoExecTool: MCPTool {
 
         var out: [String: Any] = [
             "ok": true,
-            "path": file.url.path,
+            "path": Self.fsPath(file),
             "is_64bit": file.is64Bit,
             "is_swapped": file.isSwapped,
             "cpu_type": cpu,
@@ -196,7 +203,7 @@ final class MachoExecTool: MCPTool {
             out["dylibs_note"] = "只显示前 20 个，共 \(dylibs.count) 个"
         }
 
-        out["evidence"] = "macho load path:\(file.url.path) cpu=\(cpu) filetype=\(filetype)"
+        out["evidence"] = "macho load path:\(Self.fsPath(file)) cpu=\(cpu) filetype=\(filetype)"
         return out
     }
 
@@ -218,7 +225,7 @@ final class MachoExecTool: MCPTool {
 
         var out: [String: Any] = [
             "ok": true,
-            "path": file.url.path,
+            "path": Self.fsPath(file),
             "entitlements": ents,
             "count": ents.count,
         ]
@@ -237,7 +244,7 @@ final class MachoExecTool: MCPTool {
             for k in keys { quick[k] = ents[k] as? Bool ?? false }
             out["key_entitlements"] = quick
         }
-        out["evidence"] = "macho entitlements path:\(file.url.path) count=\(ents.count)"
+        out["evidence"] = "macho entitlements path:\(Self.fsPath(file)) count=\(ents.count)"
         return out
     }
 
@@ -250,7 +257,7 @@ final class MachoExecTool: MCPTool {
                 "diagnosis": ["[缺失] 没有 LC_CODE_SIGNATURE：未签名或签名被剥离"]
             ]
         }
-        var out: [String: Any] = ["ok": true, "path": file.url.path]
+        var out: [String: Any] = ["ok": true, "path": Self.fsPath(file)]
 
         if let cd = cs.codeDirectory {
             out["hash_type"] = "\(cd.hashType)"
@@ -270,7 +277,7 @@ final class MachoExecTool: MCPTool {
             // CS_ADHOC = 0x2：ad-hoc 签名（ldid 默认），App Store 分发不允许
             out["is_adhoc"] = (flags & 0x2) != 0
         }
-        out["evidence"] = "macho codesign path:\(file.url.path)"
+        out["evidence"] = "macho codesign path:\(Self.fsPath(file))"
         return out
     }
 
@@ -324,14 +331,14 @@ final class MachoExecTool: MCPTool {
 
         return [
             "ok": true,
-            "path": file.url.path,
+            "path": Self.fsPath(file),
             "total": total,
             "offset": offset,
             "returned": items.count,
             "truncated": offset + items.count < total,
             "next_offset": offset + items.count < total ? offset + items.count : NSNull(),
             "symbols": items,
-            "evidence": "macho symbols path:\(file.url.path) total=\(total) page=\(offset)-\(offset + items.count)",
+            "evidence": "macho symbols path:\(Self.fsPath(file)) total=\(total) page=\(offset)-\(offset + items.count)",
         ]
     }
 
@@ -390,7 +397,7 @@ final class MachoExecTool: MCPTool {
 
         return [
             "ok": true,
-            "path": file.url.path,
+            "path": Self.fsPath(file),
             "keyword": keyword,
             "sections_scanned": scannedSections,
             "total": total,
@@ -401,7 +408,7 @@ final class MachoExecTool: MCPTool {
             "next_offset": offset + items.count < total ? offset + items.count : NSNull(),
             "matches": items,
             "note": "address 是虚拟地址（相对 image base），配合 disasm_arm64 / memory write 使用",
-            "evidence": "macho strings path:\(file.url.path) kw=\(keyword) total=\(total)",
+            "evidence": "macho strings path:\(Self.fsPath(file)) kw=\(keyword) total=\(total)",
         ]
     }
 

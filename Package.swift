@@ -17,7 +17,11 @@ let package = Package(
         // v6.8.0：MachOKit——Mach-O 静态解析（MIT，上游声明 iOS 13+）。
         // 供 macho 工具读取头信息 / entitlements / codesign / 导出符号。
         // 注意：它要求 swift-tools-version 5.10，CI 的 macos-latest（Swift 6.x）满足。
-        .package(url: "https://github.com/p-x9/MachOKit.git", from: "0.55.0")
+        // v10.11：改精确锁版本。原因见 build-ios #111：`from: "0.55.0"` 让 11-16 发布的
+        // 0.56.2 被静默升级，0.56.0 新增「从内存 Data 构造 MachOFile」后 `MachOFile.url`
+        // 变成可选，源码里 `file.url.path` 全线编译失败。锁死版本 + 已按新 API 改写，
+        // 升级时（改这里）必须同步跑一次 iOS 构建。
+        .package(url: "https://github.com/p-x9/MachOKit.git", exact: "0.56.2")
     ],
     targets: [
         // v7.6.0：iSH 沙盒桥接层（移植自 Kelivo 的 ios/Runner/Workspace/KelivoISH*）
