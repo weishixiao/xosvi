@@ -1082,10 +1082,16 @@ public final class ToolRegistry: ObservableObject {
     /// 供 dispatch 把模型返回的安全名转回真实工具名。
     /// v3.1.66：全量加载所有已启用工具 (tool_search 已删除，不再按 isCore 渐进披露）。
     /// 工具已精简为约 23 个大工具，全量 schema token 占用可控，AI 一次即可看到全部工具。
-    public func enabledOpenAIToolSchema() -> [[String: Any]] {
+    /// v10.13（L2 工具渐进披露）：`only` 给出本轮允许的工具白名单（nil = 全部已启用工具）。
+    /// 闲聊档传空集合 → 返回空数组 → 客户端连 `tools` 字段都不发，模型根本没有调用工具的能力。
+    public func enabledOpenAIToolSchema(only names: Set<String>? = nil) -> [[String: Any]] {
         lock.lock()
         defer { lock.unlock() }
-        let defs = tools.values.map { $0.definition }.filter { isEnabled(name: $0.name) }
+        let defs = tools.values.map { $0.definition }.filter { def in
+            guard isEnabled(name: def.name) else { return false }
+            guard let names else { return true }
+            return names.contains(def.name)
+        }
         var used = Set<String>()
         var map = [String: String]()
         var result: [[String: Any]] = []
@@ -1552,6 +1558,18 @@ public final class ToolRegistry: ObservableObject {
         return hits.prefix(3).map {
             ["keyword": $0.keyword, "category": $0.category, "cause": $0.cause, "fix": $0.fix]
         }
+    }
+
+    /// v10.13：模型看到的是下划线安全名（apiName），白名单与日志用的是注册原名。
+    /// 档位白名单判闸必须两边都能对上，否则 lookup 档会把合法调用（web_search）
+    /// 误判成「本轮不可用」。返回注册原名；认不出来就原样返回。
+    public func originalName(for name: String) -> String {
+        if tools[name] != nil { return name }
+        if let original = apiNameToOriginal[name] { return original }
+        if let hit = tools.values.first(where: { $0.definition.apiName == name }) {
+            return hit.definition.name
+        }
+        return name
     }
 
     public func dispatchCore(name: String, params: [String: Any]) throws -> [String: Any] {

@@ -41,3 +41,6 @@ CReCore/.selftest/*.dylib
 CReCore/.selftest/xre
 CReCore/.selftest/out*/
 CReCore/.selftest/o/
+
+# v10.13：本机 OCR 探针草稿（编译产物 + 一次性源码，不入库）
+.ocr/

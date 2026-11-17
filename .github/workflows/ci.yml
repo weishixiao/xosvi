@@ -137,6 +137,46 @@ jobs:
             exit 1
           fi
 
+  intent-selftest:
+    name: 意图判定自检（聊天/查证/干活 断言表真跑一遍）
+    # v10.13：RunIntent.swift 全是纯字符串规则，判错的后果是「闲聊被打进执行态」
+    # （用户抱怨的原始故障）或「该干活却被当聊天」。本机没有 swiftc，真机只能靠手感验证，
+    # 所以把规则做成可执行断言表在这里真跑一遍。纯 Foundation，Linux 即可。
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: swift 版本
+        run: swift --version
+
+      - name: 编译判定层（真源码，非拷贝）
+        run: |
+          set -o pipefail
+          RC=0
+          swiftc -O -o "$RUNNER_TEMP/intent_selftest" \
+            Sources/XosviMCP/RunIntent.swift \
+            tests/intent/main.swift > "$RUNNER_TEMP/compile.log" 2>&1 || RC=$?
+          if [ "$RC" -ne 0 ]; then
+            sed -n '1,120p' "$RUNNER_TEMP/compile.log"
+            grep -E 'error: ' "$RUNNER_TEMP/compile.log" | sed -n '1,10p' | while IFS= read -r line; do
+              echo "::error title=intent-selftest-compile::$line"
+            done
+            exit 1
+          fi
+          echo "编译通过"
+
+      - name: 跑断言
+        run: |
+          RC=0
+          "$RUNNER_TEMP/intent_selftest" > "$RUNNER_TEMP/intent.log" 2>&1 || RC=$?
+          sed -n '1,400p' "$RUNNER_TEMP/intent.log"
+          if [ "$RC" -ne 0 ]; then
+            grep -E 'FAIL' "$RUNNER_TEMP/intent.log" | sed -n '1,20p' | while IFS= read -r line; do
+              echo "::error title=intent-selftest::$line"
+            done
+            exit 1
+          fi
+
   ios-build:
     name: iOS 构建（手动触发）
     if: github.event_name == 'workflow_dispatch'

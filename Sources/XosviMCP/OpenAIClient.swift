@@ -563,9 +563,14 @@ final class OpenAIClient {
             var instr = LanguageManager.shared.isZh
                 ? "你的思考过程 (reasoning/thinking)请始终使用简体中文输出。最终回复也使用简体中文，除非用户明确要求其他语言。"
                 : "Always think and reply in English unless the user explicitly asks for another language."
-            instr += LanguageManager.shared.isZh
-                ? "\n重要：在你调用任何工具之前，必须先在回复正文（content，不要放进 reasoning）里用一两句自然语言向用户说明你正要做什么、为什么。写完解说后再调用工具。"
-                : "\nIMPORTANT: Before calling any tool, you MUST first write one or two sentences in the reply content (not in reasoning) explaining what you are about to do and why. Then call the tool."
+            // v10.13（L4）：解说纪律只在「这一轮真有工具」时下发。没有工具的轮次（聊天档）
+            // 还挂着"调工具前必须先解说"，等于每轮都在提醒模型进入执行态——正是
+            // "一开口就去调工具"的来源之一。
+            if let tools = tools, !tools.isEmpty {
+                instr += LanguageManager.shared.isZh
+                    ? "\n重要：在你调用任何工具之前，必须先在回复正文（content，不要放进 reasoning）里用一两句自然语言向用户说明你正要做什么、为什么。写完解说后再调用工具。"
+                    : "\nIMPORTANT: Before calling any tool, you MUST first write one or two sentences in the reply content (not in reasoning) explaining what you are about to do and why. Then call the tool."
+            }
             body["instructions"] = instr
         }
         if let tools = tools, !tools.isEmpty {

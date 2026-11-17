@@ -473,3 +473,45 @@ stdlib，日常调用频率远高于省这 32M 的价值）；`alpine-rootfs.zip
   `python3 -c "import numpy, pandas"` 仍可用（pandas 删 tests 不影响 import）、VPN 主链路仍起。
 - 若发现 node 必须留着：删掉 `scripts/build-ipa.sh` 里「v10.12 单机瘦身」段中的
   `rm -f "$APP/bin/node"` 与 `rm -rf "$APP/Frameworks/NodeMobile.framework"` 即可原样恢复。
+
+## v10.13 — 会话运行重设计：会聊天，也能干活（2026-11-17）　DONE
+
+详见 `docs/plan/09-conversation-runtime.md`。
+
+### 结论
+
+「一开口就调工具」不是模型脾气，是**结构在逼它动手**：每轮 system 无条件拼进 ~2.9 万字符的
+工具合同 + 7 模式路由清单 + 工具裁决/动态状态，`tools` 字段又给全 50+ 个动作，
+OpenAIClient 还无条件下发「调工具前必须先解说」。四层信号叠加，没有「不动」这个选项。
+
+只改提示词治不了，所以按四层一起动：**L1 提示词分层 / L2 工具渐进披露 / L3 意图判定 / L4 纠正按阶段生效**。
+
+### 改动
+
+| 文件 | 改动 |
+|---|---|
+| `Sources/XosviMCP/RunIntent.swift` | 新增 `RunIntent`(chat/lookup/operate) + `RunPolicy` + `IntentClassifier`（纯本地字符串规则，零网络零延迟） |
+| `Sources/XosviMCP/SystemPrompts.swift` | 新增 `conversationCore`（常驻会话核心）/ `lookupCard` / `skillCards`（5 张，命中最多一张）/ `promptFor(intent:userText:)`；default 加 `0x. CHAT FIRST`、改名为「默认模式（会聊天也干活）」；手动模式改走 `mergedPrompt` 免得丢环境提示词 |
+| `Sources/XosviMCP/Models.swift` | `currentPolicy` / `currentUserText`；`send()` 先判档位再装 `baseTools`（chat `[]` / lookup 联网两件套 / operate 全量）；`runLoop` 按档位装配 system 并门控纠正；工具白名单**硬闸**；文本式 shell 兜底只放行 operate |
+| `Sources/XosviMCP/MCPCore.swift` | `enabledOpenAIToolSchema(only:)` 白名单；新增 `originalName(for:)` 把模型返回的安全名（`web_search`）归一成注册名（`web.search`） |
+| `Sources/XosviMCP/OpenAIClient.swift` | 「调工具前必须先解说」只在 `tools` 非空时下发 |
+| `tests/intent/main.swift` | 新增判定表（35 条意图 + 17 条策略派生） |
+| `.github/workflows/ci.yml` | 新增 `intent-selftest` job（ubuntu-24.04，`swiftc` 真编译真源码并跑断言） |
+
+### 三个必须记住的坑（都已在代码里注释）
+
+1. **ASCII 词必须走词边界**：不设边界时 `ci` 命中 `decision`、`app` 命中 `appreciate`、
+   `ls` 命中 `goals`——英文闲聊会整片被判成干活。
+2. **空文本不能靠"沿用上次档位"**：`BackgroundRunManager` 用 `send("")` 续跑排队会话，
+   `currentPolicy` 是 store 级共享状态，可能留着别的会话的「聊天」档——后台活儿会因为
+   「没有工具」凭空断掉。空文本改为按该会话**最后一条用户消息**重新判定，真无从判断才退回干活档。
+3. **白名单要比原名**：模型看到的是下划线安全名，白名单是注册名，不归一则查证档会把
+   `web_search` 误判成「本轮不可用」。
+
+### 待验证（需 CI + 装包）
+
+- CI：`intent-selftest`（判定表）、`swift-syntax`（`swiftc -parse`）、`tool-contract`、`scripts/check.sh`。
+- 真机（装包后手工）：①「随便聊聊」不出工具；②问发布/价格只走 `web.search`/`web.fetch`；
+  ③「删掉 /tmp/x.log」全量工具 + 先说后做；④后台排队会话能跑完不中途停。
+- 本地无 swiftc（toolchain 只装了 C 组件，Swift 需 iOS 26 / A13+），本次**判定逻辑未在本机跑过**，
+  可靠性完全压在 CI 的 `intent-selftest` 与真机四点上。

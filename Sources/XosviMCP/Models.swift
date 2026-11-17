@@ -874,6 +874,11 @@ final class ConversationStore: ObservableObject {
     /// 逼模型先写"先解说后执行"的正文。此字段为待注入的纠正消息（仅进 API 请求，不显示为 UI 气泡）。
     private var pendingNarrationCorrection: String? = nil
     /// v3.5.5：连续纠正次数——同一 tool 决策最多纠正 2 次仍不解说就放行执行，避免死循环。
+    /// v10.13（L3）：本轮运行档位——send() 里按用户这句话判定，runLoop / 工具集 / 纠正门控都读它。
+    /// 默认 operate：任何绕过 send() 直接进 runLoop 的路径（网络重试用等）都保持旧行为。
+    private var currentPolicy = RunPolicy(intent: .operate)
+    /// v10.13（L1）：本轮用户原文，供技能卡命中
+    private var currentUserText = ""
     private var narrationCorrectionCount = 0
     /// v3.5.6：工具参数 schema 预校验——模型调工具但缺必填参数时，不执行，注入纠正消息重跑
     /// 一轮逼它补齐再调（对齐 harness "机制决定行为"，治"invalid params required 盲试"老毛病）。
@@ -1234,6 +1239,28 @@ final class ConversationStore: ObservableObject {
         runEntries = []
         runReportWritten = false
         runStartedAt = Date()
+        // v10.13（L3 意图判定）：先判这一轮是「聊天 / 查证 / 干活」，再决定工具集与提示词层。
+        // 判错往聊天侧兜底——用户抱怨的正是"一开口就去调工具"。
+        // 空文本 = 不是新的用户输入（BackgroundRunManager 的 worker 续跑走这条路，
+        // appendUserMessage=false）：此时不能吃共享的 currentPolicy（上一个跑过的会话可能
+        // 留下"聊天"档，排队中的活儿就会因为"没有工具可用"凭空断掉），而是按这条会话
+        // 最后一条用户消息重新判定——排队的任务要用用户当时那句话的档位继续跑。
+        let trimmedInput = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let convHistory = conversations.first(where: { $0.id == targetConvId })?.messages ?? []
+        let judgedText = trimmedInput.isEmpty
+            ? (convHistory.last(where: { $0.role == "user" })?.content ?? "")
+            : trimmedInput
+        if judgedText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            // 真的无从判断（空会话续跑）：后台 worker 只有"继续干"这一种语义 → 干活档。
+            currentPolicy = RunPolicy(intent: .operate)
+            currentUserText = ""
+        } else {
+            let prevAssistant = convHistory.last(where: { $0.role == "assistant" })?.content ?? ""
+            currentPolicy = IntentClassifier.policy(for: judgedText,
+                                                    hasAttachments: !(imageDataURLs ?? []).isEmpty,
+                                                    previousAssistant: prevAssistant)
+            currentUserText = judgedText
+        }
         var msg = ChatMessage(role: "user", content: text)
         if let imgs = imageDataURLs, !imgs.isEmpty {
             msg.imageDataURLs = imgs
@@ -1241,14 +1268,25 @@ final class ConversationStore: ObservableObject {
         if appendUserMessage { appendToCurrent(msg) }
         isLoading = true
 
-        // v3.1.66：全量加载所有工具 (tool_search 已删除，不再渐进式披露）
-        var baseTools = config.apiProtocol == "Anthropic Messages" ? nil : ToolRegistry.shared.enabledOpenAIToolSchema()
-        // v7.1.0：搜索不再由用户开关控制——联网工具默认全开，AI 判断需要时自行调用
-        // （web.search / haxbrowser / web.fetch 都在工具集里）。smartSearch 参数保留只为兼容旧调用。
+        // v10.13（L2 工具渐进披露）：工具集由本轮档位决定，不再无条件全量加载。
+        //   chat    → 空数组：客户端连 tools 字段都不发，模型根本没有调用工具的能力；
+        //   lookup  → 只给 web.search / web.fetch；
+        //   operate → 全量已启用工具（Anthropic 通道仍走 disclosed 合并，行为不变）。
+        // v7.1.0：搜索不再由用户开关控制——联网工具默认全开。smartSearch 仅为兼容旧调用。
         _ = smartSearch
-        // v3.1.66：全量加载，disclosed 机制已不再新增工具 (tool_search 已删），
-        // 保留仅为兼容会话内已授权工具 schema 的持久注入。
-        let preDisclosed = ToolRegistry.shared.approvedToolNames()
+        let baseTools: [[String: Any]]?
+        switch currentPolicy.intent {
+        case .chat:
+            baseTools = []
+        case .lookup:
+            baseTools = ToolRegistry.shared.enabledOpenAIToolSchema(only: RunPolicy.lookupTools)
+        case .operate:
+            baseTools = config.apiProtocol == "Anthropic Messages"
+                ? nil : ToolRegistry.shared.enabledOpenAIToolSchema()
+        }
+        // v3.1.66：已授权工具的 schema 只在干活档叠加——否则 chat/lookup 轮会把全量工具
+        // 顺着 disclosed 重新灌回白名单，L2 的白名单就白做了。
+        let preDisclosed = currentPolicy.allowsAllTools ? ToolRegistry.shared.approvedToolNames() : []
         runLoop(config: config, tools: baseTools, disclosed: preDisclosed, depth: 0, reasoningLevel: reasoningLevel)
     }
 
@@ -1387,8 +1425,11 @@ final class ConversationStore: ObservableObject {
         // 动态合并：白名单 schema + 已披露工具的 schema (去重）
         // v2.9.175：tools 为 nil (Anthropic 协议）时也走空数组合并——Anthropic 通道
         // 现在同样能拿到 coreTools + 已披露工具的 schema (OpenAIClient 已支持转换）。
+        // v10.13（L3）：本轮档位——send() 已按用户这句话判定好
+        let policy = self.currentPolicy
         var effectiveTools = tools ?? []
-        if !disclosed.isEmpty {
+        // v10.13（L2）：已披露/已授权工具的 schema 只在干活档叠加
+        if policy.allowsAllTools && !disclosed.isEmpty {
             var existing = Set<String>()
             for t in effectiveTools {
                 if let fn = t["function"] as? [String: Any], let n = fn["name"] as? String {
@@ -1417,38 +1458,49 @@ final class ConversationStore: ObservableObject {
         // 具体模式由 routerBlock 让 AI 自行判定；手动模式下仍用用户选的模式。
         // 注意：必须走 mergedPrompt(base) 而不是直接取 builtin.content，
         // 否则会丢掉环境提示词（=== 环境提示词（系统层 ===）这一段。
-        let basePrompt: SystemPrompts.Prompt
-        if SystemPrompts.shared.autoRoutingEnabled,
-           let def = SystemPrompts.builtin.first(where: { $0.id == "default" }) {
-            basePrompt = SystemPrompts.shared.mergedPrompt(def)
-        } else {
-            basePrompt = SystemPrompts.shared.selected
-        }
+        // v10.13（L1 提示词分层）：按本轮档位装配——
+        //   chat    → 只有会话核心（不带环境提示词/模式清单/工具裁决/动态状态）；
+        //   lookup  → 会话核心 + 工作层 + 联网卡；
+        //   operate → 会话核心 + 工作层 + 命中的技能卡。
+        // 旧实现无条件注入 default 底盘（2.9 万字符工具纪律），这就是"一开口就调工具"的来源。
+        let basePrompt = SystemPrompts.shared.promptFor(intent: policy.intent,
+                                                       userText: self.currentUserText)
         // v9.1：**合并成一条 system 消息**。
         // 旧写法往 history 头插 4 条独立 system（base / router / 开发者指令 / 动态状态），
         // 多条 system 相互竞争语义，模型容易挑错的规则执行 → 表现为"跑偏、逻辑不严谨"。
         // 顺序仍是「稳定前缀在前、动态状态在后」（前缀缓存仍然命中），只是合并成一条。
         var systemBlocks: [String] = [basePrompt.content]
-        if let router = SystemPrompts.shared.routerBlock(), !router.isEmpty {
-            systemBlocks.append(router)
+        // v10.13（L1）：模式路由清单 / 工具裁决 / 动态状态都属于工作层，聊天轮一律不注入
+        if policy.usesWorkLayers {
+            if let router = SystemPrompts.shared.routerBlock(), !router.isEmpty {
+                systemBlocks.append(router)
+            }
+            systemBlocks.append(Self.toolArbitration)
+            systemBlocks.append(Self.dynamicStatePrompt())
         }
-        systemBlocks.append(Self.toolArbitration)
-        systemBlocks.append(Self.dynamicStatePrompt())
         history.insert(ChatMessage(role: "system", content: systemBlocks.joined(separator: "\n\n---\n\n")), at: 0)
         // v3.5.5：自适应纠正注入——若上一轮模型漏了"先解说后执行"（直接发工具没写可见解说），
         // 把纠正消息拼到本次请求末尾（最新指令，模型必须回应）。仅进请求、不显示为 UI 用户气泡。
-        if let correction = self.pendingNarrationCorrection, !correction.isEmpty {
-            history.append(ChatMessage(role: "user", content: correction))
+        // v10.13（L4 纠正门控）：纠正机制只服务"干活"——聊天轮注入纠正等于又把它推回执行态，
+        // 所以聊天轮不仅不注入，还顺手清空，避免残留带进下一轮。
+        if policy.usesCorrections {
+            if let correction = self.pendingNarrationCorrection, !correction.isEmpty {
+                history.append(ChatMessage(role: "user", content: correction))
+                self.pendingNarrationCorrection = nil
+            }
+            // v3.5.6：工具参数预校验纠正注入——上一轮调工具缺必填参数被拦，同样拼到请求末尾。
+            if let pcorr = self.pendingParamCorrection, !pcorr.isEmpty {
+                history.append(ChatMessage(role: "user", content: pcorr))
+                self.pendingParamCorrection = nil
+            }
+            // v4.3.25：空回复纠正注入——上一轮工具执行后模型输出空白，拼到请求末尾逼其给结论。
+            if let ecorr = self.pendingEmptyReplyCorrection, !ecorr.isEmpty {
+                history.append(ChatMessage(role: "user", content: ecorr))
+                self.pendingEmptyReplyCorrection = nil
+            }
+        } else {
             self.pendingNarrationCorrection = nil
-        }
-        // v3.5.6：工具参数预校验纠正注入——上一轮调工具缺必填参数被拦，同样拼到请求末尾。
-        if let pcorr = self.pendingParamCorrection, !pcorr.isEmpty {
-            history.append(ChatMessage(role: "user", content: pcorr))
             self.pendingParamCorrection = nil
-        }
-        // v4.3.25：空回复纠正注入——上一轮工具执行后模型输出空白，拼到请求末尾逼其给结论。
-        if let ecorr = self.pendingEmptyReplyCorrection, !ecorr.isEmpty {
-            history.append(ChatMessage(role: "user", content: ecorr))
             self.pendingEmptyReplyCorrection = nil
         }
 
@@ -1936,6 +1988,9 @@ final class ConversationStore: ObservableObject {
     /// 让模型看到结果后能继续下一步（而非卡死在"写了文本没执行"）。
     private func runTextualShellIfNeeded(text: String, config: ModelConfig, tools: [[String: Any]]?, disclosed: [String], depth: Int, reasoningLevel: Int) {
         guard let cmd = Self.extractTextualShellCommand(from: text) else { return }
+        // v10.13：文本式工具兜底只在干活档放行——闲聊/查证轮里模型写出 shell 命令也不执行，
+        // 否则「闲聊时它偷偷跑命令」会绕过 L2 的工具白名单。
+        guard currentPolicy.allowsTextualToolFallback else { return }
         let cmdCopy = cmd
         DispatchQueue.global().async {
             let params: [String: Any] = ["command": cmdCopy]
@@ -2094,7 +2149,34 @@ final class ConversationStore: ObservableObject {
             self.runningTool = nil
             return
         }
-        // v3.5.6：工具参数 schema 预校验（机制级，治"缺参盲试"老毛病）——
+        // v10.13（L2 硬闸）：非干活档不受理白名单外的工具调用。
+        // 正常情况下 chat 轮根本没有 tools 字段、模型发不出 tool_call；这是防"模型凭记忆
+        // 在正文里编出调用"的第二道闸——宁可回一条"该工具本轮不可用"的结果，也不执行。
+        if let allow = self.currentPolicy.toolWhitelist {
+            // 模型返回的是下划线安全名（web_search），白名单是注册原名（web.search），
+            // 必须归一后再比——否则 lookup 档会把合法调用误判成「本轮不可用」。
+            let realName = ToolRegistry.shared.originalName(for: call.name)
+            if !allow.contains(realName) {
+                let note = "[[TOOL_NOT_AVAILABLE]] 本轮没有向模型提供工具 \(realName)"
+                    + "（当前档位：\(self.currentPolicy.intent.label)），因此没有执行。"
+                    + "请不要调用工具，直接用已有信息回答用户。"
+                let res: [String: Any] = [
+                    "ok": false,
+                    "code": "TOOL_NOT_AVAILABLE",
+                    "message": note,
+                    "data": ["tool": realName, "intent": self.currentPolicy.intent.rawValue],
+                    "_meta": ["next_step": "直接回答，不要调用工具。"],
+                ]
+                DispatchQueue.main.async {
+                    self.handleDispatchResult(.success(res), call: call, calls: calls, index: index,
+                                              toolMessages: toolMessages, newlyDisclosed: newlyDisclosed,
+                                              config: config, tools: tools,
+                                              disclosed: disclosed, depth: depth, reasoningLevel: reasoningLevel,
+                                              thinkText: thinkText, toolDuration: 0)
+                }
+                return
+            }
+        }
         // 调工具前先用工具 schema 校验必填参数，缺了就不执行，注入纠正消息重跑一轮逼模型补齐。
         // 不再像以前那样直接执行→报"invalid params required"→靠提示词让模型自己改（常盲试好几次）。
         if let schema = ToolRegistry.shared.openAISchema(for: call.name),
