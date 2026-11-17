@@ -856,7 +856,9 @@ jobs:
           [ -d "$APP" ] || APP=$(find "$GITHUB_WORKSPACE" -maxdepth 3 -name "*.app" -type d 2>/dev/null | head -1)
           echo "APP: $APP"
           echo "=== bin/ 工具断言 ==="
-          for t in lua node r2 cstool nmap llvm-objdump llvm-nm llvm-readelf jtool2 objdump class-dump ldid optool; do
+          # v10.12 单机瘦身：node(NodeMobile v12, 42M) / llvm-readelf(11M) / llvm-size(7.8M)
+          # 已从包里移除，见 scripts/build-ipa.sh 的「v10.12 单机瘦身」段——这里同步断言表。
+          for t in lua r2 cstool nmap llvm-objdump llvm-nm llvm-strings jtool2 objdump class-dump ldid optool; do
             if [ -f "$APP/bin/$t" ]; then echo "IN   : $t"; else echo "MISSING: $t"; fi
           done
           echo "=== site-packages 断言 ==="

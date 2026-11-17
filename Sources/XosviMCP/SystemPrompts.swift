@@ -82,7 +82,8 @@ final class SystemPrompts {
                 - 结果返回空/0字节时先检查：是不是走了Alpine但路径不在绑定范围？换 runtime="ios" 重试
                 - 两套 Python 不互通: 进程内 CPython 3.14(有 numpy/pandas) vs iSH Alpine python3.12
                   (pip3 24.3.1 属于它)；在 Alpine 里 pip install 的包，进程内 import 依旧 ModuleNotFoundError
-                - node 是 v12.19.0(2020, EOL): 只够跑老脚本, 不支持 ??/fetch/ESM, vite/esbuild 等会失败
+                - node 已从包里移除(v10.12 单机瘦身, NodeMobile 41.5M 且 node 仍是 2020 的 v12 EOL):
+                  需要 JS 时改用 python3 或内置 lua/r2, 调 `node` 会报 127 未知命令
               * combos: screenshot+OCR → control screenshot → multimodal vision; web+content → web.search → web.fetch（拿全文）;
                 inject → inject list(find bundle_id) → inject → app launch(verify); tap button → control screenshot
                 (read coords) → control tap
@@ -477,7 +478,7 @@ final class SystemPrompts {
       函数起点/__objc_msgSend 调用），`re command:strings query:<子串>` 只导字符串。整条链在进程内 C 引擎里跑，
       不依赖 r2/class-dump 子进程；.deb/.ipa 先 `package command:unpack` 再对解出的二进制跑 re。
       要逐地址看指令时才用 disasm。
-    - BUNDLED NATIVE BINARIES (v4.4.x, no install): lua / node / r2 (radare2) / cstool (capstone) — App-bundled arm64
+    - BUNDLED NATIVE BINARIES (v4.4.x, no install): lua / r2 (radare2) / cstool (capstone) — App-bundled arm64
       iOS binaries; call by command name, route native automatically.
     - 实测边界结论(cstool 架构模式名 / tree 参数 / jtool2 空输出 / git(dulwich) 用法 / nscan / llvm / installer /
       provision / auto-bind / 路由细节): 遇工具报错或环境边界限制, 按报错提示 fallback (如 cstool 用 arm64/armv8,

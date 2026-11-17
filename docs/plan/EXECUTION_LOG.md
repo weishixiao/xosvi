@@ -427,3 +427,49 @@ build-xosvi-ios #111，红点在 `Sources/XosviMCP/MachoTools.swift` 的 10 行�
 - `swiftc` 本机没有，Swift 正确性只能由 CI 判定：推上去看 build-xosvi-ios 是否转绿。
 - 若 0.56.2 还有其它 API 漂移（本次 annotation 只覆盖到第一批错误），按同样方式就地适配，
   不要为了变绿而把版本继续往下钉。
+
+## v10.12 — 安装包瘦身：311M → 预计 ~200M（2026-11-17）
+
+### 结论
+
+包体大小不是某个依赖的问题，是四坨东西叠加。真机实测（设备上已装的 b112，
+`/private/var/containers/Bundle/Application/.../Xosvi.app`，`Info.plist = 7.18.0-b112`）：
+
+| 目录 | 体积 | 主要成分 |
+|---|---|---|
+| `python/` | 134M | pandas 41M（其中 `pandas/tests` 15M）、numpy 22M、lib-dynload 19M、stdlib `.pyc` 32.7M |
+| `bin/` | 70M | llvm-objdump 13M / r2 13M / llvm-nm 12M / llvm-readelf 11M / llvm-size 7.8M / libcrypto 4M / libcapstone.a 2M |
+| `Frameworks/` | 51M | **NodeMobile.framework 42M**、Python.framework 8.4M（Headers 2.6M） |
+| `Xosvi` | 28M | release，当前只有 arm64 单片 |
+| `fuck_vpn/` | 20M | swift-nio 全家桶；其中 `Modules/*.swiftmodule` 7.5M 纯编译期 |
+| 合计 | **311M / 5283 文件**，`Xosvi.tipa` **98.7MB**（压缩比 ≈3.2:1） | |
+
+两条独立的死重量：①`Resources/` 通用复制循环把 `fuck_vpn/` 整目录塞进包根
+（`Sources/` 全文无 "fuck_vpn" 引用，套在包根里的 `.appex` 不在 `PlugIns/` 下不会被注册）；
+②`libcapstone.a` 是静态库，主二进制链接期才用。
+
+### 改动（单机适配：iPhone 14 / A15 arm64e / iOS 17.1 / relaxin + TrollStore，不做通用适配）
+
+| 文件 | 改动 |
+|---|---|
+| `scripts/build-ipa.sh` | 资源循环跳过 `fuck_vpn/`（-19.7M）；新增「v10.12 单机瘦身」段：删 `bin/node` + `NodeMobile.framework`（-42M）、`llvm-readelf`/`llvm-size`（-18.8M，功能由 llvm-objdump/r2 覆盖）、`bin/libcapstone.a`（-2M）、`Python.framework/Headers` 与所有 `*.swiftmodule/*.swiftdoc`（-2.6M） |
+| `scripts/build-ipa.sh` | Python 瘦身扩充：`pydoc_data`/`ensurepip`/`tkinter`/`_test*.so`（-7.8M）、`pandas/tests`+`numpy/tests`+`numpy/f2py`+`numpy/_core/include`+`*.pyi`（-17M） |
+| `.github/workflows/build-ios.yml` | 内置工具断言表同步（去掉 node / llvm-readelf / llvm-size） |
+| `Sources/XosviMCP/SystemPrompts.swift` | 两处内置工具清单去掉 node，改为「已移除，需要 JS 用 python3/lua/r2」 |
+| `Sources/XosviMCP/InstallTools.swift` | 工具自检 hint 去掉 node |
+
+**故意没删的两项**：`__pycache__/*.pyc` 32.7M（App 包只读，删了 python3 每次启动都要重编
+stdlib，日常调用频率远高于省这 32M 的价值）；`alpine-rootfs.zip` 4M（Alpine 终端的根）。
+
+**没动的一项**：主二进制目前是 **arm64 单片**，而 `build-ipa.sh:66-80` 本意是 arm64+arm64e 双架构
+（注释说纯 arm64 在 A12+ 走兼容模式会有图标异常）——说明 CI 的 arm64e 那次 build 或 `lipo` 失败被
+`|| echo '!!! arm64e build failed'` 吞了。真修好会 +28M，与瘦身目标相反，故本次不动。
+
+### 待验证（需 CI 构建 + 装包）
+
+- 本地无 iOS 工具链，`du` 结论来自设备上已装的 b112；改完后的实际体积以 CI 的
+  `built: Xosvi.tipa (...)` 与装包后 `du -sh Xosvi.app` 为准。
+- 装好后要确认：`node` 已不可用（预期 127）、`r2`/`llvm-objdump`/`llvm-nm`/`llvm-strings` 正常、
+  `python3 -c "import numpy, pandas"` 仍可用（pandas 删 tests 不影响 import）、VPN 主链路仍起。
+- 若发现 node 必须留着：删掉 `scripts/build-ipa.sh` 里「v10.12 单机瘦身」段中的
+  `rm -f "$APP/bin/node"` 与 `rm -rf "$APP/Frameworks/NodeMobile.framework"` 即可原样恢复。

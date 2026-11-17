@@ -350,6 +350,11 @@ if [ -d "Resources" ]; then
         : "${dirname:?}"
         # bin 已在前面单独复制（需要 chmod + 签名），跳过避免重复
         [ "$dirname" = "bin" ] && continue
+        # v10.12 单机瘦身：fuck_vpn/ 只是「自研 VpnTunnel 构建失败」时的兜底素材，
+        # 使用时由下面 elif 分支逐项复制（appex→PlugIns/、framework→Frameworks/）。
+        # 整目录进包 = 白塞 19.7M 死文件：Sources/ 全文没有 "fuck_vpn" 引用，
+        # 且套在 $APP/fuck_vpn/ 里的 .appex 不在 PlugIns/ 下，系统根本不注册它。
+        [ "$dirname" = "fuck_vpn" ] && continue
         rm -rf "$APP/$dirname"
         cp -R "$d" "$APP/$dirname"
     done
@@ -569,11 +574,45 @@ fi
 
 # 把特权 entitlements 签入主二进制，TrollStore 安装时才能继承 no-sandbox/no-container/task_for_pid 等权限
 # v2.9.64：强制用 ldid 签名（TrollStore 官方明确要求 ldid -S 格式；codesign ad-hoc 签名格式不同，可能导致 entitlements 不被保留）
+# v10.12 单机瘦身（目标设备固定：iPhone 14 / A15 arm64e / iOS 17.1 / relaxin 越狱 + TrollStore 装系统 App，
+# 只服务本人，不做通用适配）——真机实测解包 311M / 5283 文件，逐项砍掉纯冗余：
+#   ① NodeMobile.framework 41.5M + bin/node 68K
+#      nodejs-mobile v0.3.3 = node v12.19(2020 EOL)；只有 `node -e "..."` 一条路能看输出
+#      （-e 之外 V8 把 stdout 丢 /dev/null），ESM/fetch/?? 全不支持 —— 留着不值 42M
+#   ② llvm-readelf 11M + llvm-size 7.8M：功能被已内置的 llvm-objdump / r2 覆盖
+#   ③ libcapstone.a 2M：静态库，只有主二进制链接时用得到，包里这份永不加载
+#   ④ framework 内 *.swiftmodule/*.swiftdoc + Python.framework/Headers：纯编译期产物，运行期为零
+# 合计约 -110M（真机 311M → 预计 ~200M，IPA 98.7MB → 预计 60-70MB）。
+# 恢复 node 只需删掉本段里对应的 rm（bin/node + NodeMobile.framework 两处）。
+if [ -d "$APP" ]; then
+    echo ">>> v10.12 单机瘦身 begin: $(du -sh "$APP" | cut -f1)"
+    rm -f "$APP/bin/node" \
+          "$APP/bin/llvm-readelf" "$APP/bin/llvm-size" "$APP/bin/libcapstone.a"
+    rm -rf "$APP/Frameworks/NodeMobile.framework" \
+           "$APP/Frameworks/Python.framework/Headers"
+    find "$APP" -type d -name '*.swiftmodule' -prune -exec rm -rf {} + 2>/dev/null || true
+    find "$APP" -type f -name '*.swiftdoc*' -delete 2>/dev/null || true
+    echo ">>> v10.12 单机瘦身 after tools/frameworks: $(du -sh "$APP" | cut -f1)"
+fi
+
 # v4.4.9-fix3by: Python 瘦身（大厂标配）——Python 官方 build 把完整 stdlib 复制进包（含 test/ 162MB 测试套件、
 # idlelib 编辑器等生产用不到的模块）。删除后 App 448M→~260M（numpy/pandas/lib-dynload 全保留）。
 if [ -d "$APP/python/lib/python3.14" ]; then
-    echo ">>> python slim: removing test/idlelib/turtledemo (生产用不到；pydoc_data/__pycache__ 保留——help() 完整+首次运行不重建)"
-    rm -rf "$APP/python/lib/python3.14/test" "$APP/python/lib/python3.14/idlelib" "$APP/python/lib/python3.14/turtledemo"
+    PY="$APP/python/lib/python3.14"
+    echo ">>> python slim: removing test/idlelib/turtledemo/pydoc_data/ensurepip/tkinter (生产用不到)"
+    rm -rf "$PY/test" "$PY/idlelib" "$PY/turtledemo" \
+           "$PY/pydoc_data" "$PY/ensurepip" "$PY/tkinter"
+    # v10.12：stdlib 里的 C 测试扩展（_test* / _ctypes_test）永远不会真跑，1.8M
+    rm -f "$PY"/lib-dynload/_test*.so "$PY"/lib-dynload/_ctypes_test*.so
+    # v10.12：wheel 自带的测试套件与编译期文件——pandas/tests 15M 是最大一笔；
+    #        numpy/f2py 要现场编译才有意义、_core/include 是编译 C 扩展用的头文件
+    rm -rf "$PY/site-packages/pandas/tests" \
+           "$PY/site-packages/numpy/tests" \
+           "$PY/site-packages/numpy/f2py" \
+           "$PY/site-packages/numpy/_core/include"
+    find "$PY/site-packages" -name '*.pyi' -delete 2>/dev/null || true
+    # 注：__pycache__/*.pyc（32.7M）【故意保留】——App 包只读，删了 python3 每次启动都要
+    #     重新编译 stdlib，日常 shell.exec 调 python 的频率远高于省这 32M 的价值。
     echo ">>> python after slim: $(du -sh "$APP/python" | cut -f1)"
 fi
 

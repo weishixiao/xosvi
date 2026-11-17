@@ -123,7 +123,7 @@ final class ToolInstallTool: MCPTool {
         }
         return ["ok": okCount == pkgs.count, "profile": profile,
                 "installed": okCount, "total": pkgs.count, "results": results,
-                "hint": "Alpine/apk 已移除，这里只报告哪些工具是 App 内置的。逆向常用：内置 python3 / bsdtar / strings / nm / objdump / lua / node / r2 / cstool / jtool2。"]
+                "hint": "Alpine/apk 已移除，这里只报告哪些工具是 App 内置的。逆向常用：内置 python3 / bsdtar / strings / nm / objdump / lua / r2 / cstool / jtool2（node 自 v10.12 起不再内置）。"]
     }
 
     // MARK: - 查找内置原生 bin
